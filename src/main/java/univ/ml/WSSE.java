@@ -24,4 +24,13 @@ public class WSSE implements ClusteringCostFunction {
                                 ).collect(Collectors.summingDouble(x -> x))
                 ).collect(Collectors.summingDouble(x -> x));
     }
+
+    @Override
+    public double getCost(List<WeightedDoublePoint> centers, List<WeightedDoublePoint> pointSet) {
+        return pointSet.stream()
+                .map(point ->
+                        centers.stream().map(center -> Math.pow(measure.compute(center.getPoint(), point.getPoint()), 2))
+                                .min(Double::compare).get())
+                .collect(Collectors.summingDouble(x -> x));
+    }
 }

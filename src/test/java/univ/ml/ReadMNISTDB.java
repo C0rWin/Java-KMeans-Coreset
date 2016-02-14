@@ -5,10 +5,13 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.io.Files;
+import org.apache.commons.math.linear.BlockRealMatrix;
+import org.apache.commons.math.linear.RealMatrix;
+import org.apache.commons.math.linear.SingularValueDecomposition;
+import org.apache.commons.math.linear.SingularValueDecompositionImpl;
 import org.apache.commons.math3.ml.clustering.CentroidCluster;
 import org.apache.commons.math3.ml.clustering.DoublePoint;
 import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer;
-import org.apache.commons.math3.ml.distance.DistanceMeasure;
 import org.apache.commons.math3.ml.distance.EuclideanDistance;
 import org.apache.commons.math3.stat.StatUtils;
 import org.apache.spark.SparkConf;
@@ -33,7 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 public class ReadMNISTDB implements Serializable {
 
@@ -50,9 +53,9 @@ public class ReadMNISTDB implements Serializable {
     public void artificialClustersK2() {
         final List<WeightedDoublePoint> pointSet = Lists.newArrayList();
 
-        pointSet.add(new WeightedDoublePoint(new double[] {1, 3, 1}, 2, "One"));
-        pointSet.add(new WeightedDoublePoint(new double[] {0, 1, 1}, 3, "Two"));
-        pointSet.add(new WeightedDoublePoint(new double[] {1, 3, 0}, 1, "Three"));
+        pointSet.add(new WeightedDoublePoint(new double[]{1, 3, 1}, 2, "One"));
+        pointSet.add(new WeightedDoublePoint(new double[]{0, 1, 1}, 3, "Two"));
+        pointSet.add(new WeightedDoublePoint(new double[]{1, 3, 0}, 1, "Three"));
 
         WeightedKMeansPlusPlusClusterer<WeightedDoublePoint> clusterer = new WeightedKMeansPlusPlusClusterer<WeightedDoublePoint>(1);
         List<CentroidCluster<WeightedDoublePoint>> clusters = clusterer.cluster(pointSet);
@@ -74,12 +77,12 @@ public class ReadMNISTDB implements Serializable {
     public void artificialClustersNotWeightedK2() {
         final Collection<DoublePoint> pointSet = Lists.newArrayList();
 
-        pointSet.add(new DoublePoint(new double[] {1, 3, 1}));
-        pointSet.add(new DoublePoint(new double[] {1, 3, 1}));
-        pointSet.add(new DoublePoint(new double[] {0, 1, 1}));
-        pointSet.add(new DoublePoint(new double[] {0, 1, 1}));
-        pointSet.add(new DoublePoint(new double[] {0, 1, 1}));
-        pointSet.add(new DoublePoint(new double[] {1, 3, 0}));
+        pointSet.add(new DoublePoint(new double[]{1, 3, 1}));
+        pointSet.add(new DoublePoint(new double[]{1, 3, 1}));
+        pointSet.add(new DoublePoint(new double[]{0, 1, 1}));
+        pointSet.add(new DoublePoint(new double[]{0, 1, 1}));
+        pointSet.add(new DoublePoint(new double[]{0, 1, 1}));
+        pointSet.add(new DoublePoint(new double[]{1, 3, 0}));
 
         KMeansPlusPlusClusterer<DoublePoint> clusterer = new KMeansPlusPlusClusterer<DoublePoint>(1);
         List<CentroidCluster<DoublePoint>> clusters = clusterer.cluster(pointSet);
@@ -99,7 +102,7 @@ public class ReadMNISTDB implements Serializable {
 
     @Test
     public void testSampleMethod() {
-        final double[] weights= new double[] {0.12, 2, 0.23, 0.4, 0.15, 0.6, 7, 0.48, 0.19, 0.10, 0.17, 0.17};
+        final double[] weights = new double[]{0.12, 2, 0.23, 0.4, 0.15, 0.6, 7, 0.48, 0.19, 0.10, 0.17, 0.17};
         final double total = StatUtils.sum(weights);
 
         Map<Integer, AtomicInteger> validation = Maps.newHashMap();
@@ -111,7 +114,7 @@ public class ReadMNISTDB implements Serializable {
             Random rnd = new Random();
             double distr = total * rnd.nextDouble();
             double sum = 0;
-            int i  = 0;
+            int i = 0;
             for (; sum < distr; i++) {
                 sum += weights[i];
             }
@@ -119,7 +122,7 @@ public class ReadMNISTDB implements Serializable {
         }
 
         for (Map.Entry<Integer, AtomicInteger> each : validation.entrySet()) {
-            System.out.println(each.getKey() + " = " + total*each.getValue().get()/1_000_000);
+            System.out.println(each.getKey() + " = " + total * each.getValue().get() / 1_000_000);
         }
     }
 
@@ -138,26 +141,17 @@ public class ReadMNISTDB implements Serializable {
         }
 
         int _K = 30;
-        WeightedKMeansPlusPlusClusterer<WeightedDoublePoint> clusterer = new WeightedKMeansPlusPlusClusterer<>(_K, 1000);
-        List<CentroidCluster<WeightedDoublePoint>> clusters = clusterer.cluster(pointSet);
-        final DistanceMeasure measure = new EuclideanDistance();
+        final WeightedKMeansPlusPlusClusterer<WeightedDoublePoint> clusterer = new WeightedKMeansPlusPlusClusterer<>(_K);
+        final List<CentroidCluster<WeightedDoublePoint>> clusters = clusterer.cluster(pointSet);
+        final WSSE wsse = new WSSE(new EuclideanDistance());
+        final double optCost = wsse.getCost(clusters);
 
-        final double optCost = clusters.stream()
-                .map(cluster ->
-                    cluster.getPoints()
-                            .stream()
-                            .map(point ->
-                                    // Compute squared distance
-                                    Math.pow(measure.compute(point.getPoint(), cluster.getCenter().getPoint()), 2)
-                            ).collect(Collectors.summingDouble(x->x))
-                ).collect(Collectors.summingDouble(x->x));
-
-        List<Integer> sampleSizes = Lists.newArrayList(100, 200, 300, 400, 500, 600, 700, 800, 900, 1000,
+        final List<Integer> sampleSizes = Lists.newArrayList(100, 200, 300, 400, 500, 600, 700, 800, 900, 1000,
                 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,
                 15000, 20000, 25000, 30000, 35000, 40000, 50000, 60000);
 
         System.out.println("Sample size;\t\tUniform Error;\t\tNon Uniform Error;\t\tKmeans Error");
-        for (Integer sampleSize : sampleSizes) {
+        for (final Integer sampleSize : sampleSizes) {
 
             CoresetEvaluator evaluator = new CoresetEvaluator(clusterer);
 
@@ -169,6 +163,46 @@ public class ReadMNISTDB implements Serializable {
                     ";\t\t" + (nonUniformCost / optCost - 1) +
                     ";\t\t" + (kmeansCost / optCost - 1));
         }
+    }
+
+    @Test
+    public void svdCoreset() {
+
+        final int N = 5_000;
+        final int d = 1000;
+        final int j = 10;
+        final double epsilon = 0.1;
+
+        final int m = Math.min(j + (int)Math.ceil(j/epsilon) - 1, d - 1);
+
+        final BlockRealMatrix A = new BlockRealMatrix(N, d);
+        for (int i = 0; i < N; i++) {
+            final Random rnd = new Random();
+            A.setRow(i, IntStream.range(0, d).mapToDouble(x -> rnd.nextDouble()).toArray());
+        }
+
+        SingularValueDecomposition svd = new SingularValueDecompositionImpl(A);
+//        final RealMatrix U = svd.getU().getSubMatrix(0, 1000, 0, 10);
+        final RealMatrix S = svd.getS().getSubMatrix(0, m, 0, m);
+        final RealMatrix VT = svd.getV().getSubMatrix(0, d - 1, 0, m).transpose();
+
+        final double c = Math.pow(A.getFrobeniusNorm(), 2) - Math.pow(S.getFrobeniusNorm(), 2);
+        final RealMatrix C = S.multiply(VT);
+
+
+        final BlockRealMatrix Q = new BlockRealMatrix(d, d);
+        for (int i = 0; i < d; i++) {
+            final Random rnd = new Random();
+            Q.setRow(i, IntStream.range(0, d).mapToDouble(x -> rnd.nextDouble()).toArray());
+        }
+
+        final SingularValueDecompositionImpl svd1 = new SingularValueDecompositionImpl(Q);
+        final RealMatrix tst = svd1.getV().getSubMatrix(0, d - 1, 0, d - 1 - j);
+
+        final double costA = Math.pow(A.multiply(tst).getFrobeniusNorm(), 2);
+        final double costC = c + Math.pow(C.multiply(tst).getFrobeniusNorm(), 2);
+
+        System.out.println(Math.abs(costC / costA - 1));
     }
 
     @Test

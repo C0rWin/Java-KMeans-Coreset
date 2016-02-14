@@ -1,6 +1,7 @@
 package univ.ml;
 
 import org.apache.commons.math3.ml.clustering.CentroidCluster;
+import org.apache.commons.math3.ml.clustering.DoublePoint;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -18,9 +19,8 @@ public class KmeansCoreset extends BaseCoreset<WeightedDoublePoint> {
         final WeightedKMeansPlusPlusClusterer<WeightedDoublePoint> clusterer = new WeightedKMeansPlusPlusClusterer<>(sampleSize);
         final List<CentroidCluster<WeightedDoublePoint>> clusters = clusterer.cluster(pointset);
         return clusters.stream().map(cluster -> {
-            WeightedDoublePoint center = (WeightedDoublePoint) cluster.getCenter();
-            center.setWeight(cluster.getPoints().size());
-            return center;
+            DoublePoint center = (DoublePoint) cluster.getCenter();
+            return new WeightedDoublePoint(center.getPoint(), cluster.getPoints().size(), "");
         }).collect(Collectors.toList());
     }
 }
