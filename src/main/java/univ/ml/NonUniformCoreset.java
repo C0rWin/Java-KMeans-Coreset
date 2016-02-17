@@ -24,6 +24,14 @@ public class NonUniformCoreset<T extends Sample> extends BaseCoreset<T> {
 
     @Override
     public List<T> takeSample(final List<T> pointset) {
+        if (pointset.size() <= sampleSize) {
+            final List<T> result = Lists.newArrayList(pointset);
+            for (T each : result) {
+                each.setWeight(1);
+                each.setProbability(1.0/pointset.size());
+            }
+            return result;
+        }
         final WeightedKMeansPlusPlusClusterer<T> clusterer = new WeightedKMeansPlusPlusClusterer<>(k, 1);
         final List<CentroidCluster<T>> clusters = clusterer.cluster(pointset);
 

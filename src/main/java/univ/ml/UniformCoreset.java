@@ -16,6 +16,14 @@ public class UniformCoreset<T extends Sample> extends BaseCoreset<T>{
     @Override
     public List<T> takeSample(final List<T> pointset) {
         final List<T> copy = Lists.newArrayList(pointset);
+        if (pointset.size() <= t) {
+            for (T each : copy) {
+                each.setWeight(1);
+                each.setProbability(1.0/pointset.size());
+            }
+            return copy;
+        }
+
         Collections.sort(copy);
         RandomSample<T> sample = new RandomSample<>(copy);
         List<T> result = sample.getSampleOfSize(t);
