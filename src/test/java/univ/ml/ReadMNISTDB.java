@@ -32,6 +32,7 @@ import java.io.Serializable;
 import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -146,22 +147,24 @@ public class ReadMNISTDB implements Serializable {
         final WSSE wsse = new WSSE(new EuclideanDistance());
         final double optCost = wsse.getCost(clusters);
 
-        final List<Integer> sampleSizes = Lists.newArrayList(100, 200, 300, 400, 500, 600, 700, 800, 900, 1000,
-                2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,
-                15000, 20000, 25000, 30000, 35000, 40000, 50000, 60000);
+        final List<Integer> sampleSizes = Lists.newArrayList(100, 200, 300, 400, 500, 600, 700, 800, 900, 1000
+        //        2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,
+        //        15000, 20000, 25000, 30000, 35000, 40000, 50000, 60000
+        );
 
         System.out.println("Sample size;\t\tUniform Error;\t\tNon Uniform Error;\t\tKmeans Error");
         for (final Integer sampleSize : sampleSizes) {
 
             CoresetEvaluator evaluator = new CoresetEvaluator(clusterer);
 
-            double nonUniformCost = evaluator.evalute(new NonUniformCoreset<>(_K, sampleSize), pointSet);
-            double uniformCost = evaluator.evalute(new UniformCoreset<>(sampleSize), pointSet);
-            double kmeansCost = evaluator.evalute(new KmeansCoreset(sampleSize), pointSet);
+//            double nonUniformCost = evaluator.evalute(new NonUniformCoreset<>(_K, sampleSize), pointSet);
+            double uniformCost = evaluator.evalute(new UniformCoreset<>(sampleSize), Collections.unmodifiableList(pointSet));
+            System.out.println("Uniform cost: " + uniformCost);
+//            double kmeansCost = evaluator.evalute(new KmeansCoreset(sampleSize), pointSet);
 
-            System.out.println(sampleSize + ";\t\t" + (uniformCost / optCost - 1) +
-                    ";\t\t" + (nonUniformCost / optCost - 1) +
-                    ";\t\t" + (kmeansCost / optCost - 1));
+//            System.out.println(sampleSize + ";\t\t" + (uniformCost / optCost - 1) +
+//                    ";\t\t" + (nonUniformCost / optCost - 1) +
+//                    ";\t\t" + (kmeansCost / optCost - 1));
         }
     }
 

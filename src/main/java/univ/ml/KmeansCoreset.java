@@ -15,7 +15,7 @@ public class KmeansCoreset extends BaseCoreset<WeightedDoublePoint> {
     }
 
     @Override
-    public List<WeightedDoublePoint> reduce(final List<WeightedDoublePoint> pointset) {
+    public List<WeightedDoublePoint> takeSample(final List<WeightedDoublePoint> pointset) {
         final WeightedKMeansPlusPlusClusterer<WeightedDoublePoint> clusterer = new WeightedKMeansPlusPlusClusterer<>(sampleSize);
         final List<CentroidCluster<WeightedDoublePoint>> clusters = clusterer.cluster(pointset);
         return clusters.stream().map(cluster -> {

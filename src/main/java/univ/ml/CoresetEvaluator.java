@@ -17,7 +17,7 @@ public class CoresetEvaluator {
     }
 
     public double evalute(final CoresetAlgorithm<WeightedDoublePoint> algorithm, final List<WeightedDoublePoint> pointSet) {
-        final List<CentroidCluster<WeightedDoublePoint>> clusters = clusterer.cluster(algorithm.reduce(pointSet));
+        final List<CentroidCluster<WeightedDoublePoint>> clusters = clusterer.cluster(algorithm.takeSample(pointSet));
 
         final List<WeightedDoublePoint> centers = clusters.stream()
                 .map(cluster -> new WeightedDoublePoint(cluster.getCenter().getPoint(), 1, ""))

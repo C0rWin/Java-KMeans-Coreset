@@ -29,7 +29,7 @@ public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
     }
 
     @Override
-    public List<WeightedDoublePoint> reduce(List<WeightedDoublePoint> pointset) {
+    public List<WeightedDoublePoint> takeSample(List<WeightedDoublePoint> pointset) {
         final BlockRealMatrix A = new BlockRealMatrix(pointset.size(), d);
         int idx = 0;
 
@@ -42,7 +42,7 @@ public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
         final RealMatrix S = svd.getS().getSubMatrix(0, m, 0, m);
         final RealMatrix VT = svd.getV().getSubMatrix(0, d - 1, 0, m).transpose();
 
-        // If point set is just a merge of two or more data chunks, need to
+        // If point set is just a concat of two or more data chunks, need to
         // go over all points and collect distinct weights values, then to sum
         // everything into a new weight.
         Double totalWeight = pointset.stream()
