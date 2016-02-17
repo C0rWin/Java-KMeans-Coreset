@@ -21,7 +21,7 @@ public class WSSE implements ClusteringCostFunction {
                         cluster.getPoints().stream()
                                 .map(point ->
                                         Math.pow(measure.compute(cluster.getCenter().getPoint(), point.getPoint()), 2)
-                                ).collect(Collectors.summingDouble(x -> x))
+                                ).collect(Collectors.summingDouble(x -> (double)x))
                 ).collect(Collectors.summingDouble(x -> x));
     }
 

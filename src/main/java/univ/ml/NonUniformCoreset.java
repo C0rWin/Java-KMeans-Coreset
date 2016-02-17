@@ -42,7 +42,7 @@ public class NonUniformCoreset<T extends Sample> extends BaseCoreset<T> {
                                 .map(point -> {
                                     double d = measure.compute(cluster.getCenter().getPoint(), point.getPoint());
                                     return point.getWeight() * d * d;
-                                }).collect(Collectors.summingDouble(x -> x)) // Single cluster distance variance
+                                }).collect(Collectors.summingDouble(x -> (double)x)) // Single cluster distance variance
                 ).collect(Collectors.summingDouble(x -> x));// Total clusters distance variance
 
         double totalSensitivity = 0;
