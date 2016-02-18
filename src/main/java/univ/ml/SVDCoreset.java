@@ -22,6 +22,9 @@ public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
 
     @Override
     public List<WeightedDoublePoint> takeSample(List<WeightedDoublePoint> pointset) {
+        if (size >= pointset.size())
+            return pointset;
+
         int d = pointset.size();
 
         final BlockRealMatrix A = new BlockRealMatrix(pointset.size(), d);
