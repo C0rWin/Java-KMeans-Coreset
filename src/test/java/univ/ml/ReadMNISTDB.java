@@ -157,14 +157,14 @@ public class ReadMNISTDB implements Serializable {
 
             CoresetEvaluator evaluator = new CoresetEvaluator(clusterer);
 
-//            double nonUniformCost = evaluator.evalute(new NonUniformCoreset<>(_K, sampleSize), pointSet);
+            double nonUniformCost = evaluator.evalute(new NonUniformCoreset<>(_K, sampleSize), pointSet);
             double uniformCost = evaluator.evalute(new UniformCoreset<>(sampleSize), Collections.unmodifiableList(pointSet));
-            System.out.println("Uniform cost: " + uniformCost);
-//            double kmeansCost = evaluator.evalute(new KmeansCoreset(sampleSize), pointSet);
+//            System.out.println("Uniform cost: " + uniformCost);
+            double kmeansCost = evaluator.evalute(new KmeansCoreset(sampleSize), pointSet);
 
-//            System.out.println(sampleSize + ";\t\t" + (uniformCost / optCost - 1) +
-//                    ";\t\t" + (nonUniformCost / optCost - 1) +
-//                    ";\t\t" + (kmeansCost / optCost - 1));
+            System.out.println(sampleSize + ";\t\t" + (uniformCost / optCost - 1) +
+                    ";\t\t" + (nonUniformCost / optCost - 1) +
+                    ";\t\t" + (kmeansCost / optCost - 1));
         }
     }
 

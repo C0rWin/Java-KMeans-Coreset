@@ -15,21 +15,19 @@ public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
 
     private final double epsilon;
 
-    private final int d;
-
-    private final int m;
-
     public SVDCoreset(final int d, final int j, final double epsilon) {
         this.j = j;
         this.epsilon = epsilon;
-        this.d = d;
 
-        m = Math.min(j + (int)Math.ceil(j/epsilon) - 1, d - 1);
+
 
     }
 
     @Override
     public List<WeightedDoublePoint> takeSample(List<WeightedDoublePoint> pointset) {
+        int d = pointset.size();
+        int m = Math.min(j + (int)Math.ceil(j/epsilon) - 1, d - 1);
+
         final BlockRealMatrix A = new BlockRealMatrix(pointset.size(), d);
         int idx = 0;
 
