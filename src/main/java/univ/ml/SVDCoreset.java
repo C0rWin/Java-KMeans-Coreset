@@ -15,12 +15,9 @@ public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
 
     private final double epsilon;
 
-    public SVDCoreset(final int d, final int j, final double epsilon) {
+    public SVDCoreset(final int j, final double epsilon) {
         this.j = j;
         this.epsilon = epsilon;
-
-
-
     }
 
     @Override
