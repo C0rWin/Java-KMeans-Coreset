@@ -13,17 +13,16 @@ public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
 
     private final int j;
 
-    private final double epsilon;
+    private final int size;
 
-    public SVDCoreset(final int j, final double epsilon) {
+    public SVDCoreset(final int j, final int size) {
         this.j = j;
-        this.epsilon = epsilon;
+        this.size = size;
     }
 
     @Override
     public List<WeightedDoublePoint> takeSample(List<WeightedDoublePoint> pointset) {
         int d = pointset.size();
-        int m = Math.min(j + (int)Math.ceil(j/epsilon) - 1, d - 1);
 
         final BlockRealMatrix A = new BlockRealMatrix(pointset.size(), d);
         int idx = 0;
@@ -34,8 +33,8 @@ public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
         }
 
         SingularValueDecomposition svd = new SingularValueDecompositionImpl(A);
-        final RealMatrix S = svd.getS().getSubMatrix(0, m, 0, m);
-        final RealMatrix VT = svd.getV().getSubMatrix(0, d - 1, 0, m).transpose();
+        final RealMatrix S = svd.getS().getSubMatrix(0, size, 0, size);
+        final RealMatrix VT = svd.getV().getSubMatrix(0, d - 1, 0, size).transpose();
 
         // If point set is just a concat of two or more data chunks, need to
         // go over all points and collect distinct weights values, then to sum
