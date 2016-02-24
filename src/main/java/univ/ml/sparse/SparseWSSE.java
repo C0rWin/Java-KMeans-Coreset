@@ -15,7 +15,7 @@ public class SparseWSSE {
                                             double d = point.getVector().mapMultiply(-1.0).add(cluster.getCenter().getVector()).getNorm();
                                             return FastMath.pow(d, 2);
                                         }
-                                ).collect(Collectors.summingDouble(x -> x))
+                                ).collect(Collectors.summingDouble(x -> (double)x))
                 ).collect(Collectors.summingDouble(x -> x));
     }
 
