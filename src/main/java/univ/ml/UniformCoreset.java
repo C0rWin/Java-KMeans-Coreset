@@ -1,6 +1,6 @@
 package univ.ml;
 
-import com.clearspring.analytics.util.Lists;
+import com.google.common.collect.Lists;
 
 import java.util.Collections;
 import java.util.List;

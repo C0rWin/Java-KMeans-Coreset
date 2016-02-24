@@ -1,38 +1,37 @@
-package univ.ml;
-
+package univ.ml.sparse;
 
 import com.google.common.collect.Lists;
-import org.apache.commons.math3.linear.BlockRealMatrix;
+import org.apache.commons.math3.linear.OpenMapRealMatrix;
 import org.apache.commons.math3.linear.RealMatrix;
 import org.apache.commons.math3.linear.SingularValueDecomposition;
+import univ.ml.sparse.algorithm.SparseCoresetAlgorithm;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
-public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
-
+public class SparseSVDCoreset implements SparseCoresetAlgorithm {
     private final int j;
 
     private final int size;
 
-    public SVDCoreset(final int j, final int size) {
+    public SparseSVDCoreset(final int j, final int size) {
         this.j = j;
         this.size = size;
     }
 
     @Override
-    public List<WeightedDoublePoint> takeSample(List<WeightedDoublePoint> pointset) {
+    public List<SparseWeightableVector> takeSample(List<SparseWeightableVector> pointset) {
         if (size >= pointset.size())
             return pointset;
 
         int d = pointset.size();
 
-        final BlockRealMatrix A = new BlockRealMatrix(pointset.size(), d);
+        final OpenMapRealMatrix A = new OpenMapRealMatrix(pointset.size(), d);
         int idx = 0;
 
         // Create block matrix so SVD algorithm will be able to work with it.
-        for (WeightedDoublePoint each : pointset) {
-            A.setRow(idx++, each.getPoint());
+        for (SparseWeightableVector each : pointset) {
+            A.setRowVector(idx++, each.getVector());
         }
 
         SingularValueDecomposition svd = new SingularValueDecomposition(A);
@@ -56,9 +55,9 @@ public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
         final RealMatrix C = S.multiply(VT);
 
         // Copy into final list.
-        final List<WeightedDoublePoint> results = Lists.newArrayList();
+        final List<SparseWeightableVector> results = Lists.newArrayList();
         for (int i = 0; i < C.getRowDimension(); ++i) {
-            results.add(new WeightedDoublePoint(C.getRow(i), totalWeight, ""));
+            results.add(new SparseWeightableVector(C.getRow(i), totalWeight));
         }
         return results;
     }

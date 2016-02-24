@@ -5,30 +5,25 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.io.Files;
-import org.apache.commons.math.linear.BlockRealMatrix;
-import org.apache.commons.math.linear.RealMatrix;
-import org.apache.commons.math.linear.SingularValueDecomposition;
-import org.apache.commons.math.linear.SingularValueDecompositionImpl;
+import org.apache.commons.math3.linear.BlockRealMatrix;
+import org.apache.commons.math3.linear.RealMatrix;
+import org.apache.commons.math3.linear.SingularValueDecomposition;
 import org.apache.commons.math3.ml.clustering.CentroidCluster;
 import org.apache.commons.math3.ml.clustering.DoublePoint;
 import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer;
 import org.apache.commons.math3.ml.distance.EuclideanDistance;
 import org.apache.commons.math3.stat.StatUtils;
-import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.function.FlatMapFunction;
-import org.apache.spark.api.java.function.Function2;
-import org.apache.spark.api.java.function.PairFunction;
-import org.apache.spark.streaming.Durations;
-import org.apache.spark.streaming.api.java.JavaDStream;
-import org.apache.spark.streaming.api.java.JavaPairDStream;
-import org.apache.spark.streaming.api.java.JavaReceiverInputDStream;
-import org.apache.spark.streaming.api.java.JavaStreamingContext;
 import org.junit.Test;
-import scala.Tuple2;
+import univ.ml.sparse.SparseCentroidCluster;
+import univ.ml.sparse.SparseCoresetEvaluator;
+import univ.ml.sparse.SparseWSSE;
+import univ.ml.sparse.SparseWeightableVector;
+import univ.ml.sparse.SparseWeightedKMeansPlusPlus;
+import univ.ml.sparse.algorithm.SparseNonUniformCoreset;
+import univ.ml.sparse.algorithm.SparseUniformCoreset;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.Serializable;
 import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.Collection;
@@ -39,7 +34,7 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
-public class ReadMNISTDB implements Serializable {
+public class ReadMNISTDB {
 
     public static final String MNIST_FILE = "/Users/bartem/sandbox/coreset/src/main/resources/mnist_train.csv";
 
@@ -160,13 +155,58 @@ public class ReadMNISTDB implements Serializable {
             double nonUniformCost = evaluator.evalute(new NonUniformCoreset<>(_K, sampleSize), pointSet);
             double uniformCost = evaluator.evalute(new UniformCoreset<>(sampleSize), Collections.unmodifiableList(pointSet));
 //            System.out.println("Uniform cost: " + uniformCost);
-            double kmeansCost = evaluator.evalute(new KmeansCoreset(sampleSize), pointSet);
+//            double kmeansCost = evaluator.evalute(new KmeansCoreset(sampleSize), pointSet);
 
             System.out.println(sampleSize + ";\t\t" + (uniformCost / optCost - 1) +
-                    ";\t\t" + (nonUniformCost / optCost - 1) +
-                    ";\t\t" + (kmeansCost / optCost - 1));
+                    ";\t\t" + (nonUniformCost / optCost - 1)
+//                    + ";\t\t" + (kmeansCost / optCost - 1)
+            );
         }
     }
+
+    @Test
+    public void testSparseCoresets() throws Exception {
+        final List<String> lines = Files.readLines(new File(MNIST_FILE), Charset.defaultCharset());
+        final List<SparseWeightableVector> pointSet = Lists.newArrayList();
+
+        System.out.println("Reading data");
+        for (int j = 0; j < lines.size(); ++j) {
+            List<String> coordinates = Splitter.on(',').splitToList(lines.get(j));
+            final double[] _coords = new double[coordinates.size() - 1];
+            for (int i = 1; i < coordinates.size(); i++) {
+                _coords[i - 1] = Double.valueOf(coordinates.get(i));
+            }
+            pointSet.add(new SparseWeightableVector(_coords, 1));
+        }
+
+        System.out.println("Running KMeans++");
+        int _K = 30;
+        final SparseWeightedKMeansPlusPlus clusterer = new SparseWeightedKMeansPlusPlus(_K, 10);
+        final List<SparseCentroidCluster> clusters = clusterer.cluster(pointSet);
+        final SparseWSSE wsse = new SparseWSSE();
+        final double optCost = wsse.getCost(clusters);
+
+        final List<Integer> sampleSizes = Lists.newArrayList(100, 200, 300, 400, 500, 600, 700, 800, 900, 1000
+                //        2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,
+                //        15000, 20000, 25000, 30000, 35000, 40000, 50000, 60000
+        );
+
+        System.out.println("Evaluating Coresets construction");
+        System.out.println("Sample size;\t\tUniform Error;\t\tNon Uniform Error;\t\tKmeans Error");
+        for (final Integer sampleSize : sampleSizes) {
+
+            SparseCoresetEvaluator evaluator = new SparseCoresetEvaluator(clusterer);
+
+            double nonUniformCost = evaluator.evalute(new SparseNonUniformCoreset(_K, sampleSize), pointSet);
+            double uniformCost = evaluator.evalute(new SparseUniformCoreset(sampleSize), Collections.unmodifiableList(pointSet));
+//            System.out.println("Uniform cost: " + uniformCost);
+//            double kmeansCost = evaluator.evalute(new KmeansCoreset(sampleSize), pointSet);
+
+            System.out.println(sampleSize + ";\t\t" + (uniformCost / optCost - 1) +
+                    ";\t\t" + (nonUniformCost / optCost - 1));
+        }
+    }
+
 
     @Test
     public void svdCoreset() {
@@ -184,7 +224,7 @@ public class ReadMNISTDB implements Serializable {
             A.setRow(i, IntStream.range(0, d).mapToDouble(x -> rnd.nextDouble()).toArray());
         }
 
-        SingularValueDecomposition svd = new SingularValueDecompositionImpl(A);
+        SingularValueDecomposition svd = new SingularValueDecomposition(A);
 //        final RealMatrix U = svd.getU().getSubMatrix(0, 1000, 0, 10);
         final RealMatrix S = svd.getS().getSubMatrix(0, m, 0, m);
         final RealMatrix VT = svd.getV().getSubMatrix(0, d - 1, 0, m).transpose();
@@ -199,7 +239,7 @@ public class ReadMNISTDB implements Serializable {
             Q.setRow(i, IntStream.range(0, d).mapToDouble(x -> rnd.nextDouble()).toArray());
         }
 
-        final SingularValueDecompositionImpl svd1 = new SingularValueDecompositionImpl(Q);
+        final SingularValueDecomposition svd1 = new SingularValueDecomposition(Q);
         final RealMatrix tst = svd1.getV().getSubMatrix(0, d - 1, 0, d - 1 - j);
 
         final double costA = Math.pow(A.multiply(tst).getFrobeniusNorm(), 2);
@@ -207,41 +247,4 @@ public class ReadMNISTDB implements Serializable {
 
         System.out.println(Math.abs(costC / costA - 1));
     }
-
-    @Test
-    public void testSparkStreamingContext() {
-        SparkConf conf = new SparkConf().setMaster("local[2]").setAppName("WordCound");
-        JavaStreamingContext jssc = new JavaStreamingContext(conf, Durations.seconds(60));
-
-        JavaReceiverInputDStream<String> lines = jssc.socketTextStream("localhost", 9999);
-
-
-        JavaDStream<String> words = lines.flatMap(new FlatMapFunction<String, String>() {
-            @Override
-            public Iterable<String> call(String s) throws Exception {
-                return Arrays.asList(s.split(" "));
-            }
-        });
-
-        JavaPairDStream<String, Integer> pairs = words.mapToPair(new PairFunction<String, String, Integer>() {
-            @Override
-            public Tuple2<String, Integer> call(String s) throws Exception {
-                return new Tuple2<String, Integer>(s, 1);
-            }
-        });
-
-        JavaPairDStream<String, Integer> wordsCount = pairs.reduceByKey(new Function2<Integer, Integer, Integer>() {
-            @Override
-            public Integer call(Integer i1, Integer i2) throws Exception {
-                return i1 + i2;
-            }
-        });
-
-        wordsCount.print();
-
-        jssc.start();
-        jssc.awaitTermination();
-
-    }
-
 }
