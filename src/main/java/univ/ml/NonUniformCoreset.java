@@ -7,7 +7,6 @@ import org.apache.commons.math3.ml.distance.EuclideanDistance;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class NonUniformCoreset<T extends Sample> extends BaseCoreset<T> {
 
@@ -35,24 +34,24 @@ public class NonUniformCoreset<T extends Sample> extends BaseCoreset<T> {
         final WeightedKMeansPlusPlusClusterer<T> clusterer = new WeightedKMeansPlusPlusClusterer<>(k, 1);
         final List<CentroidCluster<T>> clusters = clusterer.cluster(pointset);
 
-        final Double totalVariance = clusters.stream()
-                .map(cluster ->
-                        cluster.getPoints()
-                                .stream()
-                                .map(point -> {
-                                    double d = measure.compute(cluster.getCenter().getPoint(), point.getPoint());
-                                    return point.getWeight() * d * d;
-                                }).collect(Collectors.summingDouble(x -> (double)x)) // Single cluster distance variance
-                ).collect(Collectors.summingDouble(x -> x));// Total clusters distance variance
+        double totalVariance = 0;
+
+        for (CentroidCluster<T> cluster : clusters) {
+            for (T point : cluster.getPoints()) {
+                double d = measure.compute(cluster.getCenter().getPoint(), point.getPoint());
+                totalVariance += point.getWeight() * d * d;
+            }
+        }
 
         double totalSensitivity = 0;
 
         for (final CentroidCluster<T> cluster : clusters) {
             final double[] center = cluster.getCenter().getPoint();
-            double clusterSize = cluster.getPoints().stream()
-                    .map(point ->
-                            point.getWeight()).collect(Collectors.summingDouble(x->x)
-                    );
+            double clusterSize = 0;
+
+            for (T point : cluster.getPoints()) {
+                clusterSize += point.getWeight();
+            }
 
             for (final T each : cluster.getPoints()) {
                 final double[] point = each.getPoint();

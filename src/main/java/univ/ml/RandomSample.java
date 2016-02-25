@@ -4,7 +4,6 @@ import com.google.common.collect.Lists;
 
 import java.util.List;
 import java.util.Random;
-import java.util.stream.Collectors;
 
 public class RandomSample<T extends Sample> {
 
@@ -20,9 +19,11 @@ public class RandomSample<T extends Sample> {
 
         final List<T> result = Lists.newArrayListWithExpectedSize(t);
 
-        final double total = dataset.stream()
-                .map(point -> point.getProbability())
-                .collect(Collectors.summingDouble(x -> x));
+        double total = 0;
+
+        for (T point : dataset) {
+            total += point.getProbability();
+        }
 
         final Random rnd = new Random();
 

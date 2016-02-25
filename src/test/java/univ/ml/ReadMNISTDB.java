@@ -5,9 +5,6 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.io.Files;
-import org.apache.commons.math3.linear.BlockRealMatrix;
-import org.apache.commons.math3.linear.RealMatrix;
-import org.apache.commons.math3.linear.SingularValueDecomposition;
 import org.apache.commons.math3.ml.clustering.CentroidCluster;
 import org.apache.commons.math3.ml.clustering.DoublePoint;
 import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer;
@@ -32,7 +29,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.IntStream;
 
 public class ReadMNISTDB {
 
@@ -152,8 +148,8 @@ public class ReadMNISTDB {
 
             CoresetEvaluator evaluator = new CoresetEvaluator(clusterer);
 
-            double nonUniformCost = evaluator.evalute(new NonUniformCoreset<>(_K, sampleSize), pointSet);
-            double uniformCost = evaluator.evalute(new UniformCoreset<>(sampleSize), Collections.unmodifiableList(pointSet));
+            double nonUniformCost = evaluator.evalute(new NonUniformCoreset<WeightedDoublePoint>(_K, sampleSize), pointSet);
+            double uniformCost = evaluator.evalute(new UniformCoreset<WeightedDoublePoint>(sampleSize), Collections.unmodifiableList(pointSet));
 //            System.out.println("Uniform cost: " + uniformCost);
 //            double kmeansCost = evaluator.evalute(new KmeansCoreset(sampleSize), pointSet);
 
@@ -208,43 +204,43 @@ public class ReadMNISTDB {
     }
 
 
-    @Test
-    public void svdCoreset() {
-
-        final int N = 5_000;
-        final int d = 1000;
-        final int j = 10;
-        final double epsilon = 0.1;
-
-        final int m = Math.min(j + (int)Math.ceil(j/epsilon) - 1, d - 1);
-
-        final BlockRealMatrix A = new BlockRealMatrix(N, d);
-        for (int i = 0; i < N; i++) {
-            final Random rnd = new Random();
-            A.setRow(i, IntStream.range(0, d).mapToDouble(x -> rnd.nextDouble()).toArray());
-        }
-
-        SingularValueDecomposition svd = new SingularValueDecomposition(A);
-//        final RealMatrix U = svd.getU().getSubMatrix(0, 1000, 0, 10);
-        final RealMatrix S = svd.getS().getSubMatrix(0, m, 0, m);
-        final RealMatrix VT = svd.getV().getSubMatrix(0, d - 1, 0, m).transpose();
-
-        final double c = Math.pow(A.getFrobeniusNorm(), 2) - Math.pow(S.getFrobeniusNorm(), 2);
-        final RealMatrix C = S.multiply(VT);
-
-
-        final BlockRealMatrix Q = new BlockRealMatrix(d, d);
-        for (int i = 0; i < d; i++) {
-            final Random rnd = new Random();
-            Q.setRow(i, IntStream.range(0, d).mapToDouble(x -> rnd.nextDouble()).toArray());
-        }
-
-        final SingularValueDecomposition svd1 = new SingularValueDecomposition(Q);
-        final RealMatrix tst = svd1.getV().getSubMatrix(0, d - 1, 0, d - 1 - j);
-
-        final double costA = Math.pow(A.multiply(tst).getFrobeniusNorm(), 2);
-        final double costC = c + Math.pow(C.multiply(tst).getFrobeniusNorm(), 2);
-
-        System.out.println(Math.abs(costC / costA - 1));
-    }
+//    @Test
+//    public void svdCoreset() {
+//
+//        final int N = 5_000;
+//        final int d = 1000;
+//        final int j = 10;
+//        final double epsilon = 0.1;
+//
+//        final int m = Math.min(j + (int)Math.ceil(j/epsilon) - 1, d - 1);
+//
+//        final BlockRealMatrix A = new BlockRealMatrix(N, d);
+//        for (int i = 0; i < N; i++) {
+//            final Random rnd = new Random();
+//            A.setRow(i, IntStream.range(0, d).mapToDouble(x -> rnd.nextDouble()).toArray());
+//        }
+//
+//        SingularValueDecomposition svd = new SingularValueDecomposition(A);
+////        final RealMatrix U = svd.getU().getSubMatrix(0, 1000, 0, 10);
+//        final RealMatrix S = svd.getS().getSubMatrix(0, m, 0, m);
+//        final RealMatrix VT = svd.getV().getSubMatrix(0, d - 1, 0, m).transpose();
+//
+//        final double c = Math.pow(A.getFrobeniusNorm(), 2) - Math.pow(S.getFrobeniusNorm(), 2);
+//        final RealMatrix C = S.multiply(VT);
+//
+//
+//        final BlockRealMatrix Q = new BlockRealMatrix(d, d);
+//        for (int i = 0; i < d; i++) {
+//            final Random rnd = new Random();
+//            Q.setRow(i, IntStream.range(0, d).mapToDouble(x -> rnd.nextDouble()).toArray());
+//        }
+//
+//        final SingularValueDecomposition svd1 = new SingularValueDecomposition(Q);
+//        final RealMatrix tst = svd1.getV().getSubMatrix(0, d - 1, 0, d - 1 - j);
+//
+//        final double costA = Math.pow(A.multiply(tst).getFrobeniusNorm(), 2);
+//        final double costC = c + Math.pow(C.multiply(tst).getFrobeniusNorm(), 2);
+//
+//        System.out.println(Math.abs(costC / costA - 1));
+//    }
 }

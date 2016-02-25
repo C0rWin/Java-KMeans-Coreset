@@ -12,7 +12,6 @@ import univ.ml.sparse.SparseWeightedKMeansPlusPlus;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
     private int k;
@@ -39,24 +38,24 @@ public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
         final SparseWeightedKMeansPlusPlus clusterer = new SparseWeightedKMeansPlusPlus(k, 1);
         final List<SparseCentroidCluster> clusters = clusterer.cluster(pointset);
 
-        final Double totalVariance = clusters.stream()
-                .map(cluster ->
-                        cluster.getPoints()
-                                .stream()
-                                .map(point -> {
-                                    double d = point.getVector().mapMultiply(-1.0).add(cluster.getCenter().getVector()).getNorm();
-                                    return point.getWeight() * d * d;
-                                }).collect(Collectors.summingDouble(x -> (double)x)) // Single cluster distance variance
-                ).collect(Collectors.summingDouble(x -> x));// Total clusters distance variance
+        double totalVariance = 0;
+
+        for (SparseCentroidCluster cluster : clusters) {
+            for (SparseWeightableVector point : cluster.getPoints()) {
+                double d = point.getVector().mapMultiply(-1.0).add(cluster.getCenter().getVector()).getNorm();
+                totalVariance += point.getWeight() * d * d;
+            }
+        } // Total clusters distance variance
 
         double totalSensitivity = 0;
 
         for (final SparseCentroidCluster cluster : clusters) {
             final RealVector center = cluster.getCenter().getVector();
-            double clusterSize = cluster.getPoints().stream()
-                    .map(point ->
-                            point.getWeight()).collect(Collectors.summingDouble(x->x)
-                    );
+            double clusterSize = 0;
+
+            for (SparseWeightableVector vector : cluster.getPoints()) {
+                clusterSize += vector.getWeight();
+            }
 
             for (final SparseWeightableVector each : cluster.getPoints()) {
                 double d = FastMath.pow(each.getVector().mapMultiply(-1.0).add(center).getNorm(), 2);

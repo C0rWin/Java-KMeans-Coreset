@@ -1,10 +1,10 @@
 package univ.ml;
 
+import com.google.common.collect.Lists;
 import org.apache.commons.math3.ml.clustering.CentroidCluster;
 import org.apache.commons.math3.ml.distance.EuclideanDistance;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class CoresetEvaluator {
 
@@ -19,9 +19,11 @@ public class CoresetEvaluator {
     public double evalute(final CoresetAlgorithm<WeightedDoublePoint> algorithm, final List<WeightedDoublePoint> pointSet) {
         final List<CentroidCluster<WeightedDoublePoint>> clusters = clusterer.cluster(algorithm.takeSample(pointSet));
 
-        final List<WeightedDoublePoint> centers = clusters.stream()
-                .map(cluster -> new WeightedDoublePoint(cluster.getCenter().getPoint(), 1, ""))
-                .collect(Collectors.toList());
+        final List<WeightedDoublePoint> centers = Lists.newArrayList();
+
+        for (CentroidCluster<WeightedDoublePoint> cluster : clusters) {
+            centers.add(new WeightedDoublePoint(cluster.getCenter().getPoint(), 1, ""));
+        }
 
         return costFunction.getCost(centers, pointSet);
     }

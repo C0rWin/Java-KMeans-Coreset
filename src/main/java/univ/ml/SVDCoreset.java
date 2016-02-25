@@ -7,7 +7,6 @@ import org.apache.commons.math3.linear.RealMatrix;
 import org.apache.commons.math3.linear.SingularValueDecomposition;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
 
@@ -42,10 +41,11 @@ public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
         // If point set is just a concat of two or more data chunks, need to
         // go over all points and collect distinct weights values, then to sum
         // everything into a new weight.
-        Double totalWeight = pointset.stream()
-                .map(p -> p.getWeight())
-                .distinct()
-                .collect(Collectors.summingDouble(x -> x));
+        double totalWeight = 0;
+
+        for (WeightedDoublePoint point : pointset) {
+            totalWeight += point.getWeight();
+        }
 
         // If totalWeight is zero that means no one actually computed weights for these points,
         // hence they are new, therefore totalWeight computed according to the formula.

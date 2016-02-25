@@ -2,9 +2,9 @@ package univ.ml;
 
 import org.apache.commons.math3.ml.clustering.CentroidCluster;
 import org.apache.commons.math3.ml.distance.DistanceMeasure;
+import org.apache.commons.math3.util.FastMath;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class WSSE implements ClusteringCostFunction {
 
@@ -16,21 +16,25 @@ public class WSSE implements ClusteringCostFunction {
 
     @Override
     public double getCost(final List<CentroidCluster<WeightedDoublePoint>> clusters) {
-        return clusters.stream()
-                .map(cluster ->
-                        cluster.getPoints().stream()
-                                .map(point ->
-                                        Math.pow(measure.compute(cluster.getCenter().getPoint(), point.getPoint()), 2)
-                                ).collect(Collectors.summingDouble(x -> (double)x))
-                ).collect(Collectors.summingDouble(x -> x));
+        double cost = 0;
+        for (CentroidCluster<WeightedDoublePoint> cluster : clusters) {
+            for (WeightedDoublePoint point : cluster.getPoints()) {
+                cost += FastMath.pow(measure.compute(cluster.getCenter().getPoint(), point.getPoint()), 2);
+            }
+        }
+        return cost;
     }
 
     @Override
     public double getCost(List<WeightedDoublePoint> centers, List<WeightedDoublePoint> pointSet) {
-        return pointSet.stream()
-                .map(point ->
-                        centers.stream().map(center -> Math.pow(measure.compute(center.getPoint(), point.getPoint()), 2))
-                                .min(Double::compare).get())
-                .collect(Collectors.summingDouble(x -> x));
+        double cost = 0;
+        for (WeightedDoublePoint center : centers) {
+            double minDist = Double.MAX_VALUE;
+            for (WeightedDoublePoint point : pointSet) {
+                minDist = FastMath.min(minDist, Math.pow(measure.compute(center.getPoint(), point.getPoint()), 2));
+            }
+            cost += minDist;
+        }
+        return cost;
     }
 }
