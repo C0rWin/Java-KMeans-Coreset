@@ -123,7 +123,7 @@ public class ReadMNISTDB {
         final List<String> lines = Files.readLines(new File(MNIST_FILE), Charset.defaultCharset());
         final List<WeightedDoublePoint> pointSet = Lists.newArrayList();
 
-        for (int j = 0; j < lines.size(); ++j) {
+        for (int j = 0; j < 5_000; ++j) {
             List<String> coordinates = Splitter.on(',').splitToList(lines.get(j));
             final double[] _coords = new double[coordinates.size() - 1];
             for (int i = 1; i < coordinates.size(); i++) {
@@ -166,7 +166,7 @@ public class ReadMNISTDB {
         final List<SparseWeightableVector> pointSet = Lists.newArrayList();
 
         System.out.println("Reading data");
-        for (int j = 0; j < lines.size(); ++j) {
+        for (int j = 0; j < 5_000; ++j) {
             List<String> coordinates = Splitter.on(',').splitToList(lines.get(j));
             final double[] _coords = new double[coordinates.size() - 1];
             for (int i = 1; i < coordinates.size(); i++) {
@@ -177,7 +177,7 @@ public class ReadMNISTDB {
 
         System.out.println("Running KMeans++");
         int _K = 30;
-        final SparseWeightedKMeansPlusPlus clusterer = new SparseWeightedKMeansPlusPlus(_K, 10);
+        final SparseWeightedKMeansPlusPlus clusterer = new SparseWeightedKMeansPlusPlus(_K);
         final List<SparseCentroidCluster> clusters = clusterer.cluster(pointSet);
         final SparseWSSE wsse = new SparseWSSE();
         final double optCost = wsse.getCost(clusters);

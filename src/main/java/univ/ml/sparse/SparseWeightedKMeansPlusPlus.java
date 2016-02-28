@@ -69,7 +69,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
                 newClusters.add(new SparseCentroidCluster(newCenter));
             }
             int changes = assignPointsToClusters(newClusters, points, assignments);
-//            System.out.println("Round #" + count + ", changes #" + changes);
+            System.out.println("Round #" + count + ", changes #" + changes);
             clusters = newClusters;
 
             // if there were no more changes in the point-to-cluster assignment
@@ -89,7 +89,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
             centroid = new SparseWeightableVector(centroid.add(p.mapMultiply(p.getWeight())));
             overallWeight += p.getWeight();
         }
-        return new SparseWeightableVector(centroid.mapDivide(overallWeight));
+        return new SparseWeightableVector(centroid.mapDivideToSelf(overallWeight));
     }
 
     private SparseClusterable getPointFromLargestVarianceCluster(List<SparseCentroidCluster> clusters) {
@@ -102,8 +102,8 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
                 final SparseClusterable center = cluster.getCenter();
                 final Variance stat = new Variance();
                 for (final SparseWeightableVector point : cluster.getPoints()) {
-                    double distance = FastMath.pow(point.mapMultiply(-1.0).add(center.getVector()).getNorm(), 2);
-                    stat.increment(point.getWeight() * distance);
+                    double distance = FastMath.sqrt(point.getWeight()) * point.getDistance(center.getVector());
+                    stat.increment(distance);
                 }
                 final double variance = stat.getResult();
 
@@ -149,7 +149,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         int clusterIndex = 0;
         int minCluster = 0;
         for (final SparseCentroidCluster c : clusters) {
-            double distance = point.mapMultiply(-1.0).add(c.getCenter().getVector()).getNorm();
+            double distance = point.getDistance(c.getCenter().getVector()) * point.getWeight();
             if (distance < minDistance) {
                 minDistance = distance;
                 minCluster = clusterIndex;
@@ -192,8 +192,8 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         // this is very easy.
         for (int i = 0; i < numPoints; i++) {
             if (i != firstPointIndex) { // That point isn't considered
-                double d = FastMath.pow(firstPoint.mapMultiply(-1.0).add(pointList.get(i)).getNorm(), 2);
-                minDistSquared[i] = firstPoint.getWeight() * d;
+                double d = firstPoint.getDistance(pointList.get(i));
+                minDistSquared[i] = firstPoint.getWeight() * d * d;
             }
         }
 
@@ -257,8 +257,8 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
                     for (int j = 0; j < numPoints; j++) {
                         // Only have to worry about the points still not taken.
                         if (!taken[j]) {
-                            double d = FastMath.pow(firstPoint.mapMultiply(-1.0).add(pointList.get(j)).getNorm(), 2);
-                            double d2 = p.getWeight() * d;
+                            double d = firstPoint.getDistance(pointList.get(j));
+                            double d2 = p.getWeight() * d * d;
                             if (d2 < minDistSquared[j]) {
                                 minDistSquared[j] = d2;
                             }
