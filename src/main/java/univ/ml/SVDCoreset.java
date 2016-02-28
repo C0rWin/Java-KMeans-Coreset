@@ -1,16 +1,18 @@
 package univ.ml;
 
 
-import com.google.common.collect.Lists;
+import java.util.List;
+
 import org.apache.commons.math3.linear.BlockRealMatrix;
 import org.apache.commons.math3.linear.RealMatrix;
 import org.apache.commons.math3.linear.SingularValueDecomposition;
 
-import java.util.List;
+import com.google.common.collect.Lists;
 
 public class SVDCoreset extends BaseCoreset<WeightedDoublePoint> {
+	private static final long serialVersionUID = 1L;
 
-    private final int j;
+	private final int j;
 
     private final int size;
 
