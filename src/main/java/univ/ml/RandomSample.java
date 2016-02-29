@@ -14,7 +14,7 @@ public class RandomSample<T extends Sample> {
     }
 
     public List<T> getSampleOfSize(final int t) {
-        if (t <= dataset.size())
+        if (t >= dataset.size())
             return dataset;
 
         final List<T> result = Lists.newArrayListWithExpectedSize(t);
