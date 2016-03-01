@@ -69,7 +69,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
                 newClusters.add(new SparseCentroidCluster(newCenter));
             }
             int changes = assignPointsToClusters(newClusters, points, assignments);
-            System.out.println("Round #" + count + ", changes #" + changes);
+//            System.out.println("Round #" + count + ", changes #" + changes);
             clusters = newClusters;
 
             // if there were no more changes in the point-to-cluster assignment
