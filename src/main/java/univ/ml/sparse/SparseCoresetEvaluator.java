@@ -1,10 +1,10 @@
 package univ.ml.sparse;
 
-import com.google.common.collect.Lists;
+import java.util.List;
+
 import univ.ml.sparse.algorithm.SparseCoresetAlgorithm;
 
-import java.util.List;
-import java.util.stream.Collectors;
+import com.google.common.collect.Lists;
 
 public class SparseCoresetEvaluator {
 
