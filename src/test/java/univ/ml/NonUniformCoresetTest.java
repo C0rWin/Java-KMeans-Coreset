@@ -6,10 +6,12 @@ import com.google.common.collect.Lists;
 import org.apache.commons.math3.random.RandomDataGenerator;
 import org.junit.Assert;
 import org.junit.Test;
+import univ.ml.sparse.SparseWeightableVector;
+import univ.ml.sparse.algorithm.SparseNonUniformCoreset;
 
 import java.util.List;
 
-public class NonUniformCorestTest extends RandomizedTest {
+public class NonUniformCoresetTest extends RandomizedTest {
 
     @Test
     @Repeat(iterations = 100)
@@ -19,11 +21,10 @@ public class NonUniformCorestTest extends RandomizedTest {
         final int dimension = randomIntBetween(10, 200);
         final int datasetSize = randomIntBetween(50, 200);
 
-        final NonUniformCoreset<WeightedDoublePoint> alg = new NonUniformCoreset<>(k, sampleSize);
-        final RandomDataGenerator rnd = new RandomDataGenerator();
+        final SparseNonUniformCoreset alg = new SparseNonUniformCoreset(k, sampleSize);
 
-        List<WeightedDoublePoint> points = generateRandomSet(dimension, datasetSize, rnd);
-        final List<WeightedDoublePoint> sample = alg.takeSample(points);
+        List<SparseWeightableVector> points = generateRandomSet(dimension, datasetSize);
+        final List<SparseWeightableVector> sample = alg.takeSample(points);
 
         Assert.assertEquals(datasetSize, sample.size());
     }
@@ -36,24 +37,24 @@ public class NonUniformCorestTest extends RandomizedTest {
         final int dimension = randomIntBetween(10, 200);
         final int datasetSize = randomIntBetween(250, 1_000);
 
-        final NonUniformCoreset<WeightedDoublePoint> alg = new NonUniformCoreset<>(k, sampleSize);
-        final RandomDataGenerator rnd = new RandomDataGenerator();
+        final SparseNonUniformCoreset alg = new SparseNonUniformCoreset(k, sampleSize);
 
-        List<WeightedDoublePoint> points = generateRandomSet(dimension, datasetSize, rnd);
-        final List<WeightedDoublePoint> sample = alg.takeSample(points);
+        List<SparseWeightableVector> points = generateRandomSet(dimension, datasetSize);
+        final List<SparseWeightableVector> sample = alg.takeSample(points);
 
         Assert.assertTrue(sampleSize>=sample.size());
     }
 
-    private List<WeightedDoublePoint> generateRandomSet(int dimension, int datasetSize, RandomDataGenerator rnd) {
-        List<WeightedDoublePoint> points = Lists.newArrayList();
+    private List<SparseWeightableVector> generateRandomSet(int dimension, int datasetSize) {
+        final RandomDataGenerator rnd = new RandomDataGenerator();
+        List<SparseWeightableVector> points = Lists.newArrayList();
 
         for (int j = 0; j < datasetSize; j++) {
             double[] coord = new double[dimension];
             for (int i = 0; i < dimension; i++) {
                 coord[i] = rnd.nextGaussian(5, 2);
             }
-            points.add(new WeightedDoublePoint(coord, 1, ""));
+            points.add(new SparseWeightableVector(coord, 1));
         }
         return points;
     }

@@ -14,7 +14,7 @@ public class SparseRandomSample {
     }
 
     public List<SparseWeightableVector> getSampleOfSize(final int t) {
-        if (t <= dataset.size())
+        if (t >= dataset.size())
             return dataset;
 
         final List<SparseWeightableVector> result = Lists.newArrayListWithExpectedSize(t);
