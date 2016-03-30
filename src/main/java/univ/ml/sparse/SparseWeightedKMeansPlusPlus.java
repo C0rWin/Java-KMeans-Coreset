@@ -37,7 +37,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
     }
 
     @Override
-    public List<SparseCentroidCluster> cluster(Collection<SparseWeightableVector> points)
+    public List<SparseCentroidCluster> cluster(List<SparseWeightableVector> points)
             throws MathIllegalArgumentException, ConvergenceException {
         // sanity checks
         MathUtils.checkNotNull(points);
@@ -159,10 +159,10 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         return minCluster;
     }
 
-    private List<SparseCentroidCluster> chooseInitialCenters(Collection<SparseWeightableVector> points) {
+    private List<SparseCentroidCluster> chooseInitialCenters(List<SparseWeightableVector> points) {
         // Convert to list for indexed access. Make it unmodifiable, since removal of items
         // would screw up the logic of this method.
-        final List<SparseWeightableVector> pointList = Collections.unmodifiableList(new ArrayList<>(points));
+        final List<SparseWeightableVector> pointList = Collections.unmodifiableList(points);
 
         // The number of points in the list.
         final int numPoints = pointList.size();

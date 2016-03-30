@@ -45,6 +45,22 @@ public class NonUniformCoresetTest extends RandomizedTest {
         Assert.assertTrue(sampleSize>=sample.size());
     }
 
+    @Test
+    @Repeat(iterations = 100)
+    public void emptyDataset() {
+        final int k = randomIntBetween(5, 20);
+        final int sampleSize = randomIntBetween(50, 300);
+        final int dimension = randomIntBetween(10, 200);
+        final int datasetSize = randomIntBetween(250, 1_000);
+
+        final SparseNonUniformCoreset alg = new SparseNonUniformCoreset(k, sampleSize);
+
+        List<SparseWeightableVector> points = generateRandomSet(dimension, datasetSize);
+        final List<SparseWeightableVector> sample = alg.takeSample(points);
+
+        Assert.assertTrue(sampleSize>=sample.size());
+    }
+
     private List<SparseWeightableVector> generateRandomSet(int dimension, int datasetSize) {
         final RandomDataGenerator rnd = new RandomDataGenerator();
         List<SparseWeightableVector> points = Lists.newArrayList();
@@ -54,7 +70,7 @@ public class NonUniformCoresetTest extends RandomizedTest {
             for (int i = 0; i < dimension; i++) {
                 coord[i] = rnd.nextGaussian(5, 2);
             }
-            points.add(new SparseWeightableVector(coord, 1));
+            points.add(new SparseWeightableVector(coord, randomIntBetween(10, 1000)));
         }
         return points;
     }

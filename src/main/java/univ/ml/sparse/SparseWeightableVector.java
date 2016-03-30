@@ -30,6 +30,7 @@ public class SparseWeightableVector extends OpenMapRealVector implements SparseS
         for (Map.Entry<Integer, Double> each : values.entrySet()) {
             this.setEntry(each.getKey(), each.getValue());
         }
+        this.weight = 1.0;
     }
 
     public SparseWeightableVector(int dimension) {
