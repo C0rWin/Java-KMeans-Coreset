@@ -46,6 +46,8 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         if (points.size() < k) {
             throw new NumberIsTooSmallException(points.size(), k, false);
         }
+        
+        System.out.println(String.format("input for SparseWeightedKMeansPlusPlus::cluster are k=%d and pnts=%s", k, points.toString()));
 
         // create the initial clusters
         List<SparseCentroidCluster> clusters = chooseInitialCenters(points);

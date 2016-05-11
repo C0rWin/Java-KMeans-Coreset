@@ -3,6 +3,7 @@ package univ.ml.sparse;
 import org.apache.commons.math3.linear.OpenMapRealVector;
 import org.apache.commons.math3.linear.RealVector;
 
+import java.util.Iterator;
 import java.util.Map;
 
 public class SparseWeightableVector extends OpenMapRealVector implements SparseSample, SparseWeightable, SparseClusterable, Comparable<SparseWeightableVector> {
@@ -75,6 +76,27 @@ public class SparseWeightableVector extends OpenMapRealVector implements SparseS
     @Override
     public RealVector getVector() {
         return this;
+    }
+    
+    @Override
+    public String toString() {
+    	StringBuilder buf = new StringBuilder();
+    	Iterator<Entry> it = getVector().iterator();
+    	
+    	while (it.hasNext()) {
+    		Entry ent = it.next();
+    		assert(ent != null);
+    		
+    		if (ent.getValue() != 0.0) {
+    			if (buf.length() > 0) {
+        			buf.append(',');
+    			}
+    			
+    			buf.append(String.format("(%d,%f)", ent.getIndex(), ent.getValue()));
+    		}
+    	}
+    	
+    	return String.format("w=%f,p=%f,vec=[%s]", getWeight(), getProbability(), buf.toString());
     }
 
     @Override
