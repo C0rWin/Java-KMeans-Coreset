@@ -15,7 +15,7 @@ public class SparseCluster implements Serializable {
      * Build a cluster centered at a specified point.
      */
     public SparseCluster() {
-        points = new ArrayList<SparseWeightableVector>();
+        points = new ArrayList<>();
     }
 
     /**
@@ -33,5 +33,4 @@ public class SparseCluster implements Serializable {
     public List<SparseWeightableVector> getPoints() {
         return points;
     }
-
 }

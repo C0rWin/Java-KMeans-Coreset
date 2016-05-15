@@ -1,33 +1,31 @@
 package univ.ml.sparse;
 
+import org.apache.commons.math3.linear.RealVector;
 import org.apache.commons.math3.util.FastMath;
 
-import java.util.List;
+import java.util.Collection;
 
 public class SparseWSSE {
 
-    public double getCost(final List<SparseCentroidCluster> clusters) {
+    public double getCost(final Collection<SparseCentroidCluster> clusters) {
         double cost = 0;
         for (SparseCentroidCluster cluster : clusters) {
-            double minDistance = Double.MAX_VALUE;
+            final RealVector center = cluster.getCenter().getVector();
             for (SparseWeightableVector vector : cluster.getPoints()) {
-                double d = FastMath.pow(cluster.getCenter().getVector().mapMultiply(-1.0).add(vector).getNorm(), 2);
-                minDistance  = FastMath.min(d, minDistance);
+                cost += FastMath.pow(center.getDistance(vector), 2);
             }
-            // Compute the cost of given clustering
-            cost += minDistance;
         }
         return cost;
     }
 
-    public double getCost(List<SparseWeightableVector> centers, List<SparseWeightableVector> pointSet) {
+    public double getCost(Collection<SparseWeightableVector> centers, Collection<SparseWeightableVector> pointSet) {
         double cost = 0;
         for (SparseWeightableVector center : centers) {
             // For each center and for each point compute pair wise distance and
             // pick the smallest one to include it in cost.
             double minDistance = Double.MAX_VALUE;
             for (SparseWeightableVector vector : pointSet) {
-                double d = FastMath.pow(center.getVector().mapMultiply(-1.0).add(vector).getNorm(), 2);
+                double d = FastMath.pow(center.getVector().getDistance(vector), 2);
                 minDistance  = FastMath.min(d, minDistance);
             }
             // Compute the cost of given clustering

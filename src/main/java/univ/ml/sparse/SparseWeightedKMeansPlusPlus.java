@@ -6,14 +6,15 @@ import org.apache.commons.math3.exception.NumberIsTooSmallException;
 import org.apache.commons.math3.exception.util.LocalizedFormats;
 import org.apache.commons.math3.random.JDKRandomGenerator;
 import org.apache.commons.math3.random.RandomGenerator;
-import org.apache.commons.math3.stat.descriptive.moment.Variance;
 import org.apache.commons.math3.util.FastMath;
 import org.apache.commons.math3.util.MathUtils;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
 
@@ -46,41 +47,54 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         if (points.size() < k) {
             throw new NumberIsTooSmallException(points.size(), k, false);
         }
-        
+
         System.out.println(String.format("input for SparseWeightedKMeansPlusPlus::cluster are k=%d and pnts=%s", k, points.toString()));
 
         // create the initial clusters
-        List<SparseCentroidCluster> clusters = chooseInitialCenters(points);
+        Map<Integer, SparseCentroidCluster> clusters = chooseInitialCenters(points);
 
         // create an array containing the latest assignment of a point to a cluster
         // no need to initialize the array, as it will be filled with the first assignment
         int[] assignments = new int[points.size()];
         assignPointsToClusters(clusters, points, assignments);
 
+//        final SparseWSSE wsse = new SparseWSSE();
+//        double cost = wsse.getCost(clusters.values());
+
+//?System.out.println("Initial cost = " + cost);
+
         final int max = (maxIterations < 0) ? Integer.MAX_VALUE : maxIterations;
         for (int count = 0; count < max; count++) {
             boolean emptyCluster = false;
-            List<SparseCentroidCluster> newClusters = new ArrayList<>();
-            for (final SparseCentroidCluster cluster : clusters) {
+            Map<Integer, SparseCentroidCluster> newClusters = new HashMap<>();
+            for (final Map.Entry<Integer, SparseCentroidCluster> each : clusters.entrySet()) {
                 final SparseClusterable newCenter;
-                if (cluster.getPoints().isEmpty()) {
+                final List<SparseWeightableVector> clusterPoints = each.getValue().getPoints();
+                if (clusterPoints.isEmpty()) {
+//                    System.out.println("XXXXX: ACHTUNG! Empty cluster detected.");
                     newCenter = getPointFromLargestVarianceCluster(clusters);
                 } else {
-                    newCenter = centroidOf(cluster.getPoints(), cluster.getCenter().getVector().getDimension());
+                    final SparseClusterable center = each.getValue().getCenter();
+                    newCenter = centroidOf(clusterPoints, center.getVector().getDimension());
                 }
-                newClusters.add(new SparseCentroidCluster(newCenter));
+                newClusters.put(each.getKey(), new SparseCentroidCluster(newCenter));
             }
             int changes = assignPointsToClusters(newClusters, points, assignments);
+
+//            double newCost = wsse.getCost(newClusters.values());
+
+//            System.out.println("Round #" + count + ", changes #" + changes + ", cost = " + newCost + ", delta = " + (cost - newCost));
+//            cost = newCost;
             System.out.println("Round #" + count + ", changes #" + changes);
             clusters = newClusters;
 
             // if there were no more changes in the point-to-cluster assignment
             // and there are no empty clusters left, return the current clusters
             if (changes == 0 && !emptyCluster) {
-                return clusters;
+                return new ArrayList<>(clusters.values());
             }
         }
-        return clusters;
+        return new ArrayList<>(clusters.values());
 
     }
 
@@ -88,33 +102,19 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         SparseWeightableVector centroid = new SparseWeightableVector(dimension);
         double overallWeight = 0;
         for (final SparseWeightableVector p : points) {
-            centroid = new SparseWeightableVector(centroid.add(p.mapMultiply(p.getWeight())));
+            centroid.combineToSelf(1, p.getWeight(), p);
             overallWeight += p.getWeight();
         }
         return new SparseWeightableVector(centroid.mapDivideToSelf(overallWeight));
     }
 
-    private SparseClusterable getPointFromLargestVarianceCluster(List<SparseCentroidCluster> clusters) {
+    private SparseClusterable getPointFromLargestVarianceCluster(Map<Integer, SparseCentroidCluster> clusters) {
         double maxVariance = Double.NEGATIVE_INFINITY;
         SparseCluster selected = null;
-        for (final SparseCentroidCluster cluster : clusters) {
-            if (!cluster.getPoints().isEmpty()) {
-
-                // compute the distance variance of the current cluster
-                final SparseClusterable center = cluster.getCenter();
-                final Variance stat = new Variance();
-                for (final SparseWeightableVector point : cluster.getPoints()) {
-                    double distance = FastMath.sqrt(point.getWeight()) * point.getDistance(center.getVector());
-                    stat.increment(distance);
-                }
-                final double variance = stat.getResult();
-
-                // select the cluster with the largest variance
-                if (variance > maxVariance) {
-                    maxVariance = variance;
-                    selected = cluster;
-                }
-
+        for (final SparseCentroidCluster cluster : clusters.values()) {
+            if (maxVariance < cluster.getClusterVariance()) {
+                maxVariance = cluster.getClusterVariance();
+                selected = cluster;
             }
         }
 
@@ -128,7 +128,8 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         return selectedPoints.remove(random.nextInt(selectedPoints.size()));
     }
 
-    private int assignPointsToClusters(List<SparseCentroidCluster> clusters, Collection<SparseWeightableVector> points, int[] assignments) {
+    private int assignPointsToClusters(Map<Integer, SparseCentroidCluster> clusters,
+                                       Collection<SparseWeightableVector> points, int[] assignments) {
         int assignedDifferently = 0;
         int pointIndex = 0;
         for (final SparseWeightableVector p : points) {
@@ -146,22 +147,21 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
 
     }
 
-    private int getNearestCluster(List<SparseCentroidCluster> clusters, SparseWeightableVector point) {
+    private int getNearestCluster(Map<Integer, SparseCentroidCluster> clusters, SparseWeightableVector point) {
         double minDistance = Double.MAX_VALUE;
-        int clusterIndex = 0;
         int minCluster = 0;
-        for (final SparseCentroidCluster c : clusters) {
-            double distance = point.getDistance(c.getCenter().getVector()) * point.getWeight();
+        for (final Map.Entry<Integer, SparseCentroidCluster> each : clusters.entrySet()) {
+            final SparseClusterable center = each.getValue().getCenter();
+            double distance = point.getDistance(center.getVector()) * FastMath.sqrt(point.getWeight());
             if (distance < minDistance) {
                 minDistance = distance;
-                minCluster = clusterIndex;
+                minCluster = each.getKey();
             }
-            clusterIndex++;
         }
         return minCluster;
     }
 
-    private List<SparseCentroidCluster> chooseInitialCenters(List<SparseWeightableVector> points) {
+    private Map<Integer, SparseCentroidCluster> chooseInitialCenters(List<SparseWeightableVector> points) {
         // Convert to list for indexed access. Make it unmodifiable, since removal of items
         // would screw up the logic of this method.
         final List<SparseWeightableVector> pointList = Collections.unmodifiableList(points);
@@ -174,14 +174,14 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         final boolean[] taken = new boolean[numPoints];
 
         // The resulting list of initial centers.
-        final List<SparseCentroidCluster> resultSet = new ArrayList<>();
+        final Map<Integer, SparseCentroidCluster> resultSet = new HashMap<>();
 
         // Choose one center uniformly at random from among the data points.
         final int firstPointIndex = random.nextInt(numPoints);
 
         final SparseWeightableVector firstPoint = pointList.get(firstPointIndex);
 
-        resultSet.add(new SparseCentroidCluster(firstPoint));
+        resultSet.put(0, new SparseCentroidCluster(firstPoint));
 
         // Must mark it as taken
         taken[firstPointIndex] = true;
@@ -199,6 +199,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
             }
         }
 
+        int index = 1;
         while (resultSet.size() < k) {
 
             // Sum up the squared distances for the points in pointList not
@@ -248,7 +249,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
 
                 final SparseWeightableVector p = pointList.get(nextPointIndex);
 
-                resultSet.add(new SparseCentroidCluster((p)));
+                resultSet.put(index++, new SparseCentroidCluster((p)));
 
                 // Mark it as taken.
                 taken[nextPointIndex] = true;
@@ -259,11 +260,9 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
                     for (int j = 0; j < numPoints; j++) {
                         // Only have to worry about the points still not taken.
                         if (!taken[j]) {
-                            double d = firstPoint.getDistance(pointList.get(j));
-                            double d2 = p.getWeight() * d * d;
-                            if (d2 < minDistSquared[j]) {
-                                minDistSquared[j] = d2;
-                            }
+                            double d = p.getDistance(pointList.get(j));
+                            d *= p.getWeight() * d;
+                            minDistSquared[j] = FastMath.min(d, minDistSquared[j]);
                         }
                     }
                 }
