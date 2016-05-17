@@ -70,12 +70,12 @@ public class NonUniformCoresetTest extends RandomizedTest {
 
     @Test
     public void sparseKmeans() throws Exception {
-        int dimension = 100;
+        int dimension = 50_000;
         final SparseWeightedKMeansPlusPlus kmeans = new SparseWeightedKMeansPlusPlus(20);
 
         final List<SparseWeightableVector> points = Lists.newArrayList();
 
-        for (int i = 0; i < 10_000; i++) {
+        for (int i = 0; i < 1000; i++) {
             Map<Integer, Double> v = Maps.newHashMap();
             for (int j = 0; j < dimension; j++) {
                 if (randomBoolean())

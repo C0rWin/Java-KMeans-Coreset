@@ -48,7 +48,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
             throw new NumberIsTooSmallException(points.size(), k, false);
         }
 
-        System.out.println(String.format("input for SparseWeightedKMeansPlusPlus::cluster are k=%d and pnts=%s", k, points.toString()));
+//        System.out.println(String.format("input for SparseWeightedKMeansPlusPlus::cluster are k=%d and pnts=%s", k, points.toString()));
 
         // create the initial clusters
         Map<Integer, SparseCentroidCluster> clusters = chooseInitialCenters(points);
@@ -85,7 +85,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
 
 //            System.out.println("Round #" + count + ", changes #" + changes + ", cost = " + newCost + ", delta = " + (cost - newCost));
 //            cost = newCost;
-            System.out.println("Round #" + count + ", changes #" + changes);
+//            System.out.println("Round #" + count + ", changes #" + changes);
             clusters = newClusters;
 
             // if there were no more changes in the point-to-cluster assignment

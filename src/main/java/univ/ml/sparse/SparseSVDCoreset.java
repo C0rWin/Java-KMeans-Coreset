@@ -11,6 +11,9 @@ import java.util.List;
 import java.util.Set;
 
 public class SparseSVDCoreset implements SparseCoresetAlgorithm {
+
+    private static final long serialVersionUID = 3186737385992263964L;
+
     private final int j;
 
     private final int size;
@@ -25,7 +28,7 @@ public class SparseSVDCoreset implements SparseCoresetAlgorithm {
         if (size >= pointset.size())
             return pointset;
 
-        int d = pointset.size();
+        int d = pointset.get(0).getDimension();
 
         final OpenMapRealMatrix A = new OpenMapRealMatrix(pointset.size(), d);
         int idx = 0;
