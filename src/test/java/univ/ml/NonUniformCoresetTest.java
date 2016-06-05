@@ -1,37 +1,49 @@
 package univ.ml;
 
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.math3.random.RandomDataGenerator;
+import org.junit.Assert;
+import org.junit.Test;
+
 import com.carrotsearch.randomizedtesting.RandomizedTest;
 import com.carrotsearch.randomizedtesting.annotations.Repeat;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import org.apache.commons.math3.random.RandomDataGenerator;
-import org.junit.Assert;
-import org.junit.Test;
+
 import univ.ml.sparse.SparseCentroidCluster;
 import univ.ml.sparse.SparseWSSE;
 import univ.ml.sparse.SparseWeightableVector;
 import univ.ml.sparse.SparseWeightedKMeansPlusPlus;
 import univ.ml.sparse.algorithm.SparseNonUniformCoreset;
 
-import java.util.List;
-import java.util.Map;
-
 public class NonUniformCoresetTest extends RandomizedTest {
 
     @Test
-    @Repeat(iterations = 100)
     public void sampleSizeSmallerThanOverAllPointsShouldReturnAllPoints() {
-        final int k = randomIntBetween(5, 20);
-        final int sampleSize = randomIntBetween(250, 300);
-        final int dimension = randomIntBetween(10, 200);
-        final int datasetSize = randomIntBetween(50, 200);
+        final int k = 10;
+        final int sampleSize = 1000;
+        final int dimension = 3;
+        final int datasetSize = 2000;
 
         final SparseNonUniformCoreset alg = new SparseNonUniformCoreset(k, sampleSize);
 
         List<SparseWeightableVector> points = generateRandomSet(dimension, datasetSize);
+        double totalWeight = 0.0;
+        for (SparseWeightableVector vector : points) {
+            totalWeight += vector.getWeight();
+        }
+        System.out.println("Total Weight (before): " + totalWeight);
+
+
         final List<SparseWeightableVector> sample = alg.takeSample(points);
 
-        Assert.assertEquals(datasetSize, sample.size());
+        totalWeight = 0.0;
+        for (SparseWeightableVector vector : sample) {
+            totalWeight += vector.getWeight();
+        }
+        System.out.println("Total Weight (after): " + totalWeight);
     }
 
     @Test
@@ -116,7 +128,8 @@ public class NonUniformCoresetTest extends RandomizedTest {
             for (int i = 0; i < dimension; i++) {
                 coord[i] = rnd.nextGaussian(5, 2);
             }
-            points.add(new SparseWeightableVector(coord, randomIntBetween(10, 1000)));
+            points.add(new SparseWeightableVector(coord, 1));
+//            points.add(new SparseWeightableVector(coord, randomIntBetween(10, 100)));
         }
         return points;
     }

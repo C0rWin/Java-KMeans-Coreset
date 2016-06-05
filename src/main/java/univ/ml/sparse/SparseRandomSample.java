@@ -1,9 +1,9 @@
 package univ.ml.sparse;
 
-import com.google.common.collect.Lists;
-
 import java.util.List;
 import java.util.Random;
+
+import com.google.common.collect.Lists;
 
 public class SparseRandomSample {
 
@@ -14,9 +14,6 @@ public class SparseRandomSample {
     }
 
     public List<SparseWeightableVector> getSampleOfSize(final int t) {
-        if (t >= dataset.size())
-            return dataset;
-
         final List<SparseWeightableVector> result = Lists.newArrayListWithExpectedSize(t);
 
         double total = 0;

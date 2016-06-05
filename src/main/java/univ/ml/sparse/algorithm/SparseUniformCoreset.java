@@ -1,13 +1,17 @@
 package univ.ml.sparse.algorithm;
 
-import com.google.common.collect.Lists;
-import univ.ml.sparse.SparseRandomSample;
-import univ.ml.sparse.SparseWeightableVector;
-
 import java.util.Collections;
 import java.util.List;
 
+import com.google.common.collect.Lists;
+
+import univ.ml.sparse.SparseRandomSample;
+import univ.ml.sparse.SparseWeightableVector;
+
 public class SparseUniformCoreset implements SparseCoresetAlgorithm {
+
+    private static final long serialVersionUID = -6996893318896045066L;
+
     private int t;
 
     public SparseUniformCoreset(final int t) {

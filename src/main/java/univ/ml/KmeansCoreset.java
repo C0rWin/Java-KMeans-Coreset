@@ -1,12 +1,15 @@
 package univ.ml;
 
-import com.google.common.collect.Lists;
+import java.util.List;
+
 import org.apache.commons.math3.ml.clustering.CentroidCluster;
 import org.apache.commons.math3.ml.clustering.DoublePoint;
 
-import java.util.List;
+import com.google.common.collect.Lists;
 
 public class KmeansCoreset extends BaseCoreset<WeightedDoublePoint> {
+
+    private static final long serialVersionUID = 5524400061115848202L;
 
     private int sampleSize;
 
