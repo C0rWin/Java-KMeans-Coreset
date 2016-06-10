@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 
 public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
-
     private final int maxIterations;
 
     private final int k;
@@ -36,7 +35,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         this.k = k;
         this.maxIterations = maxIter;
     }
-
+    
     @Override
     public List<SparseCentroidCluster> cluster(List<SparseWeightableVector> points)
             throws MathIllegalArgumentException, ConvergenceException {
@@ -48,7 +47,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
             throw new NumberIsTooSmallException(points.size(), k, false);
         }
 
-//        System.out.println(String.format("input for SparseWeightedKMeansPlusPlus::cluster are k=%d and pnts=%s", k, points.toString()));
+        System.out.println(String.format("input for SparseWeightedKMeansPlusPlus::cluster are k=%d and pnts=%s", k, points.toString()));
 
         // create the initial clusters
         Map<Integer, SparseCentroidCluster> clusters = chooseInitialCenters(points);
@@ -64,6 +63,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
 //?System.out.println("Initial cost = " + cost);
 
         final int max = (maxIterations < 0) ? Integer.MAX_VALUE : maxIterations;
+        
         for (int count = 0; count < max; count++) {
             boolean emptyCluster = false;
             Map<Integer, SparseCentroidCluster> newClusters = new HashMap<>();
@@ -80,6 +80,8 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
                 newClusters.put(each.getKey(), new SparseCentroidCluster(newCenter));
             }
             int changes = assignPointsToClusters(newClusters, points, assignments);
+            
+            System.out.println(String.format("iteration number %d changes = %d", count, changes));
 
 //            double newCost = wsse.getCost(newClusters.values());
 
