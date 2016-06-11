@@ -7,6 +7,8 @@ import org.apache.commons.math3.ml.distance.DistanceMeasure;
 import org.apache.commons.math3.ml.distance.EuclideanDistance;
 import org.apache.commons.math3.util.FastMath;
 
+import com.google.common.collect.Lists;
+
 import univ.ml.sparse.SparseCentroidCluster;
 import univ.ml.sparse.SparseRandomSample;
 import univ.ml.sparse.SparseWeightableVector;
@@ -29,6 +31,14 @@ public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
 
     @Override
     public List<SparseWeightableVector> takeSample(final List<SparseWeightableVector> pointset) {
+        if (pointset.size() <= sampleSize) {
+            final List<SparseWeightableVector> result = Lists.newArrayList(pointset);
+            for (SparseWeightableVector each : result) {
+                each.setProbability(1.0/pointset.size());
+            }
+            return result;
+        }
+
         final SparseWeightedKMeansPlusPlus clusterer = new SparseWeightedKMeansPlusPlus(k, 1);
         final List<SparseCentroidCluster> clusters = clusterer.cluster(pointset);
 
