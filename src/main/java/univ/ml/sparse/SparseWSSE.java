@@ -1,9 +1,9 @@
 package univ.ml.sparse;
 
+import java.util.Collection;
+
 import org.apache.commons.math3.linear.RealVector;
 import org.apache.commons.math3.util.FastMath;
-
-import java.util.Collection;
 
 public class SparseWSSE {
 
@@ -20,13 +20,14 @@ public class SparseWSSE {
 
     public double getCost(Collection<SparseWeightableVector> centers, Collection<SparseWeightableVector> pointSet) {
         double cost = 0;
-        for (SparseWeightableVector center : centers) {
+        for (SparseWeightableVector vector : pointSet) {
             // For each center and for each point compute pair wise distance and
             // pick the smallest one to include it in cost.
             double minDistance = Double.MAX_VALUE;
-            for (SparseWeightableVector vector : pointSet) {
+            for (SparseWeightableVector center : centers) {
+
                 double d = FastMath.pow(center.getVector().getDistance(vector), 2);
-                minDistance  = FastMath.min(d, minDistance);
+                minDistance = FastMath.min(d, minDistance);
             }
             // Compute the cost of given clustering
             cost += minDistance;

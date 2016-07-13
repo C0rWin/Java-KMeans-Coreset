@@ -40,7 +40,7 @@ public class SparseWeightableVector extends OpenMapRealVector implements SparseS
     }
 
     public SparseWeightableVector(final RealVector vector) {
-        super(vector);
+        this(vector, 1.0);
     }
 
     public SparseWeightableVector(final RealVector vector, double weight) {

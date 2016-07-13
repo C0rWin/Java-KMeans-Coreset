@@ -1,18 +1,12 @@
 package univ.ml.sparse.algorithm;
 
-import java.util.List;
-
-import org.apache.commons.math3.linear.RealVector;
-import org.apache.commons.math3.ml.distance.DistanceMeasure;
-import org.apache.commons.math3.ml.distance.EuclideanDistance;
-import org.apache.commons.math3.util.FastMath;
-
 import com.google.common.collect.Lists;
-
+import org.apache.commons.math3.linear.RealVector;
+import univ.ml.sparse.CTRandomSample;
 import univ.ml.sparse.SparseCentroidCluster;
-import univ.ml.sparse.SparseRandomSample;
 import univ.ml.sparse.SparseWeightableVector;
-import univ.ml.sparse.SparseWeightedKMeansPlusPlus;
+
+import java.util.List;
 
 public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
 
@@ -21,8 +15,6 @@ public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
     private int k;
 
     private int sampleSize;
-
-    private DistanceMeasure measure = new EuclideanDistance();
 
     public SparseNonUniformCoreset(final int k, final int t) {
         this.k = k;
@@ -39,13 +31,15 @@ public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
             return result;
         }
 
-        final SparseWeightedKMeansPlusPlus clusterer = new SparseWeightedKMeansPlusPlus(k, 1);
-        final List<SparseCentroidCluster> clusters = clusterer.cluster(pointset);
+        final BiCriteriaAlgorithm clusterer = new BiCriteriaAlgorithm(k, 0.5);
+//        final SparseWeightedKMeansPlusPlus clusterer = new SparseWeightedKMeansPlusPlus(k, 1);
+        final List<SparseCentroidCluster> clusters = clusterer.takeSample(pointset);
+//        final List<SparseCentroidCluster> clusters = clusterer.cluster(pointset);
 
         double totalVariance = 0;
 
-        double[] clusterWeights = new double[k];
-        double[][] pointClusterDist = new double[k][];
+        double[] clusterWeights = new double[clusters.size()];
+        double[][] pointClusterDist = new double[clusters.size()][];
 
         for (int i = 0; i < clusters.size(); i++) {
             final SparseCentroidCluster cluster = clusters.get(i);
@@ -56,41 +50,44 @@ public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
                 final SparseWeightableVector point = cluster.getPoints().get(j);
                 double d = point.getVector().getDistance(center);
 
-                pointClusterDist[i][j] = d;
+                pointClusterDist[i][j] = d * d;
 
-                totalVariance += point.getWeight() * d * d;
-                clusterWeights[i] += point.getWeight();
+                totalVariance       += point.getWeight() * pointClusterDist[i][j];
+                clusterWeights[i]   += point.getWeight();
             }
         } // Total clusters distance variance
 
-        double totalSensitivity = 0;
+//        double totalSensitivity = 0;
 
         for (int i = 0; i < clusters.size(); i++) {
             final SparseCentroidCluster cluster = clusters.get(i);
             for (int j = 0; j < cluster.getPoints().size(); j++) {
                 final SparseWeightableVector point = cluster.getPoints().get(j);
-                double d = FastMath.pow(pointClusterDist[i][j], 2);
-                // Sensitivity has to be s(p) = 8 / |P_i| + 2 dist(p, c_i)^2/ (sum_i sum_j dist(p_i, c_j)^2)
-                double sensitivity = 1d / clusterWeights[i];
-                sensitivity += d / totalVariance;
+
+                // Sensitivity has to be s(p) = (8 * w_i) / |P_i| + 2 * w_i * dist(p_i, c_i)^2/ (sum_i sum_j w_i * dist(p_i, c_j)^2)
+
+                double sensitivity = 8d / clusterWeights[i];
+                sensitivity += 2d * pointClusterDist[i][j] / totalVariance;
                 sensitivity *= point.getWeight();
-                totalSensitivity += sensitivity;
 
-                point.setWeight(point.getWeight()/(sampleSize * sensitivity));
 
-                point.setProbability(sensitivity);
+//                totalSensitivity += sensitivity;
+
+                point.setWeight((8*clusters.size()+2)*point.getWeight()/(sampleSize * sensitivity));
+                point.setProbability(sensitivity/(8*clusters.size()+2));
             }
         }
 
-        for (final SparseCentroidCluster cluster : clusters) {
-            for (final SparseWeightableVector each : cluster.getPoints()) {
-                each.setProbability(each.getProbability()/totalSensitivity);
-                each.setWeight(totalSensitivity*each.getWeight());
-            }
-        }
+//        System.out.println("XXX@@@: Total sensitivity = " + totalSensitivity + " $$$");
+//
+//        for (final SparseCentroidCluster cluster : clusters) {
+//            for (final SparseWeightableVector each : cluster.getPoints()) {
+//                each.setProbability(each.getProbability()/totalSensitivity);
+//                each.setWeight(totalSensitivity*each.getWeight());
+//            }
+//        }
 
-        SparseRandomSample randomSample = new SparseRandomSample(pointset);
-
+        CTRandomSample randomSample = new CTRandomSample(pointset);
         return randomSample.getSampleOfSize(sampleSize);
     }
 }

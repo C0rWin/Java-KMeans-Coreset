@@ -1,5 +1,6 @@
 package univ.ml.sparse;
 
+import com.google.common.collect.Sets;
 import org.apache.commons.math3.exception.ConvergenceException;
 import org.apache.commons.math3.exception.MathIllegalArgumentException;
 import org.apache.commons.math3.exception.NumberIsTooSmallException;
@@ -35,7 +36,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         this.k = k;
         this.maxIterations = maxIter;
     }
-    
+
     @Override
     public List<SparseCentroidCluster> cluster(List<SparseWeightableVector> points)
             throws MathIllegalArgumentException, ConvergenceException {
@@ -47,7 +48,11 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
             throw new NumberIsTooSmallException(points.size(), k, false);
         }
 
-        System.out.println(String.format("input for SparseWeightedKMeansPlusPlus::cluster are k=%d and pnts=%s", k, points.toString()));
+        if (Sets.newHashSet(points).size() < k) {
+            throw new NumberIsTooSmallException(points.size(), k, false);
+        }
+
+//        System.out.println(String.format("input for SparseWeightedKMeansPlusPlus::cluster are k=%d and pnts=%s", k, points.toString()));
 
         // create the initial clusters
         Map<Integer, SparseCentroidCluster> clusters = chooseInitialCenters(points);
@@ -60,10 +65,10 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
 //        final SparseWSSE wsse = new SparseWSSE();
 //        double cost = wsse.getCost(clusters.values());
 
-//?System.out.println("Initial cost = " + cost);
+//      System.out.println("Initial cost = " + cost);
 
         final int max = (maxIterations < 0) ? Integer.MAX_VALUE : maxIterations;
-        
+
         for (int count = 0; count < max; count++) {
             boolean emptyCluster = false;
             Map<Integer, SparseCentroidCluster> newClusters = new HashMap<>();
@@ -80,8 +85,8 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
                 newClusters.put(each.getKey(), new SparseCentroidCluster(newCenter));
             }
             int changes = assignPointsToClusters(newClusters, points, assignments);
-            
-            System.out.println(String.format("iteration number %d changes = %d", count, changes));
+
+//            System.out.println(String.format("iteration number %d changes = %d", count, changes));
 
 //            double newCost = wsse.getCost(newClusters.values());
 
@@ -163,7 +168,7 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         return minCluster;
     }
 
-    private Map<Integer, SparseCentroidCluster> chooseInitialCenters(List<SparseWeightableVector> points) {
+    public Map<Integer, SparseCentroidCluster> chooseInitialCenters(List<SparseWeightableVector> points) {
         // Convert to list for indexed access. Make it unmodifiable, since removal of items
         // would screw up the logic of this method.
         final List<SparseWeightableVector> pointList = Collections.unmodifiableList(points);

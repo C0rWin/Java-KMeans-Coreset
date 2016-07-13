@@ -3,9 +3,10 @@ package univ.ml.sparse.algorithm;
 import java.util.Collections;
 import java.util.List;
 
+import org.apache.commons.math3.stat.descriptive.summary.Sum;
+
 import com.google.common.collect.Lists;
 
-import univ.ml.sparse.SparseRandomSample;
 import univ.ml.sparse.SparseWeightableVector;
 
 public class SparseUniformCoreset implements SparseCoresetAlgorithm {
@@ -21,21 +22,28 @@ public class SparseUniformCoreset implements SparseCoresetAlgorithm {
     @Override
     public List<SparseWeightableVector> takeSample(final List<SparseWeightableVector> pointset) {
         final List<SparseWeightableVector> copy = Lists.newArrayList(pointset);
+
+        final Sum totalWeight = new Sum();
+        for (SparseWeightableVector vector : pointset) {
+            totalWeight.increment(vector.getWeight());
+        }
+
+        for (SparseWeightableVector point : copy) {
+            point.setProbability((1d * t) / pointset.size());
+            point.setWeight((1.0 * totalWeight.getResult()) / t);
+//            point.setWeight((1.0 * pointset.size()) / t);
+        }
+
         if (pointset.size() <= t) {
-            for (SparseWeightableVector each : copy) {
-                each.setWeight(1);
-                each.setProbability(1.0/pointset.size());
-            }
             return copy;
         }
 
-        Collections.sort(copy);
-        SparseRandomSample sample = new SparseRandomSample(copy);
-        List<SparseWeightableVector> result = sample.getSampleOfSize(t);
-        for (SparseWeightableVector point : result) {
-            point.setProbability((1.0*pointset.size())/t);
-            point.setWeight((1.0*pointset.size())/t);
-        }
+        Collections.shuffle(copy);
+
+//        CTRandomSample sample = new CTRandomSample(copy);
+
+        List<SparseWeightableVector> result = copy.subList(0, t);
+
         return result;
     }
 }
