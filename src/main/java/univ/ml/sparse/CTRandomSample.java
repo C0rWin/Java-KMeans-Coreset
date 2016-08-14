@@ -1,13 +1,13 @@
 package univ.ml.sparse;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
-public class CTRandomSample {
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+
+public class CTRandomSample implements RandomSampleAlgorithm {
 
     private static final int M = 100_000;
 
@@ -17,29 +17,10 @@ public class CTRandomSample {
 
     private List<SparseWeightableVector> dataset;
 
-    public CTRandomSample(final List<SparseWeightableVector> dataset) {
-        this.dataset = dataset;
-        final int N = dataset.size();
-        cumsum = new double[N];
+    public List<SparseWeightableVector> getSampleOfSize(final List<SparseWeightableVector> dataset, final int t) {
 
-        cumsum[0] = dataset.get(0).getProbability();
-        for (int i = 1; i < N; i++) {
-            cumsum[i] = cumsum[i - 1] + dataset.get(i).getProbability();
-        }
+        init(dataset);
 
-        for (int i = 0; i < N; i++) {
-            cumsum[i] /= cumsum[N-1];
-        }
-
-        int s = 0;
-        for (int i = 1; i <=M ; i++) {
-            for(;s < cumsum.length && cumsum[s] <= (1.0*i)/M; ++s) {
-            }
-            buckets[i - 1] = s < cumsum.length ? s : cumsum.length - 1;
-        }
-    }
-
-    public List<SparseWeightableVector> getSampleOfSize(final int t) {
         final List<SparseWeightableVector> result = Lists.newArrayListWithExpectedSize(t);
 
         Map<Integer, Integer> freqMap = Maps.newHashMap();
@@ -68,6 +49,28 @@ public class CTRandomSample {
         }
 
         return result;
+    }
+
+    private void init(final List<SparseWeightableVector> dataset) {
+        this.dataset = dataset;
+        final int N = dataset.size();
+        cumsum = new double[N];
+
+        cumsum[0] = dataset.get(0).getProbability();
+        for (int i = 1; i < N; i++) {
+            cumsum[i] = cumsum[i - 1] + dataset.get(i).getProbability();
+        }
+
+        for (int i = 0; i < N; i++) {
+            cumsum[i] /= cumsum[N-1];
+        }
+
+        int s = 0;
+        for (int i = 1; i <=M ; i++) {
+            for(;s < cumsum.length && cumsum[s] <= (1.0*i)/M; ++s) {
+            }
+            buckets[i - 1] = s < cumsum.length ? s : cumsum.length - 1;
+        }
     }
 
 }

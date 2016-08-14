@@ -1,17 +1,19 @@
 package univ.ml;
 
-import com.google.common.collect.Iterables;
+import java.util.ArrayList;
+import java.util.List;
+
 import org.apache.commons.math3.linear.RealVector;
 import org.apache.commons.math3.util.FastMath;
+
+import com.google.common.collect.Iterables;
+
 import univ.ml.sparse.SparseCentroidCluster;
 import univ.ml.sparse.SparseWSSE;
 import univ.ml.sparse.SparseWeightableVector;
-import univ.ml.sparse.SparseWeightedKMeansPlusPlus;
 import univ.ml.sparse.algorithm.SparseCoresetAlgorithm;
+import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
 import univ.ml.sparse.algorithm.streaming.StreamingAlgorithm;
-
-import java.util.ArrayList;
-import java.util.List;
 
 public class SparseCoresetEvaluator {
 
@@ -40,14 +42,7 @@ public class SparseCoresetEvaluator {
 
         final List<SparseWeightableVector> coreset = streamingAlgorithm.getTotalCoreset();
 
-        double weight = 0d;
-        for (SparseWeightableVector point : coreset) {
-            weight += point.getWeight();
-        }
-
-        System.out.println("Total weight = " + weight);
-
-        final List<SparseCentroidCluster> clusters = clusterer.cluster(coreset);
+            final List<SparseCentroidCluster> clusters = clusterer.cluster(coreset);
 
         double energy = 0d;
         for (SparseWeightableVector point : dataset) {

@@ -7,15 +7,9 @@ import java.util.Random;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
-public class SparseRandomSample {
+public class SparseRandomSample implements RandomSampleAlgorithm {
 
-    private List<SparseWeightableVector> dataset;
-
-    public SparseRandomSample(final List<SparseWeightableVector> dataset) {
-        this.dataset = dataset;
-    }
-
-    public List<SparseWeightableVector> getSampleOfSize(final int t) {
+    public List<SparseWeightableVector> getSampleOfSize(final List<SparseWeightableVector> dataset, final int t) {
         final List<SparseWeightableVector> result = Lists.newArrayListWithExpectedSize(t);
 
         Map<Integer, Integer> freqMap = Maps.newHashMap();

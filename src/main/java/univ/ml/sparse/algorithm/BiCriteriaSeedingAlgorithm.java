@@ -1,16 +1,19 @@
 package univ.ml.sparse.algorithm;
 
-import com.google.common.collect.Lists;
-import org.apache.commons.math3.random.JDKRandomGenerator;
-import org.apache.commons.math3.stat.descriptive.rank.Median;
-import org.apache.commons.math3.util.FastMath;
-import univ.ml.sparse.SparseCentroidCluster;
-import univ.ml.sparse.SparseWeightableVector;
-
+import java.io.Serializable;
 import java.util.Iterator;
 import java.util.List;
 
-public class BiCriteriaAlgorithm {
+import org.apache.commons.math3.random.JDKRandomGenerator;
+import org.apache.commons.math3.stat.descriptive.rank.Percentile;
+import org.apache.commons.math3.util.FastMath;
+
+import com.google.common.collect.Lists;
+
+import univ.ml.sparse.SparseCentroidCluster;
+import univ.ml.sparse.SparseWeightableVector;
+
+public class BiCriteriaSeedingAlgorithm implements SparseSeedingAlgorithm, Serializable {
 
 
     private static final long serialVersionUID = -8180245061391568851L;
@@ -43,14 +46,6 @@ public class BiCriteriaAlgorithm {
             this.vector = vector;
         }
 
-        public int getPointIdx() {
-            return pointIdx;
-        }
-
-        public void setPointIdx(int pointIdx) {
-            this.pointIdx = pointIdx;
-        }
-
         public double getDistance() {
             return distance;
         }
@@ -68,12 +63,23 @@ public class BiCriteriaAlgorithm {
         }
     }
 
-    public BiCriteriaAlgorithm(int k, double percentile) {
+    public BiCriteriaSeedingAlgorithm(int k, double percentile) {
         this.k = k;
         this.percentile = percentile;
     }
 
-    public List<SparseCentroidCluster> takeSample(final List<SparseWeightableVector> pointset) {
+    /**
+     * Running the bi-criteria approximation algorithm:
+     *
+     * <p/>
+     *
+     * Pick k points at random and removes given percentile of the closest points from chosen k points.
+     * Continue to next k points until converges (no more points remains)
+     *
+     * @param pointset initial set of the weithed points
+     * @return (alpha, beta) approximation for k-means algorithm.
+     */
+    public List<SparseCentroidCluster> seed(final List<SparseWeightableVector> pointset) {
 
         final List<SparseCentroidCluster> result = Lists.newArrayList();
 
@@ -136,7 +142,7 @@ public class BiCriteriaAlgorithm {
                 }
             }
 
-            final Median median = new Median();
+            final Percentile median = new Percentile(percentile);
             double dist[] = new double[points.size()];
             for (int i = 0; i < points.size(); i++) {
                 dist[i] = points.get(i).getDistance();

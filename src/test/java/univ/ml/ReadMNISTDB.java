@@ -15,7 +15,8 @@ import univ.ml.sparse.SparseCentroidCluster;
 import univ.ml.sparse.SparseCoresetEvaluator;
 import univ.ml.sparse.SparseWSSE;
 import univ.ml.sparse.SparseWeightableVector;
-import univ.ml.sparse.SparseWeightedKMeansPlusPlus;
+import univ.ml.sparse.algorithm.KmeansPlusPlusSeedingAlgorithm;
+import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
 import univ.ml.sparse.algorithm.SparseNonUniformCoreset;
 import univ.ml.sparse.algorithm.SparseUniformCoreset;
 
@@ -193,7 +194,8 @@ public class ReadMNISTDB {
 
             SparseCoresetEvaluator evaluator = new SparseCoresetEvaluator(clusterer);
 
-            double nonUniformCost = evaluator.evalute(new SparseNonUniformCoreset(_K, sampleSize), pointSet);
+            final KmeansPlusPlusSeedingAlgorithm seedingAlgorithm = new KmeansPlusPlusSeedingAlgorithm(new SparseWeightedKMeansPlusPlus(_K));
+            double nonUniformCost = evaluator.evalute(new SparseNonUniformCoreset(seedingAlgorithm, sampleSize), pointSet);
             double uniformCost = evaluator.evalute(new SparseUniformCoreset(sampleSize), Collections.unmodifiableList(pointSet));
 //            System.out.println("Uniform cost: " + uniformCost);
 //            double kmeansCost = evaluator.evalute(new KmeansCoreset(sampleSize), pointSet);

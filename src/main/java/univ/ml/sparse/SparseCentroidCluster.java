@@ -1,9 +1,9 @@
 package univ.ml.sparse;
 
+import java.io.Serializable;
+
 import org.apache.commons.math3.stat.descriptive.moment.Variance;
 import org.apache.commons.math3.util.FastMath;
-
-import java.io.Serializable;
 
 public class SparseCentroidCluster extends SparseCluster implements Serializable {
 
@@ -35,5 +35,12 @@ public class SparseCentroidCluster extends SparseCluster implements Serializable
 
     public double getClusterVariance() {
         return clusterVariance.getResult();
+    }
+
+    @Override
+    public String toString() {
+        return "SparseCentroidCluster{" +
+                "center=" + center +
+                '}';
     }
 }

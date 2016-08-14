@@ -1,12 +1,14 @@
 package univ.ml.sparse;
 
-import org.apache.commons.math3.linear.OpenMapRealVector;
-import org.apache.commons.math3.linear.RealVector;
-
+import java.io.Serializable;
 import java.util.Iterator;
 import java.util.Map;
 
-public class SparseWeightableVector extends OpenMapRealVector implements SparseSample, SparseWeightable, SparseClusterable, Comparable<SparseWeightableVector> {
+import org.apache.commons.math3.linear.OpenMapRealVector;
+import org.apache.commons.math3.linear.RealVector;
+
+public class SparseWeightableVector extends OpenMapRealVector implements SparseSample, SparseWeightable,
+        SparseClusterable, Comparable<SparseWeightableVector>, Serializable {
 
     private static final long serialVersionUID = 3069201894898346800L;
 

@@ -1,10 +1,10 @@
 package univ.ml.sparse;
 
-import java.util.List;
-
-import univ.ml.sparse.algorithm.SparseCoresetAlgorithm;
-
 import com.google.common.collect.Lists;
+import univ.ml.sparse.algorithm.SparseCoresetAlgorithm;
+import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
+
+import java.util.List;
 
 public class SparseCoresetEvaluator {
 
@@ -21,9 +21,9 @@ public class SparseCoresetEvaluator {
 
         final List<SparseWeightableVector> centers = Lists.newArrayList();
 
-        for (SparseCentroidCluster cluster : clusters) {
-            centers.add(new SparseWeightableVector(cluster.getCenter().getVector(), 1));
-        }
+//        for (SparseCentroidCluster cluster : clusters) {
+//            centers.add(new SparseWeightableVector(cluster.getCenter().getVector(), 1));
+//        }
 
         return costFunction.getCost(centers, pointSet);
     }

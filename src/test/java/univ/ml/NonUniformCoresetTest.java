@@ -20,9 +20,10 @@ import univ.ml.sparse.SparseCentroidCluster;
 import univ.ml.sparse.SparseRandomSample;
 import univ.ml.sparse.SparseWSSE;
 import univ.ml.sparse.SparseWeightableVector;
-import univ.ml.sparse.SparseWeightedKMeansPlusPlus;
+import univ.ml.sparse.algorithm.KmeansPlusPlusSeedingAlgorithm;
 import univ.ml.sparse.algorithm.SparseNonUniformCoreset;
 import univ.ml.sparse.algorithm.SparseUniformCoreset;
+import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
 import univ.ml.sparse.algorithm.streaming.StreamingAlgorithm;
 
 public class NonUniformCoresetTest extends RandomizedTest {
@@ -34,8 +35,8 @@ public class NonUniformCoresetTest extends RandomizedTest {
         final int sampleSize = randomIntBetween(128, 512);
         final int dimension = 1_000;
         final int datasetSize = randomIntBetween(10_000, 20_000);
-
-        final SparseNonUniformCoreset alg = new SparseNonUniformCoreset(k, sampleSize);
+        final KmeansPlusPlusSeedingAlgorithm seedingAlgorithm = new KmeansPlusPlusSeedingAlgorithm(new SparseWeightedKMeansPlusPlus(k));
+        final SparseNonUniformCoreset alg = new SparseNonUniformCoreset(seedingAlgorithm, sampleSize);
 
         List<SparseWeightableVector> points = generateRandomSet(dimension, datasetSize);
         double totalWeight = 0.0;
@@ -70,7 +71,8 @@ public class NonUniformCoresetTest extends RandomizedTest {
 
         final Iterable<List<SparseWeightableVector>> partitions = Iterables.partition(pointSet, 10_000);
 
-        final StreamingAlgorithm streamingNonUniform = new StreamingAlgorithm(new SparseNonUniformCoreset(k, sampleSize));
+        final KmeansPlusPlusSeedingAlgorithm seedingAlgorithm = new KmeansPlusPlusSeedingAlgorithm(new SparseWeightedKMeansPlusPlus(k));
+        final StreamingAlgorithm streamingNonUniform = new StreamingAlgorithm(new SparseNonUniformCoreset(seedingAlgorithm, sampleSize));
         final StreamingAlgorithm streamingUniform = new StreamingAlgorithm(new SparseUniformCoreset(sampleSize));
 
         List<SparseWeightableVector> dataset = Lists.newArrayList();
@@ -134,9 +136,9 @@ public class NonUniformCoresetTest extends RandomizedTest {
 
         List<SparseWeightableVector> points = generateRandomSet(dimension, datasetSize);
 
-        SparseRandomSample randomSample = new SparseRandomSample(points);
+        SparseRandomSample randomSample = new SparseRandomSample();
 
-        final List<SparseWeightableVector> sample = randomSample.getSampleOfSize(sampleSize);
+        final List<SparseWeightableVector> sample = randomSample.getSampleOfSize(points, sampleSize);
         Assert.assertEquals(256, sample.size());
 
         final Set<SparseWeightableVector> set = new HashSet(sample);
@@ -192,7 +194,8 @@ public class NonUniformCoresetTest extends RandomizedTest {
         final int dimension = randomIntBetween(10, 200);
         final int datasetSize = randomIntBetween(250, 1_000);
 
-        final SparseNonUniformCoreset alg = new SparseNonUniformCoreset(k, sampleSize);
+        final KmeansPlusPlusSeedingAlgorithm seedingAlgorithm = new KmeansPlusPlusSeedingAlgorithm(new SparseWeightedKMeansPlusPlus(k));
+        final SparseNonUniformCoreset alg = new SparseNonUniformCoreset(seedingAlgorithm, sampleSize);
 
         List<SparseWeightableVector> points = generateRandomSet(dimension, datasetSize);
         final List<SparseWeightableVector> sample = alg.takeSample(points);
@@ -249,7 +252,8 @@ public class NonUniformCoresetTest extends RandomizedTest {
         final int dimension = randomIntBetween(10, 200);
         final int datasetSize = randomIntBetween(250, 1_000);
 
-        final SparseNonUniformCoreset alg = new SparseNonUniformCoreset(k, sampleSize);
+        final KmeansPlusPlusSeedingAlgorithm seedingAlgorithm = new KmeansPlusPlusSeedingAlgorithm(new SparseWeightedKMeansPlusPlus(k));
+        final SparseNonUniformCoreset alg = new SparseNonUniformCoreset(seedingAlgorithm, sampleSize);
 
         List<SparseWeightableVector> points = generateRandomSet(dimension, datasetSize);
         final List<SparseWeightableVector> sample = alg.takeSample(points);

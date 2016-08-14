@@ -1,25 +1,38 @@
 package univ.ml;
 
-import com.google.common.collect.Lists;
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+
 import org.apache.commons.math3.linear.RealVector;
 import org.apache.commons.math3.ml.clustering.CentroidCluster;
 import org.apache.commons.math3.ml.clustering.DoublePoint;
 import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer;
+import org.apache.commons.math3.random.JDKRandomGenerator;
 import org.apache.commons.math3.random.RandomDataGenerator;
+import org.apache.commons.math3.random.UnitSphereRandomVectorGenerator;
+import org.apache.commons.math3.stat.descriptive.moment.Mean;
+import org.apache.commons.math3.stat.descriptive.moment.VectorialMean;
+import org.apache.commons.math3.util.FastMath;
 import org.apache.commons.math3.util.MathArrays;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+
 import univ.ml.sparse.SparseCentroidCluster;
+import univ.ml.sparse.SparseRandomSample;
 import univ.ml.sparse.SparseWSSE;
 import univ.ml.sparse.SparseWeightableVector;
-import univ.ml.sparse.SparseWeightedKMeansPlusPlus;
-import univ.ml.sparse.algorithm.BiCriteriaAlgorithm;
+import univ.ml.sparse.algorithm.BiCriteriaSeedingAlgorithm;
+import univ.ml.sparse.algorithm.KMeansPlusPlusSeed;
+import univ.ml.sparse.algorithm.KmeansPlusPlusSeedingAlgorithm;
+import univ.ml.sparse.algorithm.SensitivityFunction;
 import univ.ml.sparse.algorithm.SparseNonUniformCoreset;
+import univ.ml.sparse.algorithm.SparseSeedingAlgorithm;
 import univ.ml.sparse.algorithm.SparseUniformCoreset;
-
-import java.io.IOException;
-import java.util.List;
-import java.util.Map;
+import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
 
 public class CompareUniformVSNonUniformAlg {
 
@@ -31,24 +44,123 @@ public class CompareUniformVSNonUniformAlg {
 
     private static int k = 15;
 
-    private static int pointsToRead = 10_000;
+    private static int pointsToRead = 50_000;
 
     private static int iterations = 10;
 
-    private int sampleSize = 20_000;
+    private int sampleSize = 1_500;
 
-    private int batchSize = 10_000;
+    private int batchSize = 50_000;
 
     @BeforeClass
     public static void setup() throws IOException {
         final MNISTReader reader = new MNISTReader("/Users/bartem/sandbox/coreset/src/main/resources/mnist_train.csv");
-//        pointSet = generateRandomSet(1_000, pointsToRead, 0);
         pointSet = reader.readPoints(pointsToRead);
+//        pointSet = generateRandomSet(1_0, pointsToRead, 0);
         transform = new SparseWeightedKMeansPlusPlus(k, iterations);
     }
 
+
     @Test
-    public void compare() throws IOException {
+    public void simpleTest() {
+        int D = 3;
+        int N = 50_000;
+        int trials = 10;
+
+        List<SparseWeightableVector> points = getNormalizedVectors(D, N);
+
+        double totalVariance = 0d;
+        final int STEP = 100;
+
+        int START = 0;
+
+        int END = 100;
+
+        final VectorialMean mean = new VectorialMean(D);
+        for (SparseWeightableVector point : points) {
+            double v[] = new double[point.getDimension()];
+            for (int i = 0; i < point.getDimension(); i++) {
+                v[i] = point.getEntry(i);
+            }
+            totalVariance += point.getWeight() * FastMath.pow(MathArrays.safeNorm(v), 2);
+            MathArrays.scaleInPlace(point.getWeight(), v);
+            mean.increment(v);
+        }
+
+        System.out.println("Mean = " + MathArrays.safeNorm(mean.getResult()));
+        System.out.println("Total vectors variance = " + totalVariance);
+
+        Map<Integer, Mean> weightsMeans = Maps.newTreeMap();
+        Map<Integer, Mean> norms = Maps.newTreeMap();
+
+        for (int i = START; i < END; i++) {
+            weightsMeans.put(STEP * (i + 1), new Mean());
+            norms.put(STEP * (i + 1), new Mean());
+        }
+
+        for (int i = 0; i < trials; i++) {
+            for (Map.Entry<Integer, Mean> weights : weightsMeans.entrySet()) {
+                final int sampleSize = weights.getKey();
+
+                // Create seeding algorithm for (alpha, beta) - approximation based on k-means++.
+                final SparseSeedingAlgorithm seedingAlgorithm = new KmeansPlusPlusSeedingAlgorithm(new SparseWeightedKMeansPlusPlus(1));
+
+                // Initialize coreset algorithm
+                final SparseNonUniformCoreset coreset = new SparseNonUniformCoreset(seedingAlgorithm, sampleSize,
+                                                                        new SensitivityFunction(), new SparseRandomSample());
+
+                List<SparseWeightableVector> copy = Lists.newArrayList();
+                for (SparseWeightableVector point : points) {
+                    copy.add(new SparseWeightableVector(point, point.getWeight()));
+                }
+
+                final List<SparseWeightableVector> sample = coreset.takeSample(copy);
+
+                double totalWeight = 0d;
+                for (SparseWeightableVector s : sample) {
+                    double v[] = new double[s.getDimension()];
+                    for (int j = 0; j < s.getVector().getDimension(); j++) {
+                        v[j] = s.getEntry(j);
+                    }
+                    totalWeight += s.getWeight();
+                }
+
+                weights.getValue().increment(totalWeight);
+
+                final SparseWeightedKMeansPlusPlus kmeans = new SparseWeightedKMeansPlusPlus(1);
+                final List<SparseCentroidCluster> clusters = kmeans.cluster(sample);
+
+                norms.get(weights.getKey()).increment(clusters.get(0).getCenter().getVector().getNorm());
+            }
+        }
+        System.out.println("Size;Weight;Error;Size*Error");
+
+        for (Map.Entry<Integer, Mean> each : weightsMeans.entrySet()) {
+            final double norm = FastMath.pow(norms.get(each.getKey()).getResult(), 2);
+            System.out.println(each.getKey() + ";" + each.getValue().getResult()
+                    + ";" + norm
+                    + ";" + (norm * each.getKey()));
+        }
+    }
+
+    @Test
+    public void checkKmeans() {
+        final List<SparseWeightableVector> vectors = getNormalizedVectors(10, 10);
+        final SparseWeightedKMeansPlusPlus kmeans = new SparseWeightedKMeansPlusPlus(1);
+        final List<SparseCentroidCluster> clusters = kmeans.cluster(vectors);
+
+        System.out.println("Center = " + clusters.get(0).getCenter().getVector());
+    }
+
+    @Test
+    public void bitwise() {
+        int  v = 1;
+
+        System.out.println( (Integer.MAX_VALUE >> 30));
+    }
+
+    @Test
+    public void compare() {
 
         // Compute baseline on entire dataset
         final List<SparseCentroidCluster> realClusters = transform.cluster(pointSet);
@@ -70,7 +182,10 @@ public class CompareUniformVSNonUniformAlg {
 
         // NonUniform coreset
         final SparseCoresetEvaluator evaluator = new SparseCoresetEvaluator(transform);
-        final double nonUniformEnergy = evaluator.evaluate(new SparseNonUniformCoreset(k, sampleSize), pointSet, batchSize);
+        final SparseSeedingAlgorithm seedingAlgorithm = new KmeansPlusPlusSeedingAlgorithm(new SparseWeightedKMeansPlusPlus(k));
+//        final SparseSeedingAlgorithm seedingAlgorithm = new BiCriteriaSeedingAlgorithm(k, 45);
+
+        final double nonUniformEnergy = evaluator.evaluate(new SparseNonUniformCoreset(seedingAlgorithm, sampleSize), pointSet, batchSize);
 
         System.out.println("===");
         System.out.println("Non-Uniform Coreset energy: " + nonUniformEnergy);
@@ -144,8 +259,8 @@ public class CompareUniformVSNonUniformAlg {
 
         System.out.println("Sparse (kmeans) energy: " + realEnergy);
 
-        final BiCriteriaAlgorithm biCriteria = new BiCriteriaAlgorithm(k, .5);
-        final List<SparseCentroidCluster> biCriteriaResults = biCriteria.takeSample(pointSet);
+        final BiCriteriaSeedingAlgorithm biCriteria = new BiCriteriaSeedingAlgorithm(k, 50);
+        final List<SparseCentroidCluster> biCriteriaResults = biCriteria.seed(pointSet);
 
         System.out.println("BiCriteria Size = " + biCriteriaResults.size());
 
@@ -168,14 +283,18 @@ public class CompareUniformVSNonUniformAlg {
 
         System.out.println("BiCriteria energy: " + cost);
 
+        final SparseSeedingAlgorithm seedAlg = new KMeansPlusPlusSeed(k);
+        final List<SparseCentroidCluster> seedAlgResults = seedAlg.seed(pointSet);
+
+        System.out.println("KMeans++ Seed Size = " + seedAlgResults.size());
+
         cost = 0d;
-        final Map<Integer, SparseCentroidCluster> centers = transform.chooseInitialCenters(pointSet);
         for (int i = 0; i < pointSet.size(); i++) {
             final RealVector v1 = pointSet.get(i).getVector();
 
             double minDist = Double.MAX_VALUE;
 
-            for (SparseCentroidCluster cluster : centers.values()) {
+            for (SparseCentroidCluster cluster : seedAlgResults) {
                 final RealVector v2 = cluster.getCenter().getVector();
 
                 final double d = v2.getDistance(v1);
@@ -186,7 +305,8 @@ public class CompareUniformVSNonUniformAlg {
             cost += minDist * minDist;
         }
 
-        System.out.println("Kmeans seed energy: " + cost);
+        System.out.println("KMeans++ seed energy: " + cost);
+
     }
 
 //    @Test
@@ -268,5 +388,49 @@ public class CompareUniformVSNonUniformAlg {
         return points;
     }
 
+    private List<SparseWeightableVector> getNormalizedVectors(int d, int n) {
+        List<SparseWeightableVector> points = Lists.newArrayList();
+
+        final UnitSphereRandomVectorGenerator rnd = new UnitSphereRandomVectorGenerator(d, new JDKRandomGenerator());
+
+        final VectorialMean vectorMean = new VectorialMean(d);
+        final double[][] tempMatrix = new double[n][];
+
+        final double weight = 1d/n;
+
+        for (int i = 0; i < n; i++) {
+            tempMatrix[i] = rnd.nextVector();
+            vectorMean.increment(tempMatrix[i]);
+        }
+
+        for (int i = 0; i < n; i++) {
+            tempMatrix[i] = MathArrays.ebeSubtract(tempMatrix[i], vectorMean.getResult());
+        }
+
+        double totalVariance = 0d;
+        for (int i = 0; i < n; i++) {
+            totalVariance += weight * FastMath.pow(MathArrays.safeNorm(tempMatrix[i]), 2);
+        }
+
+        System.out.println("Variance BEFORE " + totalVariance);
+        for (int i = 0; i < n; i++) {
+            MathArrays.scaleInPlace(1d / FastMath.sqrt(totalVariance), tempMatrix[i]);
+        }
+
+        totalVariance = 0d;
+        for (int i = 0; i < n; i++) {
+            totalVariance += weight * FastMath.pow(MathArrays.safeNorm(tempMatrix[i]), 2);
+        }
+        System.out.println("Variance AFTER " + totalVariance);
+
+        for (int i = 0; i < n; i++) {
+            Map<Integer, Double> coord = Maps.newHashMap();
+            for (int j = 0; j < d; j++) {
+                coord.put(j, tempMatrix[i][j]);
+            }
+            points.add(new SparseWeightableVector(coord, weight, d));
+        }
+        return points;
+    }
 
 }
