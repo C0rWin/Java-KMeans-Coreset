@@ -69,7 +69,7 @@ public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
             return result;
         }
 
-        final List<SparseCentroidCluster> clusters = seedingAlgorithm.seed(pointset);
+        List<SparseCentroidCluster> clusters = seedingAlgorithm.seed(pointset);
         double totalVariance = 0d;
 
         double t_bound = 8 * clusters.size() + 2;

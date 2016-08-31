@@ -5,7 +5,8 @@ import java.util.List;
 
 import com.google.common.collect.Lists;
 
-import univ.ml.sparse.CTRandomSample;
+import univ.ml.sparse.RandomSampleAlgorithm;
+import univ.ml.sparse.SparseRandomSample;
 import univ.ml.sparse.SparseWeightableVector;
 
 public class SparseUniformCoreset implements SparseCoresetAlgorithm {
@@ -38,7 +39,7 @@ public class SparseUniformCoreset implements SparseCoresetAlgorithm {
 
         Collections.shuffle(copy);
 
-        CTRandomSample sample = new CTRandomSample();
+        RandomSampleAlgorithm sample = new SparseRandomSample();
 
         return sample.getSampleOfSize(copy, t);
     }

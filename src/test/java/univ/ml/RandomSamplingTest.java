@@ -8,10 +8,7 @@ import org.apache.commons.math3.util.Precision;
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.carrotsearch.randomizedtesting.RandomizedTest;
-import com.carrotsearch.randomizedtesting.annotations.Repeat;
-
-public class RandomSamplingTest extends RandomizedTest {
+public class RandomSamplingTest {
 
     public static class RandomSampleLinear {
 
@@ -40,8 +37,10 @@ public class RandomSamplingTest extends RandomizedTest {
 
     }
 
+    /**
+     * Suppose to fail 5 times over 100 executions.
+     */
     @Test
-    @Repeat(iterations = 1_000)
     public void samplingChiSquareTest() {
         double[] probabilities = new double[] {0.1, 0.2, 0.05, 0.01, 0.31, 0.03, 0.11, 0.09, 0.04, 0.06};
 

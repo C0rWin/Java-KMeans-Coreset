@@ -181,18 +181,18 @@ public class CompareUniformVSNonUniformAlg {
         System.out.println();
 
         // NonUniform coreset
-        final SparseCoresetEvaluator evaluator = new SparseCoresetEvaluator(transform);
+        final SparseCoresetEvaluator evaluator = new SparseCoresetEvaluator(transform, pointSet, batchSize);
         final SparseSeedingAlgorithm seedingAlgorithm = new KmeansPlusPlusSeedingAlgorithm(new SparseWeightedKMeansPlusPlus(k));
 //        final SparseSeedingAlgorithm seedingAlgorithm = new BiCriteriaSeedingAlgorithm(k, 45);
 
-        final double nonUniformEnergy = evaluator.evaluate(new SparseNonUniformCoreset(seedingAlgorithm, sampleSize), pointSet, batchSize);
+        final double nonUniformEnergy = evaluator.evaluate(new SparseNonUniformCoreset(seedingAlgorithm, sampleSize));
 
         System.out.println("===");
         System.out.println("Non-Uniform Coreset energy: " + nonUniformEnergy);
         System.out.println();
 
         // Uniform coreset
-        final double uniformEnergy = evaluator.evaluate(new SparseUniformCoreset(sampleSize), pointSet, batchSize);
+        final double uniformEnergy = evaluator.evaluate(new SparseUniformCoreset(sampleSize));
 
         System.out.println("===");
         System.out.println("Uniform Coreset energy: " + uniformEnergy);

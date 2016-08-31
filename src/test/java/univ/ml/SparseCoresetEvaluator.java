@@ -9,7 +9,6 @@ import org.apache.commons.math3.util.FastMath;
 import com.google.common.collect.Iterables;
 
 import univ.ml.sparse.SparseCentroidCluster;
-import univ.ml.sparse.SparseWSSE;
 import univ.ml.sparse.SparseWeightableVector;
 import univ.ml.sparse.algorithm.SparseCoresetAlgorithm;
 import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
@@ -17,16 +16,19 @@ import univ.ml.sparse.algorithm.streaming.StreamingAlgorithm;
 
 public class SparseCoresetEvaluator {
 
-    private SparseWSSE costFunction = new SparseWSSE();
+    private final int batchSize;
+
+    private final List<SparseWeightableVector> dataset;
 
     private SparseWeightedKMeansPlusPlus clusterer;
 
-    public SparseCoresetEvaluator(SparseWeightedKMeansPlusPlus clusterer) {
+    public SparseCoresetEvaluator(SparseWeightedKMeansPlusPlus clusterer, List<SparseWeightableVector> pointSet, int batchSize) {
         this.clusterer = clusterer;
+        this.dataset = pointSet;
+        this.batchSize = batchSize;
     }
 
-    public double evaluate(final SparseCoresetAlgorithm algorithm, final List<SparseWeightableVector> dataset,
-                           final int batchSize) {
+    public double evaluate(final SparseCoresetAlgorithm algorithm) {
         // Safely copy dataset points into the temp list
         final List<SparseWeightableVector> points = new ArrayList<>(dataset.size());
         for (SparseWeightableVector each : dataset) {
@@ -42,7 +44,7 @@ public class SparseCoresetEvaluator {
 
         final List<SparseWeightableVector> coreset = streamingAlgorithm.getTotalCoreset();
 
-            final List<SparseCentroidCluster> clusters = clusterer.cluster(coreset);
+        final List<SparseCentroidCluster> clusters = clusterer.cluster(coreset);
 
         double energy = 0d;
         for (SparseWeightableVector point : dataset) {
