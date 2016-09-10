@@ -1,16 +1,18 @@
 package univ.ml;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import org.apache.commons.math3.util.FastMath;
-import org.junit.Test;
-import univ.ml.sparse.SparseCentroidCluster;
-import univ.ml.sparse.SparseWeightableVector;
-import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
-
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+
+import org.apache.commons.math3.util.FastMath;
+import org.junit.Test;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+
+import univ.ml.sparse.SparseCentroidCluster;
+import univ.ml.sparse.SparseWeightableVector;
+import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
 
 public class SparseKMeansTest {
 
@@ -22,7 +24,7 @@ public class SparseKMeansTest {
 
         final Random rnd = new Random(System.currentTimeMillis());
 
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 10_000; i++) {
             Map<Integer, Double> coordinates = Maps.newHashMap();
             for (int j = 0; j < 3; j++) {
                 coordinates.put(j, 100*rnd.nextDouble());
@@ -31,7 +33,7 @@ public class SparseKMeansTest {
             weightedPoints.add(new SparseWeightableVector(coordinates, 100d * rnd.nextDouble(), 3));
         }
 
-        final SparseWeightedKMeansPlusPlus kMeans = new SparseWeightedKMeansPlusPlus(20);
+        final SparseWeightedKMeansPlusPlus kMeans = new SparseWeightedKMeansPlusPlus(3);
         final List<SparseCentroidCluster> regularClusters = kMeans.cluster(regularPoints);
         final List<SparseCentroidCluster> weightedClusters = kMeans.cluster(weightedPoints);
 
@@ -58,4 +60,5 @@ public class SparseKMeansTest {
         System.out.println("Non weighted energy = " + regularEnergy);
         System.out.println("Weighted energy = " + weightedEnergy);
     }
+
 }

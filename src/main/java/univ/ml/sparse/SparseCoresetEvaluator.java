@@ -1,12 +1,16 @@
 package univ.ml.sparse;
 
+import java.io.Serializable;
+import java.util.List;
+
 import com.google.common.collect.Lists;
+
 import univ.ml.sparse.algorithm.SparseCoresetAlgorithm;
 import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
 
-import java.util.List;
+public class SparseCoresetEvaluator implements Serializable {
 
-public class SparseCoresetEvaluator {
+    private static final long serialVersionUID = -7660109554383619879L;
 
     private final SparseWeightedKMeansPlusPlus clusterer;
 

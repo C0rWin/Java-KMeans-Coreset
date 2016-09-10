@@ -1,5 +1,6 @@
 package univ.ml.sparse;
 
+import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -7,7 +8,9 @@ import java.util.Random;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
-public class SparseRandomSample implements RandomSampleAlgorithm {
+public class SparseRandomSample implements RandomSampleAlgorithm, Serializable {
+
+    private static final long serialVersionUID = 7797414433832232341L;
 
     public List<SparseWeightableVector> getSampleOfSize(final List<SparseWeightableVector> dataset, final int t) {
         final List<SparseWeightableVector> result = Lists.newArrayListWithExpectedSize(t);

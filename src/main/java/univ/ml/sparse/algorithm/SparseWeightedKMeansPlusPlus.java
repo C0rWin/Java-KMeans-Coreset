@@ -17,6 +17,7 @@
 
 package univ.ml.sparse.algorithm;
 
+import java.io.Serializable;
 import java.util.Collection;
 import java.util.List;
 
@@ -36,7 +37,9 @@ import univ.ml.sparse.SparseClusterable;
 import univ.ml.sparse.SparseClusterer;
 import univ.ml.sparse.SparseWeightableVector;
 
-public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
+public class SparseWeightedKMeansPlusPlus implements SparseClusterer, Serializable {
+
+    private static final long serialVersionUID = -4153678824717933803L;
 
     private final int maxIterations;
 
@@ -82,14 +85,24 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
         // create the initial clusters
         List<SparseCentroidCluster> clusters = seedAlg.seed(points);
 
-//        System.out.println("XXX: Number of clusters after seeding: " + clusters.size());
-
         // create an array containing the latest assignment of a point to a cluster
         // no need to initialize the array, as it will be filled with the first assignment
         int[] assignments = new int[points.size()];
         final int max = (maxIterations < 0) ? Integer.MAX_VALUE : maxIterations;
 
         for (int count = 0; count < max; count++) {
+            double energy = 0d;
+
+            for (final SparseCentroidCluster cluster : clusters) {
+                for (SparseWeightableVector vector : cluster.getPoints()) {
+                    energy += Math.pow(cluster.getCenter().getVector().getDistance(vector.getVector()), 2);
+                }
+            }
+
+            System.out.println("Energy at round #" + count + " is " + energy
+                    + ", first cluster center is = " + clusters.get(0).getCenter().getVector().toString()
+                    + ", cluster size is " + clusters.get(0).getPoints().size());
+
             final List<SparseCentroidCluster> newClusters = Lists.newArrayList();
 
             for (SparseCentroidCluster cluster : clusters) {
@@ -99,11 +112,14 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer {
             int changes = assignPointsToClusters(newClusters, points, assignments);
             clusters = newClusters;
 
+
+
             // if there were no more changes in the point-to-cluster assignment
             if (changes == 0) {
                 break;
             }
         }
+        System.out.println("=====>>>><<<<<=======");
         return clusters;
     }
 

@@ -1,5 +1,6 @@
 package univ.ml.sparse;
 
+import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -7,9 +8,10 @@ import java.util.Random;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
-public class CTRandomSample implements RandomSampleAlgorithm {
+public class CTRandomSample implements RandomSampleAlgorithm, Serializable {
 
     private static final int M = 100_000;
+    private static final long serialVersionUID = -2531580940763249298L;
 
     private double[] cumsum;
 

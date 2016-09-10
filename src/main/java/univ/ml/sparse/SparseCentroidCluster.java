@@ -2,17 +2,12 @@ package univ.ml.sparse;
 
 import java.io.Serializable;
 
-import org.apache.commons.math3.stat.descriptive.moment.Variance;
-import org.apache.commons.math3.util.FastMath;
-
 public class SparseCentroidCluster extends SparseCluster implements Serializable {
 
     private static final long serialVersionUID = -321133774182676323L;
 
     /** Center of the cluster. */
     private final SparseClusterable center;
-
-    private Variance clusterVariance = new Variance();
 
     public SparseCentroidCluster(final SparseClusterable center) {
         super();
@@ -30,11 +25,6 @@ public class SparseCentroidCluster extends SparseCluster implements Serializable
     @Override
     public void addPoint(SparseWeightableVector point) {
         super.addPoint(point);
-        clusterVariance.increment(FastMath.sqrt(point.getWeight())*center.getVector().getDistance(point));
-    }
-
-    public double getClusterVariance() {
-        return clusterVariance.getResult();
     }
 
     @Override

@@ -44,7 +44,6 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
             sumSqDist += sqDist[i];
         }
 
-//        System.out.println("Before while LOOP. result.size() == " + result.size() + ", k == " + k + ", AND condition value is  = " + (result.size() < k));
         while (result.size() < k) {
             selectedIdx = selectNext(N, sqDist, sumSqDist);
             selectedCenter = vectors.get(selectedIdx);
@@ -62,7 +61,6 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
 
         // Once we here, the only thing remained to complete is to partition dataset into clusters
         // induced by centers selected.
-//        System.out.println("Partition points into cluster based on selection");
         for (int i = 0; i < N; i++) {
             double minDist = Double.MAX_VALUE;
             int clusterIdx = -1;
