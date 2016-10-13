@@ -100,6 +100,7 @@ public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
             double s_p = point.getProbability() * t_bound;
             point.setWeight(point.getWeight() / (sample.size() * s_p));
         }
+
         return sample;
     }
 

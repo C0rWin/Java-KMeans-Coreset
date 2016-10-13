@@ -91,17 +91,19 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer, Serializab
         final int max = (maxIterations < 0) ? Integer.MAX_VALUE : maxIterations;
 
         for (int count = 0; count < max; count++) {
+/*
             double energy = 0d;
 
             for (final SparseCentroidCluster cluster : clusters) {
                 for (SparseWeightableVector vector : cluster.getPoints()) {
-                    energy += Math.pow(cluster.getCenter().getVector().getDistance(vector.getVector()), 2);
+                    energy += Math.pow(cluster.getDistanceToCenter(vector), 2);
                 }
             }
 
             System.out.println("Energy at round #" + count + " is " + energy
                     + ", first cluster center is = " + clusters.get(0).getCenter().getVector().toString()
                     + ", cluster size is " + clusters.get(0).getPoints().size());
+*/
 
             final List<SparseCentroidCluster> newClusters = Lists.newArrayList();
 
@@ -112,14 +114,11 @@ public class SparseWeightedKMeansPlusPlus implements SparseClusterer, Serializab
             int changes = assignPointsToClusters(newClusters, points, assignments);
             clusters = newClusters;
 
-
-
             // if there were no more changes in the point-to-cluster assignment
             if (changes == 0) {
                 break;
             }
         }
-        System.out.println("=====>>>><<<<<=======");
         return clusters;
     }
 

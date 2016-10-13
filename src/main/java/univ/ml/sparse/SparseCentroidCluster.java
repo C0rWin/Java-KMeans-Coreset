@@ -22,6 +22,15 @@ public class SparseCentroidCluster extends SparseCluster implements Serializable
         return center;
     }
 
+    /**
+     * Calculate L2 distance from given point to cluster center
+     * @param point point to get distance to
+     * @return distance to cluster center
+     */
+    public double getDistanceToCenter(final SparseWeightableVector point) {
+        return center.getVector().getDistance(point.getVector());
+    }
+
     @Override
     public void addPoint(SparseWeightableVector point) {
         super.addPoint(point);
