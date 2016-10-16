@@ -33,7 +33,12 @@ public class SparseKmeansCoresetAlgorithm implements SparseCoresetAlgorithm {
         final List<SparseWeightableVector> results = new ArrayList<>();
         for (final SparseCentroidCluster cluster : clusters) {
             final RealVector center = cluster.getCenter().getVector();
-            final int weight = cluster.getPoints().size();
+            double weight = 0d;
+            // Get cluster total weight
+            for (SparseWeightableVector point : cluster.getPoints()) {
+                weight += point.getWeight();
+            }
+
             results.add(new SparseWeightableVector(center, weight));
         }
 
