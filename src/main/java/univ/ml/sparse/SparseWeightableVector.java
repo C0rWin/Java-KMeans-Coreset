@@ -79,7 +79,7 @@ public class SparseWeightableVector extends OpenMapRealVector implements SparseS
     public RealVector getVector() {
         return this;
     }
-    
+
     @Override
     public String toString() {
     	StringBuilder buf = new StringBuilder();

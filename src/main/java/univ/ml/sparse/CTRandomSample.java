@@ -17,8 +17,6 @@ public class CTRandomSample implements RandomSampleAlgorithm, Serializable {
 
     private int[] buckets = new int[M];
 
-    private List<SparseWeightableVector> dataset;
-
     public List<SparseWeightableVector> getSampleOfSize(final List<SparseWeightableVector> dataset, final int t) {
 
         init(dataset);
@@ -54,7 +52,6 @@ public class CTRandomSample implements RandomSampleAlgorithm, Serializable {
     }
 
     private void init(final List<SparseWeightableVector> dataset) {
-        this.dataset = dataset;
         final int N = dataset.size();
         cumsum = new double[N];
 
