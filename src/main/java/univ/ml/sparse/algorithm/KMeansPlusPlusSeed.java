@@ -1,6 +1,7 @@
 package univ.ml.sparse.algorithm;
 
 import java.io.Serializable;
+import java.util.BitSet;
 import java.util.List;
 
 import org.apache.commons.math3.random.JDKRandomGenerator;
@@ -27,6 +28,7 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
     @Override
     public List<SparseCentroidCluster> seed(final List<SparseWeightableVector> vectors) {
         List<SparseCentroidCluster> result = Lists.newArrayList();
+        final BitSet selected = new BitSet();
 
         final int N = vectors.size();
         double[] sqDist = new double[N];
@@ -34,6 +36,7 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
         int selectedIdx = rnd.nextInt(N);
         SparseWeightableVector selectedCenter = vectors.get(selectedIdx);
         result.add(new SparseCentroidCluster(selectedCenter));
+        selected.set(selectedIdx);
 
         double sumSqDist = 0d;
 
@@ -45,7 +48,14 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
         }
 
         while (result.size() < k) {
-            selectedIdx = selectNext(N, sqDist, sumSqDist);
+            selectedIdx = selectNext(sqDist, sumSqDist);
+
+            if (selected.get(selectedIdx)) {
+                continue;
+            }
+
+            // Mark point index as already selected to avoid repetitions
+            selected.set(selectedIdx);
             selectedCenter = vectors.get(selectedIdx);
             result.add(new SparseCentroidCluster(selectedCenter));
 
@@ -80,15 +90,19 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
         return result;
     }
 
-    private int selectNext(int n, double[] sqDist, double sumSqDist) {
+    private int selectNext(double[] sqDist, double sumSqDist) {
+        if (sqDist == null || sqDist.length == 0) {
+            throw new IllegalArgumentException("Distances array could not be of zero length or null.");
+        }
+
         final double X = rnd.nextDouble() * sumSqDist;
         double cdf = 0d;
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < sqDist.length; i++) {
             cdf += sqDist[i];
             if (cdf >= X) {
                 return i;
             }
         }
-        return -1;
+        return sqDist.length - 1;
     }
 }
