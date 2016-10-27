@@ -1,6 +1,7 @@
 package univ.ml.sparse.algorithm;
 
 import java.io.Serializable;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
@@ -103,6 +104,7 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
                 return i;
             }
         }
+        System.out.println("XXXXXX [SIMON SAYS]: " + Arrays.toString(sqDist) + ", total sum is: " + sumSqDist);
         return sqDist.length - 1;
     }
 }
