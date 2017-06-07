@@ -228,25 +228,34 @@ APIs
 
     service CoresetService {
 
-        bool initialize(1:i32 k, 2:i32
-                sampleSize, 3:CoresetAlgorithm
-                algorithm)
+        bool initialize(1:i32 k, 2:i32 sampleSize, 3:CoresetAlgorithm algorithm)
 
-            oneway void
-            compressPoints(1:CoresetPoints
-                    message)
+        oneway void compressPoints(1:CoresetPoints message)
 
-            CoresetPoints
-            getTotalCoreset()
+        CoresetPoints getTotalCoreset()
 
-            double getEnergy(1:
-                    CoresetPoints centers,
-                    2: CoresetPoints
-                    points)
+        double getEnergy(1: CoresetPoints centers, 2: CoresetPoints points)
 
-            bool isDone()
+        bool isDone()
     }
     ```
+
+4. ### Distributed protocol implementation:
+
+   `CoresetServiceHandler` implements the logic of the `CoresetService` define
+   with Apache Thrift above, it's capable to serve incomming batches of
+   streamed data points and maintain coreset **merge-and-reduce** tree
+   according to the initialization parameters.
+
+   Protocol definition allows to initialize service handler with three
+   different implementations of the coreset algorithm, the k of kmeans
+   algorithm parameters and the actual coreset size.
+
+   Once initialized it will allow to send weithed points from `R^d` to compress
+   them into coreset and construct **merge-and-reduce** tree. After all it also
+   could be used to compute energy function in the distributed manner,
+   leveraging `getEnergy` method, which receives centers and points and
+   computes sum of squared distances to the provided centers.
 
 Feedback
 ---
