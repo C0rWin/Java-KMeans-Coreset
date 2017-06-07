@@ -257,6 +257,50 @@ APIs
    leveraging `getEnergy` method, which receives centers and points and
    computes sum of squared distances to the provided centers.
 
+
+How to run
+---
+
+1. ### Building the project.
+
+  In order to build the project please run:
+  ```
+  mvn clean install
+  ```
+
+  Compilation will produce two jar files in coreset-serer/target folder:
+
+  1.1. **client.jar** - the client application to distribute points accross servers
+  1.2. **server.jar** - the server application to receive batch of streamed
+  points, compute and construct coreset tree.
+
+2. ### Running server
+
+   To execute server code you need to run:
+
+   ```
+   java -jar server.jar 9999
+   ```
+
+   where 9999 stands for TCP port server will bind to.
+
+   Next to execute client you need to run:
+
+   ```
+   java -jar client.jar -k 32 -algorithm KMEANS_PLUS_PLUS \
+   -sampleSize 512 -batchSize 1024 \
+   -hosts serverIP1:9999,serverIP2:9999,...,serverIPN
+   ```
+
+   Where:
+
+   * k - kmeans clustering parameter
+   * algorithm - one of the available agorithms options: UNIFORM, NON_UNIFORM, KMEANS_PLUS_PLUS
+   * sampleSize - the coreset size to sample
+   * batchSize - number of points to send in each batch to the remote server
+   * hosts - comma separated list of the remote hosts to distributed points to
+
+
 Feedback
 ---
 
