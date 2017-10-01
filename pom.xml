@@ -8,9 +8,9 @@
   <name>coreset</name>
 
   <modules>
+    <module>kmeans-coreset</module>
     <module>coreset-communication</module>
     <module>coreset-server</module>
-    <module>kmeans-coreset</module>
   </modules>
 
   <properties>
