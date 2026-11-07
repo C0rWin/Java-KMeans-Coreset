@@ -135,8 +135,8 @@ public final class CoordinatorCommand implements Callable<Integer> {
         CoordinatorOptions options = CoordinatorOptions.defaults().withMaxInFlightPerNode(maxInFlight);
         String token = authTokenFile == null ? null : Files.readString(authTokenFile, StandardCharsets.UTF_8).strip();
         ClientSecurity security = new ClientSecurity(tlsCa, tlsCert, tlsKey, token);
-        try (CoresetCoordinator coordinator = CoresetCoordinator.connect(nodes, options, security, MetricsSink.NOOP)) {
-            coordinator.createSession(sessionId, sessionSpec);
+        try (CoresetCoordinator coordinator = CoresetCoordinator.connect(nodes, options, security, MetricsSink.NOOP);
+             SessionLease ignored = SessionLease.create(coordinator, sessionId, sessionSpec, keepSession)) {
             long points = 0;
             try (IngestStream stream = coordinator.openIngest(sessionId);
                  BufferedReader reader = Files.newBufferedReader(input, StandardCharsets.UTF_8)) {
@@ -154,9 +154,6 @@ public final class CoordinatorCommand implements Callable<Integer> {
             }
             KMeansResult result = CoresetCoordinator.cluster(snapshot.coreset(), k, iterations, seed, finalCompress);
             double cost = coordinator.cost(sessionId, result.centers());
-            if (!keepSession) {
-                coordinator.closeSession(sessionId);
-            }
             out.printf("# session=%s points=%d batches=%d coreset_points=%d cost=%s%n", sessionId, points,
                     snapshot.acceptedBatches(), snapshot.coreset().size(), cost);
             for (SparseVector c : result.centers()) {
@@ -177,5 +174,34 @@ public final class CoordinatorCommand implements Callable<Integer> {
 
     public static void main(String[] args) {
         System.exit(new CommandLine(new CoordinatorCommand()).execute(args));
+    }
+
+    /** Creates the session and closes it again on every exit path, unless it is to be kept. */
+    private record SessionLease(CoresetCoordinator coordinator, String sessionId, boolean keep)
+            implements AutoCloseable {
+
+        static SessionLease create(CoresetCoordinator coordinator, String sessionId, SessionSpec spec, boolean keep)
+                throws InterruptedException {
+            try {
+                coordinator.createSession(sessionId, spec);
+            } catch (RuntimeException e) {
+                if (!keep) { // some nodes may have created it before another refused
+                    try {
+                        coordinator.closeSession(sessionId);
+                    } catch (RuntimeException suppressed) {
+                        e.addSuppressed(suppressed);
+                    }
+                }
+                throw e;
+            }
+            return new SessionLease(coordinator, sessionId, keep);
+        }
+
+        @Override
+        public void close() throws InterruptedException {
+            if (!keep) {
+                coordinator.closeSession(sessionId);
+            }
+        }
     }
 }

@@ -135,6 +135,22 @@ class NodeLimitsTest {
     }
 
     @Test
+    void idleSessionsExpireWhileActiveOnesStay() throws Exception {
+        CoresetNode n = node(NodeLimits.builder().sessionIdleTimeout(Duration.ofMillis(200)).build(), Map.of());
+        n.createSession("idle", spec(1));
+        n.createSession("active", spec(1));
+        SplittableRandom rng = new SplittableRandom(5);
+        long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+        for (long seq = 0; n.sessionIds().contains("idle"); seq++) {
+            assertTrue(System.nanoTime() < deadline, "idle session never expired");
+            assertEquals(ACCEPTED, n.ingest("active", seq, TestData.batch(rng, 1, 4)).status());
+            Thread.sleep(20);
+        }
+        assertEquals(java.util.Set.of("active"), n.sessionIds());
+        assertTrue(n.createSession("idle", spec(1)), "the expired session's reservation was released");
+    }
+
+    @Test
     void anErrorInOneSessionLeavesTheOthersServing() throws Exception {
         CoresetNode n = node(NodeLimits.defaults(), Map.of("oom", (input, rng, metrics) -> {
             throw new OutOfMemoryError("simulated");

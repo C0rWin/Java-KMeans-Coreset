@@ -5,6 +5,7 @@ import io.github.c0rwin.coreset.grpc.proto.Ack;
 import io.github.c0rwin.coreset.grpc.proto.AckStatus;
 import io.github.c0rwin.coreset.grpc.proto.Batch;
 import io.github.c0rwin.coreset.grpc.proto.CoresetNodeServiceGrpc;
+import io.github.c0rwin.coreset.node.Messages;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.time.Duration;
@@ -17,6 +18,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.LongAdder;
@@ -70,17 +72,22 @@ public final class IngestStream implements AutoCloseable {
 
     /**
      * Queues one batch for the next node in round-robin order, blocking while that node has the maximum number of
-     * unacknowledged batches.
+     * unacknowledged batches. The points are encoded once, straight into the outgoing message.
      *
-     * @throws IngestFailedException if the stream already failed
+     * @throws IngestFailedException if the stream already failed, or no capacity freed up within
+     *                               {@link CoordinatorOptions#submitTimeout()} (the stream is then failed)
      */
     public void submit(List<WeightedPoint> batch) throws InterruptedException, IngestFailedException {
         throwIfFailed();
         if (closed) {
             throw new IllegalStateException("ingest stream closed");
         }
+        Batch.Builder message = Batch.newBuilder().setSessionId(sessionId).setProducerId(producerId);
+        for (int i = 0, n = batch.size(); i < n; i++) {
+            message.addPoints(ProtoCodec.toProto(batch.get(i)));
+        }
         NodeStream node = nodes[(int) Math.floorMod(roundRobin.getAndIncrement(), (long) nodes.length)];
-        node.submit(ProtoCodec.pointsToProto(batch));
+        node.submit(message);
     }
 
     /**
@@ -172,9 +179,12 @@ public final class IngestStream implements AutoCloseable {
 
     private static final class Pending {
         final Batch batch;
-        int busyAttempts;
+        int busyAttempts; // acks of one stream are delivered serially
+        long firstBusyNanos;
         /** Times handed to a stream; written under the NodeStream monitor before the send. */
         volatile int sends;
+        /** A BUSY resend is scheduled: a reconnect must not send it a second time meanwhile. */
+        final AtomicBoolean resendScheduled = new AtomicBoolean();
 
         Pending(Batch batch) {
             this.batch = batch;
@@ -197,14 +207,14 @@ public final class IngestStream implements AutoCloseable {
             this.stub = stub;
         }
 
-        void submit(List<io.github.c0rwin.coreset.grpc.proto.WeightedPoint> points)
-                throws InterruptedException, IngestFailedException {
-            permits.acquire();
+        void submit(Batch.Builder message) throws InterruptedException, IngestFailedException {
+            if (!permits.tryAcquire(options.submitTimeout().toNanos(), TimeUnit.NANOSECONDS)) {
+                fail("node " + index + " acknowledged nothing for " + options.submitTimeout() + " with "
+                        + options.maxInFlightPerNode() + " batches in flight", null);
+            }
             throwIfFailed();
             long seq = nextSeq.getAndIncrement();
-            Batch batch = Batch.newBuilder().setSessionId(sessionId).setProducerId(producerId).setSeq(seq)
-                    .addAllPoints(points).build();
-            Pending p = new Pending(batch);
+            Pending p = new Pending(message.setSeq(seq).build());
             outstanding.put(seq, p);
             send(p);
         }
@@ -249,14 +259,14 @@ public final class IngestStream implements AutoCloseable {
         }
 
         private void onAck(int gen, Ack ack) {
-            synchronized (this) {
-                if (gen == generation) {
-                    consecutiveFailures = 0;
-                }
-            }
             long seq = ack.getSeq();
             switch (ack.getStatus()) {
                 case ACK_STATUS_ACCEPTED, ACK_STATUS_DUPLICATE -> {
+                    synchronized (this) {
+                        if (gen == generation) {
+                            consecutiveFailures = 0; // only progress counts: a node answering BUSY is not healthy
+                        }
+                    }
                     Pending p = outstanding.get(seq);
                     if (p != null && ack.getStatus() == AckStatus.ACK_STATUS_DUPLICATE && p.sends == 1) {
                         fail("node " + index + " acknowledged batch " + seq + " of producer " + producerId
@@ -274,15 +284,26 @@ public final class IngestStream implements AutoCloseable {
                     Pending p = outstanding.get(seq);
                     if (p != null) {
                         busyRetries.increment();
-                        int attempt = ++p.busyAttempts;
-                        scheduler.schedule(() -> {
-                            if (outstanding.containsKey(seq)) {
-                                send(p);
-                            }
-                        }, options.backoffNanos(attempt), TimeUnit.NANOSECONDS);
+                        long now = System.nanoTime();
+                        if (p.busyAttempts++ == 0) {
+                            p.firstBusyNanos = now;
+                        } else if (now - p.firstBusyNanos > options.maxBusy().toNanos()) {
+                            fail("node " + index + " answered BUSY to batch " + seq + " for longer than "
+                                    + options.maxBusy(), null);
+                            return;
+                        }
+                        if (p.resendScheduled.compareAndSet(false, true)) {
+                            scheduler.schedule(() -> {
+                                p.resendScheduled.set(false);
+                                if (outstanding.containsKey(seq)) {
+                                    send(p);
+                                }
+                            }, options.backoffNanos(p.busyAttempts), TimeUnit.NANOSECONDS);
+                        }
                     }
                 }
-                default -> fail("node " + index + " rejected batch " + seq + ": " + ack.getMessage(), null);
+                default -> fail("node " + index + " rejected batch " + seq + ": " + Messages.bounded(ack.getMessage()),
+                        null);
             }
         }
 
@@ -297,7 +318,8 @@ public final class IngestStream implements AutoCloseable {
                 attempt = ++consecutiveFailures;
             }
             if (Status.fromThrowable(t).getCode() == Status.Code.INVALID_ARGUMENT) {
-                fail("node " + index + " rejected the stream: " + Status.fromThrowable(t).getDescription(), t);
+                fail("node " + index + " rejected the stream: "
+                        + Messages.bounded(Status.fromThrowable(t).getDescription()), t);
                 return; // resending the same bytes cannot succeed
             }
             if (attempt > options.maxTransportFailures()) {
@@ -313,7 +335,9 @@ public final class IngestStream implements AutoCloseable {
 
         private void resendAll() {
             for (Map.Entry<Long, Pending> e : outstanding.entrySet()) {
-                send(e.getValue());
+                if (!e.getValue().resendScheduled.get()) {
+                    send(e.getValue());
+                }
             }
         }
 

@@ -1,6 +1,9 @@
 package io.github.c0rwin.coreset.grpc;
 
+import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
 import io.github.c0rwin.coreset.core.SparseVector;
@@ -18,7 +21,6 @@ import io.github.c0rwin.coreset.grpc.proto.SnapshotRequest;
 import io.github.c0rwin.coreset.grpc.proto.SnapshotResponse;
 import io.github.c0rwin.coreset.grpc.proto.StatsRequest;
 import io.github.c0rwin.coreset.grpc.proto.StatsResponse;
-import io.github.c0rwin.coreset.node.NodeLimits;
 import io.github.c0rwin.coreset.node.NodeSnapshot;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.grpc.Channel;
@@ -36,7 +38,9 @@ import java.util.SplittableRandom;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Client side of a coreset cluster: creates sessions on every node, streams batches to them
@@ -165,14 +169,25 @@ public final class CoresetCoordinator implements AutoCloseable {
         for (CoresetNodeServiceGrpc.CoresetNodeServiceFutureStub stub : futures) {
             calls.add(deadline(stub, options.rpcDeadline().plus(awaitApplied)).snapshot(req));
         }
-        List<NodeSnapshot> snaps = new ArrayList<>(calls.size());
-        Coreset union = Coreset.of(List.of());
-        for (SnapshotResponse r : awaitAll(calls)) {
-            NodeSnapshot s = ProtoCodec.fromProto(r, NodeLimits.defaults().maxDim());
+        List<SnapshotResponse> responses = awaitAll(calls);
+        List<NodeSnapshot> snaps = new ArrayList<>(responses.size());
+        int total = 0;
+        double offset = 0.0;
+        for (SnapshotResponse r : responses) {
+            NodeSnapshot s = ProtoCodec.fromProto(r, options.maxDim());
             snaps.add(s);
-            union = Coreset.union(union, s.coreset());
+            total = Math.addExact(total, s.coreset().size());
+            offset += s.coreset().offset();
         }
-        return new GatheredSnapshot(union, snaps);
+        // One pre-sized concatenation instead of pairwise unions, which copied everything gathered so far per node.
+        WeightedPoint[] all = new WeightedPoint[total];
+        int at = 0;
+        for (NodeSnapshot s : snaps) {
+            for (WeightedPoint p : s.coreset().points()) {
+                all[at++] = p;
+            }
+        }
+        return new GatheredSnapshot(new Coreset(List.of(all), offset), snaps);
     }
 
     /**
@@ -206,27 +221,59 @@ public final class CoresetCoordinator implements AutoCloseable {
         return total;
     }
 
-    /** Exact cost of {@code centers} on raw {@code points}: shards of {@code shardSize} go round-robin to nodes. */
+    /**
+     * Exact cost of {@code centers} on raw {@code points}: shards of {@code shardSize} go round-robin to nodes, at
+     * most {@link CoordinatorOptions#costShardsPerNode()} in flight per node. Each shard is encoded only when it is
+     * sent, so the request side holds a bounded number of encoded shards; partial costs are summed in shard order.
+     */
     public double cost(List<SparseVector> centers, List<WeightedPoint> points, int shardSize)
             throws InterruptedException {
         if (shardSize < 1) {
             throw new IllegalArgumentException("shardSize must be >= 1: " + shardSize);
         }
         List<io.github.c0rwin.coreset.grpc.proto.SparseVector> protoCenters = ProtoCodec.vectorsToProto(centers);
-        List<ListenableFuture<PartialCostResponse>> calls = new ArrayList<>();
-        for (int from = 0, shard = 0; from < points.size(); from += shardSize, shard++) {
-            List<WeightedPoint> part = points.subList(from, Math.min(points.size(), from + shardSize));
-            PartialCostRequest req = PartialCostRequest.newBuilder()
-                    .addAllCenters(protoCenters)
-                    .setPoints(PointList.newBuilder().addAllPoints(ProtoCodec.pointsToProto(part)))
-                    .build();
-            calls.add(deadline(futures.get(shard % futures.size()), options.rpcDeadline()).partialCost(req));
+        int shards = (int) ((points.size() + (long) shardSize - 1) / shardSize);
+        Semaphore[] slots = new Semaphore[futures.size()];
+        for (int i = 0; i < slots.length; i++) {
+            slots[i] = new Semaphore(options.costShardsPerNode());
         }
-        double total = 0.0;
-        for (PartialCostResponse r : awaitAll(calls)) {
-            total += r.getCost();
+        AtomicReference<Throwable> failed = new AtomicReference<>();
+        List<ListenableFuture<PartialCostResponse>> calls = new ArrayList<>(shards);
+        try {
+            for (int shard = 0; shard < shards && failed.get() == null; shard++) {
+                int node = shard % futures.size();
+                slots[node].acquire();
+                int from = shard * shardSize;
+                PointList.Builder shardPoints = PointList.newBuilder();
+                for (int i = from, end = Math.min(points.size(), from + shardSize); i < end; i++) {
+                    shardPoints.addPoints(ProtoCodec.toProto(points.get(i)));
+                }
+                ListenableFuture<PartialCostResponse> call = deadline(futures.get(node), options.rpcDeadline())
+                        .partialCost(PartialCostRequest.newBuilder().addAllCenters(protoCenters)
+                                .setPoints(shardPoints).build());
+                calls.add(call);
+                Futures.addCallback(call, new FutureCallback<>() {
+                    @Override
+                    public void onSuccess(PartialCostResponse r) {
+                        slots[node].release();
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        failed.compareAndSet(null, t);
+                        slots[node].release();
+                    }
+                }, MoreExecutors.directExecutor());
+            }
+            double total = 0.0;
+            for (PartialCostResponse r : awaitAll(calls)) { // call order is shard order
+                total += r.getCost();
+            }
+            return total;
+        } catch (InterruptedException | RuntimeException e) {
+            calls.forEach(c -> c.cancel(true));
+            throw e;
         }
-        return total;
     }
 
     /** Stats of every node, in node order. */

@@ -40,6 +40,9 @@ final class Session {
     private final AtomicReference<Throwable> failure = new AtomicReference<>();
     private final ConcurrentLinkedQueue<Thread> waiters = new ConcurrentLinkedQueue<>();
     private volatile boolean closed;
+    /** Last read or observed ingest progress (nanoTime); written by readers and the reaper, never by ingest. */
+    private volatile long lastActiveNanos = System.nanoTime();
+    private long reaperProgress = -1; // reaper thread only
 
     Session(String id, SessionSpec spec, CoresetAlgorithm algorithm, MetricsSink metrics, NodeLimits limits) {
         this.id = id;
@@ -257,6 +260,28 @@ final class Session {
         Throwable f = failure.get();
         return new NodeSnapshot(coreset, state(), f == null ? "" : Messages.bounded(f), accepted, appliedBatches,
                 acceptedW, appliedWeight, consistent);
+    }
+
+    /** Marks a read (snapshot, await, cost) as activity for the idle reaper. */
+    void touch() {
+        lastActiveNanos = System.nanoTime();
+    }
+
+    /**
+     * Called by the single reaper thread. Ingest progress is detected from the workers' own counters, so producers
+     * pay nothing for idle tracking.
+     */
+    boolean idleFor(long timeoutNanos, long now) {
+        long progress = 0;
+        for (Worker w : workers) {
+            progress += w.accepted() + w.applied();
+        }
+        if (progress != reaperProgress) {
+            reaperProgress = progress;
+            lastActiveNanos = now;
+            return false;
+        }
+        return now - lastActiveNanos > timeoutNanos;
     }
 
     /** Worker {@code i}'s last published view (tests). */

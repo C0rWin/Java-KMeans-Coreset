@@ -8,9 +8,13 @@ import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
@@ -50,6 +54,7 @@ public final class CoresetNode implements AutoCloseable {
     private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
     private final AtomicInteger openSessions = new AtomicInteger();
     private final AtomicInteger openWorkers = new AtomicInteger();
+    private final ScheduledExecutorService reaper;
     private volatile boolean closed;
 
     public CoresetNode(AlgorithmResolver resolver) {
@@ -71,6 +76,29 @@ public final class CoresetNode implements AutoCloseable {
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.shutdownGrace = Objects.requireNonNull(shutdownGrace, "shutdownGrace");
         this.limits = Objects.requireNonNull(limits, "limits");
+        long idle = limits.sessionIdleTimeout().toNanos();
+        if (idle > 0) {
+            reaper = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "coreset-node-reaper");
+                t.setDaemon(true);
+                return t;
+            });
+            long period = Math.max(1_000_000L, Math.min(idle / 4, TimeUnit.MINUTES.toNanos(1)));
+            reaper.scheduleWithFixedDelay(() -> expireIdle(idle), period, period, TimeUnit.NANOSECONDS);
+        } else {
+            reaper = null;
+        }
+    }
+
+    private void expireIdle(long idleNanos) {
+        long now = System.nanoTime();
+        for (Map.Entry<String, Session> e : sessions.entrySet()) {
+            if (e.getValue().idleFor(idleNanos, now) && sessions.remove(e.getKey(), e.getValue())) {
+                e.getValue().close(shutdownGrace);
+                release(e.getValue().spec.workers());
+                metrics.count(NodeMetricNames.SESSIONS_EXPIRED, 1);
+            }
+        }
     }
 
     /**
@@ -220,7 +248,9 @@ public final class CoresetNode implements AutoCloseable {
 
     /** Union of the session's published summaries plus completeness counters; wait-free in single-writer mode. */
     public NodeSnapshot snapshot(String sessionId) {
-        return session(sessionId).snapshot();
+        Session s = session(sessionId);
+        s.touch();
+        return s.snapshot();
     }
 
     /**
@@ -243,7 +273,9 @@ public final class CoresetNode implements AutoCloseable {
      */
     public boolean awaitApplied(String sessionId, Duration timeout, BooleanSupplier cancelled)
             throws InterruptedException {
-        return session(sessionId).awaitApplied(timeout, cancelled);
+        Session s = session(sessionId);
+        s.touch();
+        return s.awaitApplied(timeout, cancelled);
     }
 
     /** Cost of {@code centers} on raw {@code points}; never cancelled. */
@@ -297,6 +329,9 @@ public final class CoresetNode implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
+        if (reaper != null) {
+            reaper.shutdownNow();
+        }
         List<Session> taken = new ArrayList<>();
         for (String id : sessions.keySet()) {
             Session s = sessions.remove(id);

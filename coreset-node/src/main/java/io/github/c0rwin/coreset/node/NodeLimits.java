@@ -26,15 +26,19 @@ import java.util.Objects;
  * @param maxProducersPerSession distinct producer ids per session (each keeps a small dedupe state)
  * @param casSnapshotWait        how long a {@link TreeMode#CAS} snapshot may hold off new carries while waiting for
  *                               the ones in flight, before returning a read flagged inconsistent
+ * @param sessionIdleTimeout     a session with no ingest progress and no reads for this long is closed; zero keeps
+ *                               sessions until they are closed explicitly
  */
 public record NodeLimits(int maxDim, int maxPointsPerBatch, int maxSessions, int maxTotalWorkers,
                          int maxQueueCapacity, int maxSessionIdLength, int maxParams, int maxParamLength,
                          int maxCenters, long maxCostWork, Duration maxAwait, int maxSnapshotPoints,
-                         int maxSeqWindow, int maxProducersPerSession, Duration casSnapshotWait) {
+                         int maxSeqWindow, int maxProducersPerSession, Duration casSnapshotWait,
+                         Duration sessionIdleTimeout) {
 
     public NodeLimits {
         Objects.requireNonNull(maxAwait, "maxAwait");
         Objects.requireNonNull(casSnapshotWait, "casSnapshotWait");
+        Objects.requireNonNull(sessionIdleTimeout, "sessionIdleTimeout");
         positive("maxDim", maxDim);
         positive("maxPointsPerBatch", maxPointsPerBatch);
         positive("maxSessions", maxSessions);
@@ -50,8 +54,8 @@ public record NodeLimits(int maxDim, int maxPointsPerBatch, int maxSessions, int
         positive("maxSnapshotPoints", maxSnapshotPoints);
         positive("maxSeqWindow", maxSeqWindow);
         positive("maxProducersPerSession", maxProducersPerSession);
-        if (maxAwait.isNegative() || casSnapshotWait.isNegative()) {
-            throw new IllegalArgumentException("maxAwait and casSnapshotWait must be >= 0");
+        if (maxAwait.isNegative() || casSnapshotWait.isNegative() || sessionIdleTimeout.isNegative()) {
+            throw new IllegalArgumentException("maxAwait, casSnapshotWait and sessionIdleTimeout must be >= 0");
         }
     }
 
@@ -69,7 +73,8 @@ public record NodeLimits(int maxDim, int maxPointsPerBatch, int maxSessions, int
                 .maxSessionIdLength(maxSessionIdLength).maxParams(maxParams).maxParamLength(maxParamLength)
                 .maxCenters(maxCenters).maxCostWork(maxCostWork).maxAwait(maxAwait)
                 .maxSnapshotPoints(maxSnapshotPoints).maxSeqWindow(maxSeqWindow)
-                .maxProducersPerSession(maxProducersPerSession).casSnapshotWait(casSnapshotWait);
+                .maxProducersPerSession(maxProducersPerSession).casSnapshotWait(casSnapshotWait)
+                .sessionIdleTimeout(sessionIdleTimeout);
     }
 
     /** @throws IllegalArgumentException if {@code id} is empty, too long or has characters outside the id alphabet */
@@ -157,6 +162,7 @@ public record NodeLimits(int maxDim, int maxPointsPerBatch, int maxSessions, int
         private int maxSeqWindow = 4096;
         private int maxProducersPerSession = 1024;
         private Duration casSnapshotWait = Duration.ofSeconds(1);
+        private Duration sessionIdleTimeout = Duration.ofHours(1);
 
         private Builder() {
         }
@@ -236,10 +242,15 @@ public record NodeLimits(int maxDim, int maxPointsPerBatch, int maxSessions, int
             return this;
         }
 
+        public Builder sessionIdleTimeout(Duration v) {
+            sessionIdleTimeout = v;
+            return this;
+        }
+
         public NodeLimits build() {
             return new NodeLimits(maxDim, maxPointsPerBatch, maxSessions, maxTotalWorkers, maxQueueCapacity,
                     maxSessionIdLength, maxParams, maxParamLength, maxCenters, maxCostWork, maxAwait,
-                    maxSnapshotPoints, maxSeqWindow, maxProducersPerSession, casSnapshotWait);
+                    maxSnapshotPoints, maxSeqWindow, maxProducersPerSession, casSnapshotWait, sessionIdleTimeout);
         }
     }
 }

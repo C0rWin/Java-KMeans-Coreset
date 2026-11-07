@@ -129,11 +129,16 @@ public final class NodeCommand implements Callable<Integer> {
                     + "Default: ${DEFAULT-VALUE}")
     int maxSeqWindow;
 
+    @Option(names = "--session-idle-timeout-ms", defaultValue = "3600000",
+            description = "Close sessions without ingest progress or reads for this long (0 = never). "
+                    + "Default: ${DEFAULT-VALUE}")
+    long sessionIdleTimeoutMs;
+
     NodeLimits limits() {
         return NodeLimits.builder().maxDim(maxDim).maxPointsPerBatch(maxPointsPerBatch).maxSessions(maxSessions)
                 .maxTotalWorkers(maxTotalWorkers).maxQueueCapacity(maxQueueCapacity).maxCostWork(maxCostWork)
                 .maxSnapshotPoints(maxSnapshotPoints).maxAwait(Duration.ofMillis(maxAwaitMs))
-                .maxSeqWindow(maxSeqWindow).build();
+                .maxSeqWindow(maxSeqWindow).sessionIdleTimeout(Duration.ofMillis(sessionIdleTimeoutMs)).build();
     }
 
     /** A started node; {@link #close()} stops servers, then sessions. */

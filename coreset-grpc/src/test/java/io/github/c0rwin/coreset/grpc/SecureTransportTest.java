@@ -41,7 +41,7 @@ class SecureTransportTest {
 
     private static CoordinatorOptions fast() {
         return new CoordinatorOptions(4, Duration.ofSeconds(10), Duration.ofMinutes(1), Duration.ofMillis(1),
-                Duration.ofMillis(10), 2, CoordinatorOptions.DEFAULT_MAX_MESSAGE_BYTES);
+                Duration.ofMillis(10), 2, CoordinatorOptions.DEFAULT_MAX_MESSAGE_BYTES, WAIT, WAIT, 1 << 24, 2);
     }
 
     /** Creates a session, streams two batches and gathers them; returns the node's Stats. */

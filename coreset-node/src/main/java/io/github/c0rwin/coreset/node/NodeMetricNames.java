@@ -38,6 +38,8 @@ public final class NodeMetricNames {
     public static final String SESSIONS_CREATED = "node.sessions.created";
     /** Counter: sessions closed. */
     public static final String SESSIONS_CLOSED = "node.sessions.closed";
+    /** Counter: sessions closed by the idle reaper. */
+    public static final String SESSIONS_EXPIRED = "node.sessions.expired";
     /** Counter: sessions that failed. */
     public static final String SESSION_FAILURES = "node.sessions.failed";
 

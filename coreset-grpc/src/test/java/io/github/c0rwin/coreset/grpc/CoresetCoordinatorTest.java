@@ -41,7 +41,7 @@ class CoresetCoordinatorTest {
 
     private static CoordinatorOptions options(int inFlight) {
         return new CoordinatorOptions(inFlight, WAIT, Duration.ofMinutes(5), Duration.ofMillis(1),
-                Duration.ofMillis(20), 5, CoordinatorOptions.DEFAULT_MAX_MESSAGE_BYTES);
+                Duration.ofMillis(20), 5, CoordinatorOptions.DEFAULT_MAX_MESSAGE_BYTES, WAIT, WAIT, 1 << 24, 2);
     }
 
     private static double ingestAll(IngestStream stream, SplittableRandom rng, int batches, List<WeightedPoint> all)
@@ -157,6 +157,48 @@ class CoresetCoordinatorTest {
                 assertEquals(8, s.appliedBatches());
                 assertEquals(weight, s.coreset().totalWeight());
             }
+        }
+    }
+
+    @Test
+    void persistentBusyFailsTheIngestInsteadOfRetryingForever() throws Exception {
+        TestAlgorithms.Gated gated = new TestAlgorithms.Gated(TestAlgorithms.IDENTITY);
+        try (InProcessCluster cluster = new InProcessCluster(1, Map.of("gated", gated), 16);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels,
+                     options(8).withBusyAndSubmitLimits(Duration.ofMillis(300), WAIT))) {
+            coordinator.createSession("s", new SessionSpec("gated", Map.of(), 1L, 1, 2));
+            try (IngestStream stream = coordinator.openIngest("s")) {
+                ingestAll(stream, new SplittableRandom(2), 8, new ArrayList<>());
+                IngestFailedException e = assertThrows(IngestFailedException.class, () -> stream.flush(WAIT));
+                assertTrue(e.getMessage().contains("answered BUSY"), e.getMessage());
+            } finally {
+                gated.release();
+            }
+        }
+    }
+
+    @Test
+    void submitGivesUpWhenANodeStopsAcknowledging() throws Exception {
+        ServerInterceptor silent = new ServerInterceptor() {
+            @Override
+            public <Q, R> ServerCall.Listener<Q> interceptCall(ServerCall<Q, R> call, Metadata headers,
+                                                               ServerCallHandler<Q, R> next) {
+                if (!call.getMethodDescriptor().getBareMethodName().equals("Ingest")) {
+                    return next.startCall(call, headers);
+                }
+                call.request(Integer.MAX_VALUE);
+                return new ServerCall.Listener<>() { // reads everything, answers nothing
+                };
+            }
+        };
+        try (InProcessCluster cluster = new InProcessCluster(1, Map.of(), 16, silent);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels,
+                     options(1).withBusyAndSubmitLimits(WAIT, Duration.ofMillis(300)));
+             IngestStream stream = coordinator.openIngest("s")) {
+            stream.submit(TestData.batch(new SplittableRandom(9), 1, DIM));
+            IngestFailedException e = assertThrows(IngestFailedException.class,
+                    () -> stream.submit(TestData.batch(new SplittableRandom(10), 1, DIM)));
+            assertTrue(e.getMessage().contains("acknowledged nothing"), e.getMessage());
         }
     }
 
