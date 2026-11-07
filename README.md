@@ -15,15 +15,19 @@ for evaluation in following [paper](https://arxiv.org/pdf/1511.08990.pdf):
 Project Structure
 ---
 
-Current project consist of three main modules:
+The project consists of the following modules:
 
-1. **kmeans-coreset** - the Java based implementation of coresets algorithms:
-    1.1. Uniform coreset
-    1.2. Non Uniform coreset (Sensitivity)
-    1.3. Deterministic coreset construction suggested in the paper above
-2. **coreset-communication** - definition of the protocol for distributed
+1. **coreset-core** - dependency-free core (`io.github.c0rwin.coreset.core`):
+   immutable sparse vectors, weighted coresets, k-means cost, weighted
+   k-means++ seeding and Lloyd, a merge-and-reduce streaming tree, and
+   lightweight metrics (`MetricsSink`, `RecordingMetrics`, spans).
+2. **kmeans-coreset** (legacy) - the original implementation of coresets algorithms:
+    2.1. Uniform coreset
+    2.2. Non Uniform coreset (Sensitivity)
+    2.3. Deterministic coreset construction suggested in the paper above
+3. **coreset-communication** (legacy) - definition of the protocol for distributed
    computation of the coreset
-3. **coreset-server** - implementation of server and client side of the
+4. **coreset-server** (legacy) - implementation of server and client side of the
    distributed protocol which enables coreset computation.
 
 
@@ -263,12 +267,22 @@ How to run
 
 1. ### Building the project.
 
-  In order to build the project please run:
+  Requirements: JDK 17+ and Maven 3.6+. From the repository root run:
   ```
-  mvn clean install
+  mvn clean verify
   ```
 
-  Compilation will produce two jar files in coreset-serer/target folder:
+  This compiles all modules and runs the unit tests (JUnit 5; legacy JUnit 4
+  tests run through the vintage engine). Tests that need external datasets or
+  are JMH benchmarks are ignored. Two legacy stress tests (hundreds of thousands
+  of points) are excluded by default; run them with `mvn verify -Plegacy-stress`.
+
+  The Thrift-generated Java sources in `coreset-communication/src/main/java` are
+  checked in, so no `thrift` binary is needed. After editing
+  `coreset-communication/src/main/thrift/coreset.thrift`, regenerate them with
+  Thrift 0.13.0: `thrift --gen java -out src/main/java src/main/thrift/coreset.thrift`.
+
+  Packaging produces jar files in the coreset-server/target folder:
 
   1.1. **client.jar** - the client application to distribute points accross servers
   1.2. **server.jar** - the server application to receive batch of streamed
