@@ -1,16 +1,18 @@
 package io.github.c0rwin.coreset.core;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Weighted point set summarising a larger input for k-means: for any centers {@code C},
- * {@code cost(input, C) ~ sum_p w_p * min_c ||p - c||^2 + offset}.
+ * {@code cost(input, C) ~ sum_p w_p * min_c ||p - c||^2 + offset}. Java deserialization re-runs the canonical
+ * constructor's copy and checks.
  *
  * @param points immutable copy of the weighted points; all vectors share one dimension
  * @param offset finite, non-negative additive cost constant that does not depend on the centers
  */
-public record Coreset(List<WeightedPoint> points, double offset) {
+public record Coreset(List<WeightedPoint> points, double offset) implements Serializable {
 
     public Coreset {
         points = List.copyOf(points);

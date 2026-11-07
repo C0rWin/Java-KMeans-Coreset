@@ -19,14 +19,18 @@ import java.util.random.RandomGenerator;
  * {@code b} batches the occupied levels are exactly the set bits of {@code b}, and each batch has been compressed at
  * most {@code floor(log2 b)} times.
  *
+ * <p>Each compression draws from the generator {@link MergeRandomness#forMerge(int, long)} returns for its position;
+ * with {@link MergeRandomness#derived} the tree is reproducible from its batches alone and can be checkpointed as its
+ * levels plus {@link #batchesAdded()} (see {@link #restore}).
+ *
  * <p>Not thread-safe and holds no locks: use it from a single writer thread (or serialise all
- * calls externally); the {@link RandomGenerator} is used unsynchronised. Inputs are immutable {@link Coreset}s and
+ * calls externally); generators are used unsynchronised. Inputs are immutable {@link Coreset}s and
  * are never modified.
  */
 public final class MergeReduceTree {
 
     private final CoresetAlgorithm algorithm;
-    private final RandomGenerator rng;
+    private final MergeRandomness randomness;
     private final MetricsSink metrics;
     private final List<Coreset> levels = new ArrayList<>(); // null marks an empty level
     private long batches;
@@ -36,10 +40,45 @@ public final class MergeReduceTree {
         this(algorithm, rng, MetricsSink.NOOP);
     }
 
+    /** Tree whose compressions all share {@code rng}, consumed in compression order. */
     public MergeReduceTree(CoresetAlgorithm algorithm, RandomGenerator rng, MetricsSink metrics) {
+        this(algorithm, MergeRandomness.shared(rng), metrics);
+    }
+
+    public MergeReduceTree(CoresetAlgorithm algorithm, MergeRandomness randomness, MetricsSink metrics) {
         this.algorithm = Objects.requireNonNull(algorithm, "algorithm");
-        this.rng = Objects.requireNonNull(rng, "rng");
+        this.randomness = Objects.requireNonNull(randomness, "randomness");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
+    }
+
+    /**
+     * Rebuilds the tree that held {@code occupiedLevels} (lowest first, as {@link #levelsView()} returned them) after
+     * {@code batches} batches. With the same algorithm and a {@link MergeRandomness#derived} randomness, later adds
+     * behave exactly as they would have in the original tree.
+     *
+     * @throws IllegalArgumentException if {@code batches < 0} or the level count is not {@code Long.bitCount(batches)}
+     */
+    public static MergeReduceTree restore(CoresetAlgorithm algorithm, MergeRandomness randomness, MetricsSink metrics,
+                                          List<Coreset> occupiedLevels, long batches) {
+        if (batches < 0) {
+            throw new IllegalArgumentException("batches must be >= 0: " + batches);
+        }
+        if (occupiedLevels.size() != Long.bitCount(batches)) {
+            throw new IllegalArgumentException("expected " + Long.bitCount(batches) + " occupied levels for "
+                    + batches + " batches, got " + occupiedLevels.size());
+        }
+        MergeReduceTree tree = new MergeReduceTree(algorithm, randomness, metrics);
+        int next = 0;
+        for (int level = 0; level < 64 - Long.numberOfLeadingZeros(batches); level++) {
+            Coreset c = null;
+            if ((batches & (1L << level)) != 0) {
+                c = Objects.requireNonNull(occupiedLevels.get(next++), "occupied level");
+            }
+            tree.levels.add(c);
+        }
+        tree.occupied = occupiedLevels.size();
+        tree.batches = batches;
+        return tree;
     }
 
     /** Inserts a batch coreset at level 0 and carries merges upward. */
@@ -50,7 +89,7 @@ public final class MergeReduceTree {
             int level = 0;
             int chain = 0;
             while (level < levels.size() && levels.get(level) != null) {
-                carry = merge(levels.get(level), carry, level);
+                carry = merge(levels.get(level), carry, level, batches);
                 levels.set(level, null);
                 occupied--;
                 level++;
@@ -70,10 +109,10 @@ public final class MergeReduceTree {
         }
     }
 
-    private Coreset merge(Coreset older, Coreset newer, int level) {
+    private Coreset merge(Coreset older, Coreset newer, int level, long sequence) {
         try (Span ignored = metrics.span(MetricNames.MRTREE_MERGE)) {
             Coreset union = Coreset.union(older, newer);
-            Coreset merged = algorithm.compress(union, rng, metrics);
+            Coreset merged = algorithm.compress(union, randomness.forMerge(level, sequence), metrics);
             if (metrics != MetricsSink.NOOP) {
                 metrics.count(MetricNames.MRTREE_MERGES, 1);
                 metrics.count(MetricNames.mrtreeLevelMerges(level), 1);
@@ -123,14 +162,18 @@ public final class MergeReduceTree {
         return Collections.unmodifiableList(out);
     }
 
-    /** {@link #snapshot()} compressed once by the tree's algorithm; an empty tree yields an empty coreset. */
+    /**
+     * {@link #snapshot()} compressed once by the tree's algorithm with the generator for
+     * {@code (FINAL_LEVEL, batchesAdded())}; an empty tree yields an empty coreset.
+     */
     public Coreset compressedSnapshot() {
         try (Span ignored = metrics.span(MetricNames.MRTREE_COMPRESSED_SNAPSHOT)) {
             Coreset snapshot = snapshot();
             if (snapshot.isEmpty() && snapshot.offset() == 0.0) {
                 return snapshot;
             }
-            Coreset compressed = algorithm.compress(snapshot, rng, metrics);
+            Coreset compressed = algorithm.compress(snapshot,
+                    randomness.forMerge(MergeRandomness.FINAL_LEVEL, batches), metrics);
             if (metrics != MetricsSink.NOOP) {
                 metrics.record(MetricNames.MRTREE_COMPRESSED_SNAPSHOT_POINTS, compressed.size());
                 metrics.record(MetricNames.MRTREE_COMPRESSED_SNAPSHOT_BYTES, compressed.estimatedBytes());
