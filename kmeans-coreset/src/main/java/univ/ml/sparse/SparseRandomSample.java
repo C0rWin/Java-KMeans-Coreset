@@ -12,14 +12,22 @@ public class SparseRandomSample implements RandomSampleAlgorithm, Serializable {
 
     private static final long serialVersionUID = 7797414433832232341L;
 
+    private final Random rnd;
+
+    public SparseRandomSample() {
+        this(new Random());
+    }
+
+    public SparseRandomSample(final Random rnd) {
+        this.rnd = rnd;
+    }
+
     public List<SparseWeightableVector> getSampleOfSize(final List<SparseWeightableVector> dataset, final int t) {
         final List<SparseWeightableVector> result = Lists.newArrayListWithExpectedSize(t);
 
         Map<Integer, Integer> freqMap = Maps.newHashMap();
 
         final double[] cdf = Cdf.of(dataset);
-
-        final Random rnd = new Random();
 
         for (int j = 0; j < t; j++) {
             final int idx = Cdf.draw(cdf, rnd.nextDouble());
