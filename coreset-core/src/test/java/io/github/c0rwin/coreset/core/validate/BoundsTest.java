@@ -33,7 +33,7 @@ class BoundsTest {
     /** The worked example of research notes 6a: S = 40, eps = 0.1, delta = 0.01 needs about 4.2e5 draws. */
     @Test
     void singleQuerySampleSizeMatchesHoeffding() {
-        assertEquals(42.0, TheoryBounds.kMeansTotalSensitivity(5));
+        assertEquals(6 * 32.0 + 4 * 5, TheoryBounds.kMeansTotalSensitivity(5, 32.0)); // Lemma 2.2: 6 alpha + 4 k
         assertEquals((long) Math.ceil(1600 / 0.02 * Math.log(200)), TheoryBounds.singleQuerySampleSize(40, 0.1, 0.01));
         assertEquals(423_866, TheoryBounds.singleQuerySampleSize(40, 0.1, 0.01));
     }
@@ -53,5 +53,7 @@ class BoundsTest {
         assertThrows(IllegalArgumentException.class, () -> ErrorBudget.forStream(0.1, 0.1, 0, 5, false));
         assertThrows(IllegalArgumentException.class, () -> TheoryBounds.singleQuerySampleSize(0, 0.1, 0.1));
         assertThrows(IllegalArgumentException.class, () -> TheoryBounds.allQueriesSampleSize(1, 0.1, 0.1, 1, 0));
+        assertThrows(IllegalArgumentException.class, () -> TheoryBounds.kMeansTotalSensitivity(0, 2.0));
+        assertThrows(IllegalArgumentException.class, () -> TheoryBounds.kMeansTotalSensitivity(3, 0.9));
     }
 }

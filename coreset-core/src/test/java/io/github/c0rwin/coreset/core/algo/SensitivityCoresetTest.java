@@ -12,6 +12,7 @@ import io.github.c0rwin.coreset.core.Cost;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
+import io.github.c0rwin.coreset.core.validate.TheoryBounds;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -67,8 +68,9 @@ class SensitivityCoresetTest {
         SensitivityCoreset algo = new SensitivityCoreset(4, 50, Seeding.kMeansPlusPlus(0));
         SampledCoreset s = algo.compressWithProvenance(p, new SplittableRandom(4), MetricsSink.NOOP);
         assertEquals(s.coreset(), algo.compress(p, new SplittableRandom(4)));
-        // D^2 centers are input points, so all 4 clusters are non-empty and S = 8 * 4 + 2.
-        assertEquals(34.0, s.totalSensitivity(), 1e-9);
+        // D^2 centers are input points, so all 4 clusters are non-empty and S = 6 alpha + 4 * 4 (Lemma 2.2).
+        assertEquals(TheoryBounds.kMeansTotalSensitivity(4, SensitivityBound.kMeansPlusPlusAlpha(4)),
+                s.totalSensitivity(), 1e-9);
         assertEquals(50, s.draws());
         Map<SparseVector, Double> inputWeight = new HashMap<>();
         for (WeightedPoint x : p.points()) {
@@ -121,7 +123,65 @@ class SensitivityCoresetTest {
         throw new AssertionError("no seed drew the outlier both as center and as sample");
     }
 
-    /** cost(B) = 0 (every point on a center): only the mass term is used, so S = 8 * clusters and nothing is NaN. */
+    /** The k = 1 counterexample evaluated on the bounds directly, with B = {outlier} and cost(B) = 100. */
+    @Test
+    void standardBoundCoversTheOutlierAndLegacyDoesNot() {
+        List<WeightedPoint> pts = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            pts.add(point(1.0, 0.0));
+        }
+        pts.add(point(1.0, 1.0));
+        int[] assignment = new int[101];
+        double[] sq = new double[101];
+        java.util.Arrays.fill(sq, 0, 100, 1.0);
+        Clustering b = new Clustering(List.of(SparseVector.dense(new double[] {1.0})), assignment, sq, 100.0);
+
+        double[] standard = SensitivityBound.standard(SensitivityBound.kMeansPlusPlusAlpha(1)).sensitivities(pts, b);
+        double[] legacy = SensitivityBound.legacy().sensitivities(pts, b);
+        assertTrue(standard[100] >= 1.0, "standard s_outlier = " + standard[100]);
+        assertTrue(legacy[100] < 1.0, "legacy s_outlier = " + legacy[100]);
+        double total = 0.0;
+        for (double v : standard) {
+            total += v;
+        }
+        assertEquals(TheoryBounds.kMeansTotalSensitivity(1, 32.0), total, 1e-9);
+        assertThrows(IllegalArgumentException.class, () -> SensitivityBound.standard(0.5));
+        assertThrows(IllegalArgumentException.class, () -> SensitivityBound.kMeansPlusPlusAlpha(0));
+    }
+
+    /**
+     * s_p must dominate w_p d(p, Q)^2 / cost(P, Q) for every Q when B is within alpha of optimal. Lloyd-refined
+     * seedings on well separated data are, so check s_p against many random and data-derived center sets.
+     */
+    @Test
+    void standardBoundDominatesObservedSensitivities() {
+        Coreset p = TestData.mixture(400, 3, 2, true, 41);
+        List<WeightedPoint> pts = p.points();
+        SplittableRandom rnd = new SplittableRandom(42);
+        Clustering b = Seeding.kMeansPlusPlus(10).cluster(pts, 3, rnd, MetricsSink.NOOP);
+        double[] s = SensitivityBound.standard(SensitivityBound.kMeansPlusPlusAlpha(3)).sensitivities(pts, b);
+        for (int t = 0; t < 300; t++) {
+            List<SparseVector> q = t % 2 == 0
+                    ? TestData.randomCenters(1 + rnd.nextInt(3), 2, 30.0, rnd)
+                    : List.of(pts.get(rnd.nextInt(pts.size())).vector());
+            double cost = Cost.cost(pts, q);
+            for (int i = 0; i < pts.size(); i++) {
+                WeightedPoint x = pts.get(i);
+                double share = x.weight() * x.vector().squaredDistance(q.get(Cost.nearest(x.vector(), q))) / cost;
+                assertTrue(s[i] >= share, "point " + i + ", Q #" + t + ": " + s[i] + " < " + share);
+            }
+        }
+    }
+
+    @Test
+    void legacyBoundIsSelectableForComparison() {
+        Coreset p = TestData.mixture(300, 4, 2, true, 3);
+        SensitivityCoreset legacy = new SensitivityCoreset(4, 50, Seeding.kMeansPlusPlus(0), SensitivityBound.legacy());
+        SampledCoreset s = legacy.compressWithProvenance(p, new SplittableRandom(4), MetricsSink.NOOP);
+        assertEquals(34.0, s.totalSensitivity(), 1e-9); // 8 * 4 + 2
+    }
+
+    /** cost(B) = 0 (every point on a center): only the mass term is used, so S = 4 * clusters and nothing is NaN. */
     @Test
     void zeroSeedingCostUsesMassTermOnly() {
         List<WeightedPoint> pts = new ArrayList<>();
@@ -130,7 +190,7 @@ class SensitivityCoresetTest {
         }
         SensitivityCoreset algo = new SensitivityCoreset(3, 20, Seeding.kMeansPlusPlus(0));
         SampledCoreset s = algo.compressWithProvenance(Coreset.of(pts), new SplittableRandom(5), MetricsSink.NOOP);
-        assertEquals(24.0, s.totalSensitivity(), 1e-12);
+        assertEquals(12.0, s.totalSensitivity(), 1e-12);
         for (WeightedPoint x : s.coreset().points()) {
             assertTrue(Double.isFinite(x.weight()) && x.weight() > 0.0, x.toString());
         }
@@ -147,7 +207,7 @@ class SensitivityCoresetTest {
         }
         SampledCoreset s = new SensitivityCoreset(10, 8, Seeding.bicriteria())
                 .compressWithProvenance(Coreset.of(pts), new SplittableRandom(6), MetricsSink.NOOP);
-        assertEquals(40.0, s.totalSensitivity(), 1e-12);
+        assertEquals(20.0, s.totalSensitivity(), 1e-12); // cost(B) = 0: 4 * 5 distinct-point clusters
         assertTrue(s.coreset().size() <= 8);
     }
 

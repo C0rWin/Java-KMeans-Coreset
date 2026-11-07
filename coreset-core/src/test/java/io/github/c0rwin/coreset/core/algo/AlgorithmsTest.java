@@ -12,10 +12,15 @@ class AlgorithmsTest {
     @Test
     void buildsEachAlgorithmWithDefaults() {
         assertEquals("uniform(m=10)", Algorithms.create("uniform", Map.of("m", "10")).toString());
-        assertEquals("sensitivity(k=3, m=50, seeding=kmeans++(lloydIterations=0))",
+        String alpha3 = "standard(alpha=" + SensitivityBound.kMeansPlusPlusAlpha(3) + ")";
+        assertEquals("sensitivity(k=3, m=50, seeding=kmeans++(lloydIterations=0), bound=" + alpha3 + ")",
                 Algorithms.create("sensitivity", Map.of("k", "3", "m", "50")).toString());
-        assertEquals("sensitivity(k=3, m=50, seeding=bicriteria(removeFraction=0.5))",
+        assertEquals("sensitivity(k=3, m=50, seeding=bicriteria(removeFraction=0.5), bound=" + alpha3 + ")",
                 Algorithms.create("sensitivity", Map.of("k", "3", "m", "50", "seeding", "bicriteria")).toString());
+        assertEquals("sensitivity(k=3, m=50, seeding=kmeans++(lloydIterations=0), bound=legacy)",
+                Algorithms.create("sensitivity", Map.of("k", "3", "m", "50", "bound", "legacy")).toString());
+        assertEquals("sensitivity(k=3, m=50, seeding=kmeans++(lloydIterations=0), bound=standard(alpha=4.0))",
+                Algorithms.create("sensitivity", Map.of("k", "3", "m", "50", "alpha", "4")).toString());
         assertEquals("mean(m=8, lloydIterations=20)", Algorithms.create("mean", Map.of("m", "8")).toString());
         assertEquals("mean(k=2, eps=0.2, maxM=64, lloydIterations=5)", Algorithms.create("mean",
                 Map.of("k", "2", "eps", "0.2", "maxM", "64", "lloydIterations", "5")).toString());
@@ -32,6 +37,12 @@ class AlgorithmsTest {
                 () -> Algorithms.create("sensitivity", Map.of("k", "2", "m", "5", "seeding", "random")));
         assertMessage("lloydIterations applies only to seeding=kmeans++", () -> Algorithms.create("sensitivity",
                 Map.of("k", "2", "m", "5", "seeding", "bicriteria", "lloydIterations", "3")));
+        assertMessage("unknown bound 'tight'",
+                () -> Algorithms.create("sensitivity", Map.of("k", "2", "m", "5", "bound", "tight")));
+        assertMessage("alpha applies only to bound=standard",
+                () -> Algorithms.create("sensitivity", Map.of("k", "2", "m", "5", "bound", "legacy", "alpha", "3")));
+        assertMessage("alpha must be finite and >= 1",
+                () -> Algorithms.create("sensitivity", Map.of("k", "2", "m", "5", "alpha", "0.5")));
         assertMessage("give either m, or k, eps and maxM",
                 () -> Algorithms.create("mean", Map.of("m", "5", "eps", "0.1")));
         assertMessage("give either m, or k, eps and maxM", () -> Algorithms.create("mean", Map.of()));

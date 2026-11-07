@@ -12,8 +12,10 @@ import java.util.TreeSet;
  * <ul>
  *   <li>{@code uniform}: {@code m} (required) — {@link UniformCoreset}.</li>
  *   <li>{@code sensitivity}: {@code k}, {@code m} (required); {@code seeding} = {@code kmeans++} (default) or
- *       {@code bicriteria}; {@code lloydIterations} (default 0, only with {@code kmeans++}) —
- *       {@link SensitivityCoreset}.</li>
+ *       {@code bicriteria}; {@code lloydIterations} (default 0, only with {@code kmeans++}); {@code bound} =
+ *       {@code standard} (default, {@link SensitivityBound#standard}) or {@code legacy}
+ *       ({@link SensitivityBound#legacy}, for comparison only); {@code alpha} (only with {@code standard}, default
+ *       {@link SensitivityBound#kMeansPlusPlusAlpha}{@code (k)}) — {@link SensitivityCoreset}.</li>
  *   <li>{@code mean}: either {@code m} (fixed number of means) or {@code k}, {@code eps}, {@code maxM} (adaptive
  *       search, {@link MeanCoreset#adaptive}); {@code lloydIterations} (default 20) — {@link MeanCoreset}.</li>
  * </ul>
@@ -26,6 +28,9 @@ public final class Algorithms {
 
     public static final String SEEDING_KMEANS_PLUS_PLUS = "kmeans++";
     public static final String SEEDING_BICRITERIA = "bicriteria";
+
+    public static final String BOUND_STANDARD = "standard";
+    public static final String BOUND_LEGACY = "legacy";
 
     /** Lloyd steps for {@code mean} when {@code lloydIterations} is absent; Lloyd stops earlier on convergence. */
     public static final int DEFAULT_MEAN_LLOYD_ITERATIONS = 20;
@@ -45,20 +50,21 @@ public final class Algorithms {
                 allow(id, params, "m");
                 return new UniformCoreset(intParam(id, params, "m"));
             case SENSITIVITY: {
-                allow(id, params, "k", "m", "seeding", "lloydIterations");
+                allow(id, params, "k", "m", "seeding", "lloydIterations", "bound", "alpha");
                 int k = intParam(id, params, "k");
                 int m = intParam(id, params, "m");
+                SensitivityBound bound = sensitivityBound(id, params, k);
                 String seeding = params.getOrDefault("seeding", SEEDING_KMEANS_PLUS_PLUS);
                 switch (seeding) {
                     case SEEDING_KMEANS_PLUS_PLUS:
                         return new SensitivityCoreset(k, m,
-                                Seeding.kMeansPlusPlus(intParam(id, params, "lloydIterations", 0)));
+                                Seeding.kMeansPlusPlus(intParam(id, params, "lloydIterations", 0)), bound);
                     case SEEDING_BICRITERIA:
                         if (params.containsKey("lloydIterations")) {
                             throw new IllegalArgumentException(
                                     id + ": lloydIterations applies only to seeding=" + SEEDING_KMEANS_PLUS_PLUS);
                         }
-                        return new SensitivityCoreset(k, m, Seeding.bicriteria());
+                        return new SensitivityCoreset(k, m, Seeding.bicriteria(), bound);
                     default:
                         throw new IllegalArgumentException(id + ": unknown seeding '" + seeding + "', expected "
                                 + SEEDING_KMEANS_PLUS_PLUS + " or " + SEEDING_BICRITERIA);
@@ -90,6 +96,24 @@ public final class Algorithms {
         if (!unknown.isEmpty()) {
             throw new IllegalArgumentException(
                     id + ": unknown parameter(s) " + unknown + ", allowed " + new TreeSet<>(Set.of(names)));
+        }
+    }
+
+    private static SensitivityBound sensitivityBound(String id, Map<String, String> params, int k) {
+        String bound = params.getOrDefault("bound", BOUND_STANDARD);
+        switch (bound) {
+            case BOUND_STANDARD:
+                return SensitivityBound.standard(params.containsKey("alpha")
+                        ? doubleParam(id, params, "alpha")
+                        : SensitivityBound.kMeansPlusPlusAlpha(k));
+            case BOUND_LEGACY:
+                if (params.containsKey("alpha")) {
+                    throw new IllegalArgumentException(id + ": alpha applies only to bound=" + BOUND_STANDARD);
+                }
+                return SensitivityBound.legacy();
+            default:
+                throw new IllegalArgumentException(
+                        id + ": unknown bound '" + bound + "', expected " + BOUND_STANDARD + " or " + BOUND_LEGACY);
         }
     }
 

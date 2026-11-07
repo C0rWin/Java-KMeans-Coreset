@@ -65,9 +65,14 @@ public final class CostConfidenceInterval {
 
     /**
      * Distribution-free interval from Hoeffding's inequality (Bachem, Lucic, Krause 2017, eq. 2.8): if every
-     * {@code s_p} bounds the true sensitivity, each term lies in {@code [0, S * cost]}, so with probability at least
+     * {@code s_p} bounds the true sensitivity, each term lies in {@code [0, S * cost]} with S the sample's
+     * {@link SampledCoreset#totalSensitivity()} (the bound's actual total), so with probability at least
      * {@code 1 - delta} the relative error is at most {@code eps = S * sqrt(ln(2 / delta) / (2 m))}. Very wide in
-     * practice (upper end +infinity once {@code eps >= 1}), and only as valid as the sensitivity bound itself.
+     * practice (upper end +infinity once {@code eps >= 1}).
+     *
+     * <p>The guarantee holds only for {@code SensitivityBound.standard(alpha)} when the seeding's cost is within
+     * {@code alpha} of the optimum (for the default k-means++ alpha, with probability at least 1/2 per seeding). The
+     * legacy bound is not an upper bound, so this interval is then heuristic.
      *
      * @throws IllegalArgumentException unless {@code 0 < delta < 1}
      */

@@ -3,19 +3,29 @@ package io.github.c0rwin.coreset.core.validate;
 /**
  * A-priori sample sizes for sensitivity sampling (Bachem, Lucic, Krause, "Practical Coreset Constructions for Machine
  * Learning", 2017). These are worst-case and loose: useful for trends (m grows as S^2 / eps^2), far above the sizes
- * that certify well a posteriori with {@link Distortion} and {@link CostConfidenceInterval}.
+ * that certify well a posteriori with {@link Distortion} and {@link CostConfidenceInterval}. They hold only if the
+ * sampling used a valid sensitivity bound, i.e. {@code SensitivityBound.standard(alpha)} with
+ * {@code cost(B) <= alpha * OPT_k} for its rough solution B.
  */
 public final class TheoryBounds {
 
     private TheoryBounds() {
     }
 
-    /** Total sensitivity {@code 8 * clusters + 2} of the bound used by {@code SensitivityCoreset} (cost(B) > 0). */
-    public static double kMeansTotalSensitivity(int clusters) {
+    /**
+     * Total sensitivity {@code S = 6 alpha + 4 * clusters} of {@code SensitivityBound.standard(alpha)} (Lemma 2.2) for a
+     * rough solution with {@code clusters} non-empty clusters and positive cost; {@code 4 * clusters} when its cost is 0.
+     *
+     * @throws IllegalArgumentException if {@code clusters < 1} or {@code alpha} is not finite and {@code >= 1}
+     */
+    public static double kMeansTotalSensitivity(int clusters, double alpha) {
         if (clusters < 1) {
             throw new IllegalArgumentException("clusters must be >= 1: " + clusters);
         }
-        return 8.0 * clusters + 2.0;
+        if (!(alpha >= 1.0) || Double.isInfinite(alpha)) {
+            throw new IllegalArgumentException("alpha must be finite and >= 1: " + alpha);
+        }
+        return 6.0 * alpha + 4.0 * clusters;
     }
 
     /**

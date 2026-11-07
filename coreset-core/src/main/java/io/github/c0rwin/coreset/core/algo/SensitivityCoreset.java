@@ -13,25 +13,35 @@ import java.util.Objects;
 import java.util.random.RandomGenerator;
 
 /**
- * Sensitivity (importance) sampling in the Feldman-Langberg framework. A {@link Seeding} gives a rough clustering B;
- * each point gets the sensitivity bound
- * <pre>  s_p = 8 * w_p / W(cluster of p) + 2 * w_p * d(p, B)^2 / cost(B)</pre>
- * (only the first term when {@code cost(B) = 0}), m points are drawn i.i.d. with {@code q_p = s_p / S} where
- * {@code S = sum_p s_p} is the actual total, and a point drawn {@code c_p} times gets weight
- * {@code w_p * c_p / (m * q_p)}. This makes {@code cost(C, Q)} unbiased for every Q and the total weight unbiased.
- * Inputs with at most m points are returned unchanged; the offset passes through.
+ * Sensitivity (importance) sampling in the Feldman-Langberg framework. A {@link Seeding} gives a rough clustering B, a
+ * {@link SensitivityBound} turns it into per-point bounds {@code s_p} (by default
+ * {@link SensitivityBound#standard} with {@code alpha = }{@link SensitivityBound#kMeansPlusPlusAlpha}{@code (k)}),
+ * m points are drawn i.i.d. with {@code q_p = s_p / S} where {@code S = sum_p s_p} is the actual total, and a point
+ * drawn {@code c_p} times gets weight {@code w_p * c_p / (m * q_p)}. This makes {@code cost(C, Q)} unbiased for every
+ * Q and the total weight unbiased, whatever the bound; the bound only has to dominate the true sensitivities for
+ * Hoeffding-type guarantees. Inputs with at most m points are returned unchanged; the offset passes through.
  *
- * <p>Time: the seeding (O(n k d) for k-means++) plus O(n + m) for sensitivities and sampling. Stateless and
- * thread-safe.
+ * <p>Time: the seeding (O(n k nnz) for k-means++) plus O(n + m) for sensitivities and sampling: two passes over the
+ * points for the bounds and one to build the output. Stateless and thread-safe.
  */
 public final class SensitivityCoreset implements CoresetAlgorithm {
 
     private final int k;
     private final int m;
     private final Seeding seeding;
+    private final SensitivityBound bound;
+
+    /**
+     * Uses {@link SensitivityBound#standard} with {@link SensitivityBound#kMeansPlusPlusAlpha}{@code (k)}.
+     *
+     * @throws IllegalArgumentException if {@code k < 1} or {@code m < 1}
+     */
+    public SensitivityCoreset(int k, int m, Seeding seeding) {
+        this(k, m, seeding, SensitivityBound.standard(SensitivityBound.kMeansPlusPlusAlpha(k)));
+    }
 
     /** @throws IllegalArgumentException if {@code k < 1} or {@code m < 1} */
-    public SensitivityCoreset(int k, int m, Seeding seeding) {
+    public SensitivityCoreset(int k, int m, Seeding seeding, SensitivityBound bound) {
         if (k < 1) {
             throw new IllegalArgumentException("k must be >= 1: " + k);
         }
@@ -41,6 +51,7 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
         this.k = k;
         this.m = m;
         this.seeding = Objects.requireNonNull(seeding, "seeding");
+        this.bound = Objects.requireNonNull(bound, "bound");
     }
 
     @Override
@@ -61,32 +72,13 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
             if (b.centers().isEmpty()) {
                 return SampledCoreset.exact(new Coreset(List.of(), input.offset())); // no positive weight
             }
-            final int[] assignment = b.assignment;
-            final double[] sq = b.squaredDistances;
-            double[] clusterWeight = new double[b.centers().size()];
-            for (int i = 0; i < n; i++) {
-                double w = points.get(i).weight();
-                if (w > 0.0) {
-                    clusterWeight[assignment[i]] += w;
-                }
-            }
-            final double costB = b.cost();
-            final boolean distanceTerm = costB > 0.0;
-            if (!distanceTerm) {
+            if (b.cost() == 0.0) {
                 metrics.count(MetricNames.SENSITIVITY_ZERO_COST_SEEDINGS, 1);
             }
-            double[] s = new double[n];
+            double[] s = bound.sensitivities(points, b);
             double total = 0.0;
-            for (int i = 0; i < n; i++) {
-                double w = points.get(i).weight();
-                if (w > 0.0) {
-                    double v = 8.0 * w / clusterWeight[assignment[i]];
-                    if (distanceTerm) {
-                        v += 2.0 * w * sq[i] / costB;
-                    }
-                    s[i] = v;
-                    total += v;
-                }
+            for (double v : s) {
+                total += v;
             }
             metrics.record(MetricNames.SENSITIVITY_TOTAL, total);
 
@@ -126,8 +118,12 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
         return seeding;
     }
 
+    public SensitivityBound bound() {
+        return bound;
+    }
+
     @Override
     public String toString() {
-        return "sensitivity(k=" + k + ", m=" + m + ", seeding=" + seeding + ")";
+        return "sensitivity(k=" + k + ", m=" + m + ", seeding=" + seeding + ", bound=" + bound + ")";
     }
 }
