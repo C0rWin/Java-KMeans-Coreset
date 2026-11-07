@@ -149,6 +149,38 @@ class MeanCoresetTest {
         assertEquals(sizes[0], sizes[1]);
     }
 
+    /**
+     * Review F4/H1: 1000 means of sparse points in 10^7 dimensions. Dense centroids would need 2 * 1000 * 10^7 doubles
+     * (160 GB); sparse ones need memory proportional to the 25,000 stored entries.
+     */
+    @Test
+    void sparseHighDimensionalInputAllocatesInProportionToNonZeros() {
+        final int dim = 10_000_000;
+        SplittableRandom rnd = new SplittableRandom(21);
+        List<WeightedPoint> pts = new ArrayList<>();
+        for (int i = 0; i < 5000; i++) {
+            int[] idx = new int[5];
+            double[] val = new double[5];
+            for (int t = 0; t < 5; t++) {
+                idx[t] = t == 0 ? i % 50 : rnd.nextInt(dim); // a shared coordinate per group keeps clusters non-trivial
+                val[t] = 1.0 + rnd.nextDouble();
+            }
+            pts.add(new WeightedPoint(SparseVector.of(dim, idx, val), 0.5 + rnd.nextDouble()));
+        }
+        Coreset p = Coreset.of(pts);
+        com.sun.management.ThreadMXBean threads =
+                (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+        long before = threads.getCurrentThreadAllocatedBytes();
+        Coreset c = new MeanCoreset(1000, 10).compress(p, new SplittableRandom(22));
+        long allocated = threads.getCurrentThreadAllocatedBytes() - before;
+
+        assertTrue(allocated < 64L << 20, "allocated " + allocated + " bytes");
+        assertTrue(c.size() <= 1000 && c.size() > 50, "size " + c.size());
+        assertEquals(p.totalWeight(), c.totalWeight(), 1e-9 * p.totalWeight());
+        List<SparseVector> origin = List.of(SparseVector.of(dim, new int[0], new double[0]));
+        assertEquals(Cost.cost(p, origin), Cost.cost(c, origin), 1e-9 * Cost.cost(p, origin));
+    }
+
     @Test
     void rejectsInvalidParameters() {
         assertThrows(IllegalArgumentException.class, () -> new MeanCoreset(0, 5));
