@@ -162,11 +162,14 @@ final class Builder {
             if (grpc) {
                 List<String> targets = new ArrayList<>();
                 for (CoresetNode node : nodes) {
-                    CoresetNodeServer s = CoresetNodeServer.start(0, node, new RecordingMetrics(), MetricsSink.NOOP);
+                    CoresetNodeServer s = CoresetNodeServer.start(
+                            io.github.c0rwin.coreset.grpc.NodeServerOptions.builder().port(0).build(), node,
+                            new RecordingMetrics(), MetricsSink.NOOP);
                     servers.add(s);
                     targets.add("127.0.0.1:" + s.port());
                 }
-                coordinator = CoresetCoordinator.connect(targets, CoordinatorOptions.defaults(), wire);
+                coordinator = CoresetCoordinator.connect(targets, CoordinatorOptions.defaults(),
+                        io.github.c0rwin.coreset.grpc.ClientSecurity.plaintext(), wire);
             }
             ResourceProbe probe = ResourceProbe.start(ResourceProbe.Scope.PROCESS, exclusive);
             Coreset union;

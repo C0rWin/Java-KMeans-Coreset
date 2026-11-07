@@ -86,7 +86,8 @@ public class CodecBenchmark {
 
     @Benchmark
     public List<WeightedPoint> protoDecode() throws InvalidProtocolBufferException {
-        return ProtoCodec.pointsFromProto(Batch.parseFrom(protoBytes).getPointsList());
+        return ProtoCodec.pointsFromProto(Batch.parseFrom(protoBytes).getPointsList(),
+                io.github.c0rwin.coreset.node.NodeLimits.defaults().maxDim());
     }
 
     @Benchmark

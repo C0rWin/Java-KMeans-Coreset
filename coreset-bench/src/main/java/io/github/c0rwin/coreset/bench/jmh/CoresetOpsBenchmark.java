@@ -69,6 +69,6 @@ public class CoresetOpsBenchmark {
 
     @Benchmark
     public Coreset protoDecodeCoreset() {
-        return ProtoCodec.fromProto(proto);
+        return ProtoCodec.fromProto(proto, io.github.c0rwin.coreset.node.NodeLimits.defaults().maxDim());
     }
 }

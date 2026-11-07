@@ -247,12 +247,15 @@ public final class NodeIngestHarness {
                 CoresetNode node = new CoresetNode(new CoreAlgorithmsResolver(), m);
                 coreNodes.add(node);
                 nodeMetrics.add(m);
-                CoresetNodeServer server = CoresetNodeServer.start(0, node, m, MetricsSink.NOOP);
+                CoresetNodeServer server = CoresetNodeServer.start(
+                        io.github.c0rwin.coreset.grpc.NodeServerOptions.builder().port(0).build(), node, m,
+                        MetricsSink.NOOP);
                 servers.add(server);
                 targets.add("127.0.0.1:" + server.port());
             }
             RecordingMetrics client = new RecordingMetrics();
-            try (CoresetCoordinator coord = CoresetCoordinator.connect(targets, CoordinatorOptions.defaults(), client)) {
+            try (CoresetCoordinator coord = CoresetCoordinator.connect(targets, CoordinatorOptions.defaults(),
+                    io.github.c0rwin.coreset.grpc.ClientSecurity.plaintext(), client)) {
                 coord.createSession(SESSION, new SessionSpec(opts.get("algorithm"), algorithmParams(), 99L, workers,
                         queue, TreeMode.SINGLE_WRITER));
                 ResourceProbe probe = ResourceProbe.start();

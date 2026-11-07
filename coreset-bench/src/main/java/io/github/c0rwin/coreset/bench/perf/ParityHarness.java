@@ -206,11 +206,14 @@ public final class ParityHarness {
                 ? Map.of("m", Integer.toString(m))
                 : Map.of("k", Integer.toString(k), "m", Integer.toString(m));
         try (CoresetNode node = new CoresetNode(new CoreAlgorithmsResolver(), MetricsSink.NOOP);
-             CoresetNodeServer server = CoresetNodeServer.start(0, node, new RecordingMetrics(), MetricsSink.NOOP);
+             CoresetNodeServer server = CoresetNodeServer.start(
+                     io.github.c0rwin.coreset.grpc.NodeServerOptions.builder().port(0).build(), node,
+                     new RecordingMetrics(), MetricsSink.NOOP);
              CountingProxy proxy = countBytes ? new CountingProxy(server.port()) : null;
              CoresetCoordinator coord = CoresetCoordinator.connect(
                      List.of("127.0.0.1:" + (proxy == null ? server.port() : proxy.port())),
-                     CoordinatorOptions.defaults(), MetricsSink.NOOP)) {
+                     CoordinatorOptions.defaults(), io.github.c0rwin.coreset.grpc.ClientSecurity.plaintext(),
+                     MetricsSink.NOOP)) {
             long t0 = System.nanoTime();
             coord.createSession("parity", new SessionSpec(algorithm, params, 7L, workers, 64, TreeMode.SINGLE_WRITER));
             try (IngestStream stream = coord.openIngest("parity")) {
