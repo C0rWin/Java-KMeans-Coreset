@@ -133,8 +133,13 @@ public class CoresetClient {
 
     /**
      * Sends all points to remote servers using round-robin algorithm.
+     *
+     * @throws IllegalStateException if no server is connected or a batch cannot be sent
      */
     public void distributeAllPoints() {
+        if (clients.isEmpty()) {
+            throw new IllegalStateException("No coreset server is connected, initialize() must succeed first.");
+        }
         log.info("Starting to distribute points to remote servers.");
         // Continue until there are points available
         provider.reset();
@@ -155,7 +160,9 @@ public class CoresetClient {
                     // Wrap point into Thrift container
                     each.getValue().compressPoints(new CoresetPoints(id++, nextPoints));
                 } catch (Exception e) {
-                    log.error("Cannot sent next batch of points due to ", e);
+                    // compressPoints is oneway, so a retry could deliver a batch twice; fail the run instead.
+                    throw new IllegalStateException("Cannot send the next batch of points to "
+                            + each.getKey().getHostName() + ":" + each.getKey().getPortNum(), e);
                 }
             }
         }

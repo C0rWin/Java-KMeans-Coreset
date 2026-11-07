@@ -1,7 +1,6 @@
 package univ.ml.distributed.coreset;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -53,15 +52,7 @@ public class CoresetUtils {
         List<CoresetWeightedPoint> results = new ArrayList<>();
 
         for (final SparseWeightableVector each : points) {
-            Map<Integer, Double> coords = new HashMap<>();
-
-            for (int i = 0; i < each.getDimension(); i++) {
-                final double val = each.getEntry(i);
-                if (val == 0)
-                    continue;
-
-                coords.put(i, val);
-            }
+            final Map<Integer, Double> coords = each.getNonZeroEntries();
             final CoresetPoint point = new CoresetPoint(coords, each.getDimension());
             results.add(new CoresetWeightedPoint(point, each.getWeight()));
         }

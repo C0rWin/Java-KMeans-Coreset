@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+import org.apache.thrift.TApplicationException;
 import org.apache.thrift.TException;
 import org.apache.thrift.server.TNonblockingServer;
 import org.apache.thrift.server.TServer;
@@ -29,6 +30,9 @@ public class CoresetServiceHandler implements CoresetService.Iface {
     private StreamingAlgorithm streaming;
 
     private AtomicLong counter = new AtomicLong(0);
+
+    // First batch that failed, guarded by lock; the tree is incomplete from then on.
+    private Throwable failure;
 
     public CoresetServiceHandler() {
         LOG.info("Coreset service handler has been created and waiting for initialization.");
@@ -73,11 +77,17 @@ public class CoresetServiceHandler implements CoresetService.Iface {
     public void compressPoints(final CoresetPoints points) throws TException {
         LOG.info("Compressing points id = [{}], num of points [{}]", points.getId(), points.getPoints().size());
         counter.incrementAndGet();
+        lock.lock();
         try {
-            lock.lock();
+            requireInitialized();
             streaming.addDataset(CoresetUtils.toSparseWeightableVectors(points.getPoints()));
-            counter.decrementAndGet();
+        } catch (RuntimeException e) {
+            if (failure == null) {
+                failure = e;
+            }
+            throw e;
         } finally {
+            counter.decrementAndGet();
             lock.unlock();
         }
     }
@@ -91,8 +101,13 @@ public class CoresetServiceHandler implements CoresetService.Iface {
         // no compression currently executed (coreset streaming tree construction).
         List<SparseWeightableVector> totalCoreset = Collections.emptyList();
         LOG.debug("Computing final coreset.");
+        lock.lock();
         try {
-            lock.lock();
+            requireInitialized();
+            if (failure != null) {
+                throw new TApplicationException(TApplicationException.INTERNAL_ERROR,
+                        "A batch of points failed to compress, the coreset would be incomplete: " + failure);
+            }
             totalCoreset = streaming.getTotalCoreset();
         } finally {
             lock.unlock();
@@ -121,6 +136,14 @@ public class CoresetServiceHandler implements CoresetService.Iface {
     @Override
     public boolean isDone() throws TException {
         return counter.get() == 0;
+    }
+
+    // Unlike other exceptions, a TApplicationException reaches the Thrift client with its message.
+    private void requireInitialized() throws TApplicationException {
+        if (streaming == null) {
+            throw new TApplicationException(TApplicationException.INTERNAL_ERROR,
+                    "Coreset service is not initialized, call initialize() first.");
+        }
     }
 
     /**
