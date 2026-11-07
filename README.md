@@ -47,7 +47,13 @@ The project consists of the following modules:
    coreset k-means evaluated on the full data, and a checkpointed Structured
    Streaming sink. See [docs/engines.md](docs/engines.md) for this and the
    other engine mappings.
-8. **coreset-testbed** - evaluation testbed: datasets, offline/stream/distributed
+8. **coreset-flink** - Flink 2.3 adapter (DataStream API, `provided` Flink
+   dependencies): a continuously updated coreset with per-subtask
+   merge-and-reduce in checkpointed operator state and a parallelism-1 merge
+   stage, bit-identical after failure recovery; per-window coresets for tumbling
+   event-time windows; Kryo-free serializers and Flink metrics. See
+   [docs/engines.md](docs/engines.md#apache-flink-implemented).
+9. **coreset-testbed** - evaluation testbed: datasets, offline/stream/distributed
    runs, per-run validity reports (distortion, integrity, cost, memory) and
    aggregated tables; see [docs/benchmarks/README.md](docs/benchmarks/README.md).
 

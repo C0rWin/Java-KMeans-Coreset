@@ -15,8 +15,8 @@ merge-and-reduce scheme of Har-Peled & Mazumdar, used by Barger & Feldman,
 [SDM'16](https://arxiv.org/abs/1511.08990)). After `b` batches, each batch has
 been compressed at most `floor(log2 b)` times, however the batches arrived.
 
-Status: **Spark is implemented** (`coreset-spark`). The other sections are
-designs.
+Status: **Spark and Flink are implemented** (`coreset-spark`,
+`coreset-flink`). The other sections are designs.
 
 ## Things every engine has to get right
 
@@ -61,7 +61,8 @@ derived one makes a tree reproducible from its batches alone. A tree can then be
 checkpointed as `(levelsView(), batchesAdded())` and rebuilt with
 `MergeReduceTree.restore`.
 
-Streams used by `coreset-spark` under one global seed:
+Streams used by `coreset-spark` under one global seed (Flink's are listed in
+its section):
 
 | stream | consumer | level, sequence |
 |---|---|---|
@@ -229,26 +230,218 @@ per-key summaries are needed.
   `spark-submit --jars coreset-core-<v>.jar,coreset-spark-<v>.jar …`.
   `spark-submit` sets the module flags itself.
 
-## Apache Flink (design)
+## Apache Flink (implemented)
 
-Current stable release: Flink 2.3.0.
+Module `coreset-flink`. It targets Flink 2.3.0 (DataStream API) with Flink in
+`provided` scope, exposes a Java 17 API and depends only on `coreset-core`.
 
-- **Per shard.** `keyBy(shard)` feeds a `KeyedProcessFunction` with three pieces
-  of state: a `ListState<WeightedPoint>` chunk buffer, a `MapState<Integer,
-  byte[]>` of tree levels (codec bytes) and a `ValueState<Long>` batch count.
-  This is exactly `restore`'s input. Merges use
-  `MergeRandomness.derived(seed, shard)`, so after a restore and replay they
-  recompute the same coresets. The checkpointed state is O(m log n) per shard;
-  use RocksDB for large m.
-- **Global.** Periodically emit each shard's compressed snapshot, re-key to a
-  single key (or use `windowAll`), and fold with an `AggregateFunction`. The
-  accumulator is the level-indexed counter. `merge(a, b)` adds two counters
-  level by level and is required for merging (session) windows. Flink "may
-  reuse either input accumulator", which is safe because coresets are
-  immutable.
-- **Exactly once.** Flink checkpoints state and the replay offsets together. As
-  long as the generators are derived from the replayed sequence (never held as
-  live state), recovery is bit-identical.
+### Streaming
+
+```java
+env.enableCheckpointing(10_000);
+DataStream<WeightedPoint> points = env.fromSource(source, watermarks, "points")
+        .map(MyDecoder::toPoint)
+        .returns(CoresetTypes.POINT);           // required: no Kryo for points
+CoresetConfig config = CoresetConfig.builder("sensitivity", Map.of("k", "10", "m", "2000"), 42L)
+        .chunksPerPartial(8)                    // count trigger (the reproducible one)
+        .snapshotEveryPartials(16)
+        .compressSnapshots(true)
+        .build();
+DataStream<CoresetSnapshot> snapshots = FlinkCoresets.stream(points, config);
+```
+
+How it runs:
+
+1. **Local stage**, at the input's parallelism and chained to it (forward
+   partitioning). Each subtask stores incoming records by reference in one
+   reusable array of `chunkSize` points (default 2·m). A full chunk is copied
+   once into an immutable batch and added to a `MergeReduceTree`. After
+   `chunksPerPartial` chunks the subtask emits a `PartialCoreset`: the tree's
+   only level as is, or the union of its levels compressed once. The tree then
+   starts over. Optional triggers emit a partial early: a processing-time
+   interval (`partialInterval`), an event-time interval (`partialEventTimeInterval`,
+   fired when the watermark crosses a multiple of it), and end of input.
+2. **Merge stage**, parallelism 1 behind `global()`. It holds one
+   `MergeReduceTree` per local subtask and inserts that subtask's partials in
+   sequence order, which Flink's per-channel FIFO delivery guarantees. A
+   `CoresetSnapshot` is the union of all levels in subtask order, optionally
+   also compressed once. Snapshots are emitted after every
+   `snapshotEveryPartials` partials, on a processing-time interval
+   (`snapshotInterval`), and with `last = true` at end of input. Each snapshot
+   carries the records and weight it summarises, the partial count, the
+   occupied levels and the compression depth.
+
+The merge stage deliberately does not feed one global tree. Partials from
+different subtasks arrive in an order that changes from run to run, and
+because reduce is not associative, one tree fed in arrival order would give a
+different coreset every time. A round-robin reorder buffer would fix the order,
+but it stalls on an idle subtask and grows without bound under skew. One tree
+per subtask is a pure function of that subtask's input. It costs P trees of
+O(m log(partials per subtask)) points in the merge stage instead of one.
+
+Every compression is seeded from its position, never from the attempt:
+
+| stream | consumer | level, sequence |
+|---|---|---|
+| s ≥ 0 | local tree of subtask s | tree level, chunk index counted across partials (`-1`, chunk count at the partial's end for its final reduce) |
+| −1 | compressed snapshot | `-1`, partials merged |
+| −2 − s | merge-stage tree of subtask s | tree level, partial sequence |
+| `Long.MIN_VALUE` | per-window seed `w = derive(seed, Long.MIN_VALUE, 0, windowStart)` | — |
+| s ≥ 0 under w | window tree of subtask s | tree level, chunk index |
+| −1 under w | window merge | `-1`, 0 |
+
+### Exactly once and bit-identical recovery
+
+- **State.** Both stages keep their trees in operator fields and write them to
+  Flink operator list state only in `snapshotState`. The local state is the
+  chunk buffer, the current partial's levels, the partial sequence and the
+  chunk counter. The merge state holds, per local subtask, its levels with their
+  compression depths, the next expected sequence, and its records and weight.
+  Records never touch state. All values are immutable and their serializers'
+  `copy` is the identity, so the heap backend's synchronous snapshot phase copies
+  references only.
+- **Recovery.** Flink restores the last checkpoint and replays the input from
+  the positions stored in it. Since seeds depend only on positions,
+  the replay recomputes exactly the same partials and merges.
+  `FlinkCoresetsTest` checks this end to end. Readers pause after 6,000 records
+  until a checkpoint taken during the pause completes. Subtask 1 then throws on
+  its 12,000th record of the first attempt, and the fixed-delay strategy
+  restarts the job, which resumes subtask 1 between records 6,000 and 12,000.
+  The final snapshot is compared with an undisturbed run, field by field and
+  serialized byte by byte, for `sensitivity` and `uniform`. The uniform
+  coreset's total weight equals the input weight to 1e-9.
+- **Guards.** The merge stage fails the job on a partial whose sequence is not
+  the next expected one, which would mean lost or duplicated state. Each
+  operator state carries a fingerprint of the algorithm, parameters, seed and
+  chunk size. A restore under a different configuration fails, and so does a
+  restore under a different parallelism.
+- **What has to hold.** Bit-identical results need every local subtask to see
+  the same records in the same order on replay. That means a source with
+  deterministic split assignment and no `rebalance` or `shuffle` in front of
+  the coreset stage. The test uses a sequence source that pins split i to
+  reader i; the stock enumerator gives splits to whichever reader asks first.
+  Only the count trigger is reproducible. Time triggers keep exactly-once
+  accounting, with no record lost or counted twice, but cut partials wherever
+  the clock or the watermark happened to be. Intermediate snapshots reflect how
+  far each subtask had got, so only the final one is reproducible. Weight
+  totals are summed per subtask in sequence order for the same reason.
+- **Output.** Snapshots emitted before a failure are emitted again on replay,
+  and an intermediate snapshot after recovery may differ from the one before
+  it. Downstream exactly-once needs a transactional sink. The final snapshot
+  (`last = true`) is emitted once, at end of input.
+
+### Serialization
+
+Every type crossing the network or stored in state has a `TypeSerializer` on
+the `CoresetCodec` layout (raw little-endian IEEE-754 doubles, delta-varint
+indices): `WeightedPoint`, `Coreset`, `PartialCoreset`, `CoresetSnapshot`,
+`WindowPartial`, `WindowCoreset` and the three operator states. A `Coreset`
+serializes to exactly the bytes `CoresetCodec.encode` produces, so coresets move
+between the Spark and Flink adapters unchanged. Their snapshots
+(`FormatSnapshot`) carry format version 1. A restore of an unknown version fails
+with a clear error, and a golden-bytes test pins the format. Each serializer
+passes Flink's `SerializerTestBase`, which covers round trips, copies,
+duplication, Java serializability, and snapshot write, read, restore and
+compatibility. Corrupt bytes fail with `IOException`.
+
+Kryo is never used for these types. `FlinkCoresets` rejects an input stream that
+is not typed `CoresetTypes.POINT`. For user types that contain points or
+coresets, set `pipeline.serialization-config` to
+`CoresetTypes.serializationConfig()`; Flink registers these factories JVM-wide.
+All MiniCluster tests run with `pipeline.generic-types: false`, and one test
+shows that this setting really rejects a Kryo-typed stream.
+
+### Tumbling windows
+
+```java
+DataStream<WindowCoreset> perWindow = FlinkCoresets.tumblingWindows(points, config, Duration.ofMinutes(1));
+```
+
+The local stage assigns records to epoch-aligned event-time windows, with one
+chunked tree per open window. When the watermark passes a window's end, the
+stage emits that window's `WindowPartial`, stamped with the window's max
+timestamp, before it forwards the watermark. A `keyBy(windowStart)` plus
+`TumblingEventTimeWindows` window function then sees every subtask's partial
+when the window fires. It orders them by subtask, unites them and compresses
+once, using the same compressor. A record at or behind the watermark is dropped
+and counted, since there is no allowed lateness. The watermark is checkpointed,
+so a window that was already emitted cannot reopen during a replay.
+
+**Sliding windows** are not implemented, but they map onto these pieces.
+Merge-and-reduce has no delete, so an expired part cannot be subtracted from a
+binary counter. Sliding windows are built from panes instead. For size S and
+slide Δ, take pane length g = gcd(S, Δ) and build tumbling coresets of length g
+as above. The window ending at t is the union of its S/g panes, which is a
+valid coreset of the window because union composes exactly. Compressing that
+union once adds one level. The cost per slide is a union of S/g pane coresets.
+A two-stack sliding aggregation over pane coresets would bring this to O(1)
+amortised merges per slide, at the price of extra compression levels.
+
+### Metrics
+
+Each operator registers gauges under the `coreset` group:
+
+| operator | gauges |
+|---|---|
+| `coreset-local` | `recordsIn`, `partialsEmitted`, `chunks`, `treeLevels`, `treeDepth`, `stateBytes`, `peakStateBytes` |
+| `coreset-merge` | `recordsIn`, `partialsMerged`, `snapshotsEmitted`, `snapshotPoints`, `treeLevels`, `treeDepth`, `stateBytes`, `peakStateBytes` |
+| `coreset-window-local` | `recordsIn`, `lateRecordsDropped`, `partialsEmitted`, `openWindows`, `stateBytes`, `peakStateBytes` |
+
+`stateBytes` is the exact encoded size of the last checkpointed state.
+`peakStateBytes` is the largest encoded size the state has reached. State only
+grows between flushes, so the local stage measures it just before each flush,
+from the batch's single encoding pass and cached per-level sizes. It is
+deterministic under the count trigger. The merge stage measures it after each
+partial, so its value depends on how partials interleave. Counters are restored
+from state, so they stay exact across restarts.
+
+### Measured
+
+`FlinkCoresetsTest` streams 80,000 weighted points from an unbalanced
+6-component Gaussian mixture (d = 8) through 4 subtasks. It uses sensitivity
+sampling with k = 6 and m = 400, chunks of 800 and 8 chunks per partial. The
+mixture generator is addressed by record index, so its points differ from the
+Spark test's.
+
+| coreset | points | compressions on a point's path | max distortion |
+|---|---|---|---|
+| final snapshot, union of levels | 1,013 | 5 | 1.069 |
+| final snapshot, compressed | 318 | 6 | 1.099 |
+| one `compress` of all data | ≤ 400 | 1 | 1.139 |
+
+The test requires < 1.20, the Spark threshold for the same depth, and at most
+the one-shot distortion raised to the depth. That the one-shot value is higher
+here is one draw of one sample, not a trend. Tumbling 5 s windows of 20,000
+points (4 subtask partials each) measured 1.044–1.116. The mean coreset keeps
+weight and both moments to 1e-9 and has no one-sided violation over the
+candidate set.
+
+State size: local peaks were 181.6–182.8 kB per subtask, against a bound of
+229.9 kB. That bound is two chunks plus three levels of m points, in encoded
+bytes, and does not depend on the stream length; the 80,000-point input is
+6.56 MB encoded. Merge-stage peaks were 109–171 kB, varying with interleaving.
+
+### Limits
+
+- **No rescaling.** Trees are operator state owned by a subtask index. Restoring
+  with a different parallelism fails, so changing it needs a fresh start.
+- **Merge-stage throughput.** One core merges all partials. Its rate is
+  records / (chunkSize · chunksPerPartial) partials per local subtask; raise
+  `chunksPerPartial` to lower it.
+- **Snapshot size.** The union holds up to P × (levels per subtask) × m
+  points. Turn on `compressSnapshots` for a size-m result.
+- **Windows.** Tumbling windows only, aligned to the epoch, with no allowed
+  lateness. Idle input subtasks hold back the watermark as usual in Flink; use
+  `WatermarkStrategy.withIdleness`.
+- Operator state stays on the heap even with RocksDB. It is bounded by
+  O(chunkSize + m · log chunksPerPartial) per local subtask.
+
+### Running
+
+- Build and test: `mvn -B -pl coreset-flink -am verify`. The MiniCluster tests
+  (1 task manager, 4 slots) take about 6 s.
+- Deploy: Flink is `provided`, so bundle `coreset-core` and `coreset-flink`
+  into the job jar, for example with the shade plugin.
 
 ## Apache Beam (design)
 
