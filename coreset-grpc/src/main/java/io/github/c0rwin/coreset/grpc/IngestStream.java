@@ -185,6 +185,8 @@ public final class IngestStream implements AutoCloseable {
         volatile int sends;
         /** A BUSY resend is scheduled: a reconnect must not send it a second time meanwhile. */
         final AtomicBoolean resendScheduled = new AtomicBoolean();
+        /** Counted as acknowledged; a batch acknowledged twice (resent) is counted once. */
+        final AtomicBoolean acknowledged = new AtomicBoolean();
 
         Pending(Batch batch) {
             this.batch = batch;
@@ -273,9 +275,11 @@ public final class IngestStream implements AutoCloseable {
                                 + " as DUPLICATE although it was sent once; refusing to count it as ingested", null);
                         return;
                     }
-                    // A batch resent after a reconnect or BUSY can be acknowledged twice; count it once.
-                    if (outstanding.remove(seq) != null) {
+                    // A batch resent after a reconnect or BUSY can be acknowledged twice; count it once, and before
+                    // it leaves outstanding, so a flush that sees nothing outstanding also sees the count.
+                    if (p != null && p.acknowledged.compareAndSet(false, true)) {
                         (ack.getStatus() == AckStatus.ACK_STATUS_ACCEPTED ? accepted : duplicates).increment();
+                        outstanding.remove(seq);
                         permits.release();
                         signalFlushers();
                     }
