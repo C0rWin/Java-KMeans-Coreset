@@ -15,6 +15,12 @@ public final class SparseVector {
     static final int ARRAY_HEADER_BYTES = 16;
     static final int REFERENCE_BYTES = 4;
 
+    /**
+     * Fraction of {@code ||c||^2} below which {@code ||c||^2 - sum over a support of c_i^2} is not trusted. Summing up
+     * to 2^20 squares has relative error at most about 2^-33, so a difference above 2^-16 keeps 17 good bits.
+     */
+    public static final double CANCELLATION_GUARD = 0x1p-16;
+
     private static final int[] NO_INDICES = new int[0];
     private static final double[] NO_VALUES = new double[0];
 
@@ -245,20 +251,43 @@ public final class SparseVector {
     /**
      * Squared distance to a dense vector in O(nnz) time, given {@code denseSquaredNorm = ||dense||^2}.
      *
-     * <p>Computed as {@code ||c||^2 + sum over this support of ((x_i - c_i)^2 - c_i^2)}; the absolute error is on the
-     * order of {@code ulp(||c||^2)}, so prefer {@link #squaredDistance(SparseVector)} when exactness matters. The
-     * result is clamped to be non-negative.
+     * <p>The terms over this vector's support are summed directly. The remaining coordinates contribute
+     * {@code ||dense||^2} minus the support's share of it; when that difference is below
+     * {@value #CANCELLATION_GUARD} of the norm it may be mostly rounding error, so it is recomputed exactly in O(dim)
+     * instead. The result is therefore accurate far from the origin, where the plain expansion would cancel.
      */
     public double squaredDistance(double[] dense, double denseSquaredNorm) {
         checkDim(dense.length);
-        double s = 0.0;
+        double onSupport = 0.0;
+        double denseOnSupport = 0.0;
         for (int k = 0; k < indices.length; k++) {
             double c = dense[indices[k]];
             double d = values[k] - c;
-            s += d * d - c * c;
+            onSupport += d * d;
+            denseOnSupport += c * c;
         }
-        double r = denseSquaredNorm + s;
-        return r > 0.0 ? r : 0.0;
+        double offSupport = denseSquaredNorm - denseOnSupport;
+        if (offSupport > CANCELLATION_GUARD * denseSquaredNorm) {
+            return onSupport + offSupport;
+        }
+        return onSupport + offSupportSquaredNorm(dense);
+    }
+
+    /** {@code sum of dense[i]^2} over the coordinates outside this vector's support, in index order. */
+    private double offSupportSquaredNorm(double[] dense) {
+        if (indices.length == dense.length) {
+            return 0.0;
+        }
+        double s = 0.0;
+        int k = 0;
+        for (int i = 0; i < dense.length; i++) {
+            if (k < indices.length && indices[k] == i) {
+                k++;
+            } else {
+                s += dense[i] * dense[i];
+            }
+        }
+        return s;
     }
 
     /** {@code acc += scale * this}. */

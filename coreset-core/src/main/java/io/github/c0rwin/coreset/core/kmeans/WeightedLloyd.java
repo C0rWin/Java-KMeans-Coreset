@@ -16,7 +16,8 @@ import java.util.random.RandomGenerator;
  * <p>Each iteration is an update step (centers become weighted centroids of their clusters) followed by an assignment
  * step; the loop stops when an assignment step changes nothing or after {@code maxIterations} updates. A cluster with
  * no positive weight is re-seeded at the positive-weight point farthest from its current center, so centers never
- * become NaN. Assignment distances use {@link SparseVector#squaredDistance(double[], double)}.
+ * become NaN. Assignment distances use {@link SparseVector#squaredDistance(double[], double)}, which stays accurate
+ * far from the origin, so assignments and the reported cost do not depend on where the data sits.
  */
 public final class WeightedLloyd {
 
