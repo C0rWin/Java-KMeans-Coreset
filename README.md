@@ -32,6 +32,8 @@ The project consists of the following modules:
 5. **coreset-node** - transport-agnostic ingestion node: sessions of worker
    threads that merge-and-reduce incoming batches, with lock-free routing,
    idempotent (seq-deduplicated) ingest, backpressure and snapshots.
+6. **coreset-grpc** - gRPC service, coordinator client library, Prometheus
+   metrics and the `coreset-node` / `coreset-coordinator` command-line tools.
 
 
 APIs
@@ -316,6 +318,26 @@ How to run
    * sampleSize - the coreset size to sample
    * batchSize - number of points to send in each batch to the remote server
    * hosts - comma separated list of the remote hosts to distributed points to
+
+3. ### gRPC node and coordinator (replacement for the Thrift server)
+
+   `coreset-node` hosts ingestion sessions (bounded lock-free worker queues,
+   idempotent batches, snapshots with completeness counters) and
+   `coreset-grpc` serves it over gRPC. Packaging produces
+   `coreset-grpc/target/coreset-node.jar` and
+   `coreset-grpc/target/coreset-coordinator.jar`. Algorithms are looked up via
+   `java.util.ServiceLoader` providers of
+   `io.github.c0rwin.coreset.node.AlgorithmResolver` on the classpath; the node
+   refuses to start without one.
+
+   ```
+   java -jar coreset-node.jar --port 7070 --metrics-port 9464
+   java -jar coreset-coordinator.jar --nodes host1:7070,host2:7070 \
+     --input points.csv --algorithm <id> --param key=value --k 32 --batch-size 1000
+   ```
+
+   Each node serves the standard `grpc.health.v1.Health` service and Prometheus
+   metrics at `http://<node>:9464/metrics`.
 
 
 Feedback
