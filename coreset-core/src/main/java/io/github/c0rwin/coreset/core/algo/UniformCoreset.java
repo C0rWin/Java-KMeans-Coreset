@@ -47,17 +47,25 @@ public final class UniformCoreset implements CoresetAlgorithm {
             double moment = 0.0;
             for (int t = 0, g = 0; t < points.segmentCount(); t++) {
                 PointBlock p = points.segment(t);
-                for (int i = 0, size = p.size(); i < size; i++, g++) {
+                int i = 0;
+                final int size = p.size();
+                if (weights == null) {
+                    for (; i < size; i++, g++) {
+                        double w = p.weight(i);
+                        if (w != first) {
+                            weights = new double[n];
+                            Arrays.fill(weights, 0, g, first);
+                            break; // row i is summed and stored below
+                        }
+                        total += w;
+                        moment += w * p.squaredNorm(i);
+                    }
+                }
+                for (; i < size; i++, g++) {
                     double w = p.weight(i);
+                    weights[g] = w;
                     total += w;
                     moment += w * p.squaredNorm(i);
-                    if (weights != null) {
-                        weights[g] = w;
-                    } else if (w != first) {
-                        weights = new double[n];
-                        Arrays.fill(weights, 0, g, first);
-                        weights[g] = w;
-                    }
                 }
             }
             Guards.requireSummable(total, moment);
