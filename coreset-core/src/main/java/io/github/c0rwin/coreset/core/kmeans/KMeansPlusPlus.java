@@ -1,5 +1,6 @@
 package io.github.c0rwin.coreset.core.kmeans;
 
+import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
@@ -29,7 +30,7 @@ public final class KMeansPlusPlus {
      * centers are returned and {@code n * c} when the input runs out of distinct points first, where {@code n} is the
      * number of positive-weight points.
      *
-     * @throws IllegalArgumentException if {@code k < 1}
+     * @throws IllegalArgumentException if {@code k < 1} or the input overflows ({@link Guards#requireSummable})
      */
     public static List<SparseVector> seed(List<WeightedPoint> points, int k, RandomGenerator rng,
                                           MetricsSink metrics) {
@@ -38,11 +39,17 @@ public final class KMeansPlusPlus {
         }
         try (Span ignored = metrics.span(MetricNames.KMEANSPP_SEED)) {
             int n = 0;
+            double totalWeight = 0.0;
+            double moment = 0.0;
             for (int i = 0, size = points.size(); i < size; i++) {
-                if (points.get(i).weight() > 0.0) {
+                WeightedPoint p = points.get(i);
+                moment += p.weight() * p.vector().squaredNorm();
+                if (p.weight() > 0.0) {
                     n++;
+                    totalWeight += p.weight();
                 }
             }
+            Guards.requireSummable(totalWeight, moment);
             List<SparseVector> centers = new ArrayList<>(Math.min(k, n));
             if (n == 0) {
                 return centers;
@@ -58,10 +65,6 @@ public final class KMeansPlusPlus {
                 }
             }
 
-            double totalWeight = 0.0;
-            for (double w : weights) {
-                totalWeight += w;
-            }
             SparseVector last = vectors[sample(weights, totalWeight, rng)];
             centers.add(last);
 

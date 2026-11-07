@@ -1,5 +1,6 @@
 package io.github.c0rwin.coreset.core.algo;
 
+import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
@@ -60,7 +61,7 @@ public abstract class Seeding {
     /**
      * Clusters {@code points}; with no positive-weight point the result has no centers, assignments -1 and cost 0.
      *
-     * @throws IllegalArgumentException if {@code k < 1}
+     * @throws IllegalArgumentException if {@code k < 1} or the input overflows ({@link Guards#requireSummable})
      */
     public final Clustering cluster(List<WeightedPoint> points, int k, RandomGenerator rng, MetricsSink metrics) {
         if (k < 1) {
@@ -212,15 +213,18 @@ public abstract class Seeding {
             weights = new double[n];
             int pos = 0;
             double total = 0.0;
+            double moment = 0.0;
             for (int i = 0; i < n; i++) {
                 WeightedPoint p = points.get(i);
                 vectors[i] = p.vector();
                 weights[i] = p.weight();
+                moment += p.weight() * p.vector().squaredNorm();
                 if (p.weight() > 0.0) {
                     pos++;
                     total += p.weight();
                 }
             }
+            Guards.requireSummable(total, moment);
             positive = pos;
             totalWeight = total;
             minD2 = new double[n];

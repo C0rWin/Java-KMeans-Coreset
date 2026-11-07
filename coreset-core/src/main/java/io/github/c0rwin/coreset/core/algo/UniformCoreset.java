@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.core.algo;
 
 import io.github.c0rwin.coreset.core.Coreset;
+import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
@@ -41,10 +42,14 @@ public final class UniformCoreset implements CoresetAlgorithm {
             }
             double[] weights = new double[n];
             double total = 0.0;
+            double moment = 0.0;
             for (int i = 0; i < n; i++) {
-                weights[i] = points.get(i).weight();
+                WeightedPoint p = points.get(i);
+                weights[i] = p.weight();
                 total += weights[i];
+                moment += weights[i] * p.vector().squaredNorm();
             }
+            Guards.requireSummable(total, moment);
             if (total == 0.0) {
                 return new Coreset(List.of(), input.offset());
             }

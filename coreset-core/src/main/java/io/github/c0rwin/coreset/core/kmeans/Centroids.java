@@ -61,7 +61,9 @@ abstract class Centroids {
                 assignment[i] = nearest[i];
                 changed = true;
             }
-            total += weights[i] * dist[i];
+            if (weights[i] > 0.0) { // a zero weight times an overflowed distance would be NaN
+                total += weights[i] * dist[i];
+            }
         }
         cost = total;
         return changed;

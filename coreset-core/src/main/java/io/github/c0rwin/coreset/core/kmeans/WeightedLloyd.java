@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.core.kmeans;
 
 import io.github.c0rwin.coreset.core.Coreset;
+import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
@@ -115,6 +116,8 @@ public final class WeightedLloyd {
         final SparseVector[] vectors = new SparseVector[n];
         final double[] weights = new double[n];
         long totalNnz = 0;
+        double totalWeight = 0.0;
+        double moment = 0.0;
         for (int i = 0; i < n; i++) {
             WeightedPoint p = points.get(i);
             if (p.vector().dim() != dim) {
@@ -123,7 +126,10 @@ public final class WeightedLloyd {
             vectors[i] = p.vector();
             weights[i] = p.weight();
             totalNnz += p.vector().nnz();
+            totalWeight += p.weight();
+            moment += p.weight() * p.vector().squaredNorm();
         }
+        Guards.requireSummable(totalWeight, moment);
         Centroids centers = Centroids.create(layout != null ? layout : Centroids.layoutFor(m, dim, totalNnz),
                 initial, dim, vectors, weights);
         double[] clusterWeight = new double[m];
@@ -198,8 +204,8 @@ public final class WeightedLloyd {
      * are ignored. The offset is a sum of non-negative terms, so it is exact up to rounding even far from the origin.
      * Two passes over the points plus one sort of each part's stored entries; no O(dim) buffer.
      *
-     * @throws IllegalArgumentException if points differ in dimension or a positive-weight point is assigned outside
-     *     {@code [0, parts)}
+     * @throws IllegalArgumentException if points differ in dimension, a positive-weight point is assigned outside
+     *     {@code [0, parts)} or the input overflows ({@link Guards#requireSummable})
      */
     public static Coreset meansOf(List<WeightedPoint> points, int[] assignment, int parts) {
         final int n = points.size();
@@ -212,6 +218,8 @@ public final class WeightedLloyd {
         final int dim = points.get(0).vector().dim();
         final SparseVector[] vectors = new SparseVector[n];
         final double[] weights = new double[n];
+        double totalWeight = 0.0;
+        double moment = 0.0;
         for (int i = 0; i < n; i++) {
             WeightedPoint p = points.get(i);
             if (p.vector().dim() != dim) {
@@ -222,7 +230,10 @@ public final class WeightedLloyd {
             }
             vectors[i] = p.vector();
             weights[i] = p.weight();
+            totalWeight += p.weight();
+            moment += p.weight() * p.vector().squaredNorm();
         }
+        Guards.requireSummable(totalWeight, moment);
         ClusterSums sums = new ClusterSums(vectors, weights);
         double[] partWeight = sums.group(assignment, parts);
         List<WeightedPoint> out = new ArrayList<>(parts);

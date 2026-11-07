@@ -15,6 +15,8 @@ public final class MetricNames {
     public static final String CPU_NS_SUFFIX = ".cpu_ns";
     /** Span suffix: bytes allocated by the calling thread. */
     public static final String ALLOC_BYTES_SUFFIX = ".alloc_bytes";
+    /** Counter suffix: NaN samples a distribution received and dropped (see {@code RecordingMetrics#record}). */
+    public static final String NAN_SAMPLES_SUFFIX = ".nan_samples";
 
     /** Span around one k-means++ seeding call. */
     public static final String KMEANSPP_SEED = "kmeanspp.seed";

@@ -49,11 +49,15 @@ public final class RecordingMetrics implements MetricsSink {
         a.add(delta);
     }
 
-    /** @throws IllegalArgumentException if {@code value} is NaN */
+    /**
+     * Adds a sample. A NaN sample is not added to the distribution: it increments the counter
+     * {@code name + }{@value MetricNames#NAN_SAMPLES_SUFFIX} instead, so instrumentation never fails the data path.
+     */
     @Override
     public void record(String name, double value) {
         if (Double.isNaN(value)) {
-            throw new IllegalArgumentException("NaN sample for " + name);
+            count(name + MetricNames.NAN_SAMPLES_SUFFIX, 1);
+            return;
         }
         Histogram h = distributions.get(name);
         if (h == null) {
