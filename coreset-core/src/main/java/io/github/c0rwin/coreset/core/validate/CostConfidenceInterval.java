@@ -15,6 +15,11 @@ import java.util.List;
  * <p><b>Caveat:</b> both intervals hold only for a Q chosen independently of the sample. A Q optimised on the coreset
  * (e.g. Lloyd on C) is selected using the same draws and the coverage guarantee is lost; evaluate such a Q on an
  * independent second sample or on P.
+ *
+ * <p><b>Scope:</b> P is the exact input of a single sampling step, as returned by
+ * {@code SensitivityCoreset.compressWithProvenance}. Coresets from {@code MergeReduceTree}, the node or a merged
+ * snapshot went through several random reductions and carry no per-level provenance, so these intervals do not apply
+ * to them: the variance of every level would have to be added, which is not tracked.
  */
 public final class CostConfidenceInterval {
 
