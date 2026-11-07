@@ -12,7 +12,7 @@ public class SparseWSSE {
         for (SparseCentroidCluster cluster : clusters) {
             final RealVector center = cluster.getCenter().getVector();
             for (SparseWeightableVector vector : cluster.getPoints()) {
-                cost += FastMath.pow(center.getDistance(vector), 2);
+                cost += vector.getWeight() * FastMath.pow(center.getDistance(vector), 2);
             }
         }
         return cost;
@@ -30,7 +30,7 @@ public class SparseWSSE {
                 minDistance = FastMath.min(d, minDistance);
             }
             // Compute the cost of given clustering
-            cost += minDistance;
+            cost += vector.getWeight() * minDistance;
         }
         return cost;
     }

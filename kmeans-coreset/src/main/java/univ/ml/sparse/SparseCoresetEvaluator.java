@@ -25,9 +25,9 @@ public class SparseCoresetEvaluator implements Serializable {
 
         final List<SparseWeightableVector> centers = Lists.newArrayList();
 
-//        for (SparseCentroidCluster cluster : clusters) {
-//            centers.add(new SparseWeightableVector(cluster.getCenter().getVector(), 1));
-//        }
+        for (SparseCentroidCluster cluster : clusters) {
+            centers.add(new SparseWeightableVector(cluster.getCenter().getVector(), 1));
+        }
 
         return costFunction.getCost(centers, pointSet);
     }
