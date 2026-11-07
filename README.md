@@ -21,6 +21,14 @@ The project consists of the following modules:
    immutable sparse vectors, weighted coresets, k-means cost, weighted
    k-means++ seeding and Lloyd, a merge-and-reduce streaming tree, and
    lightweight metrics (`MetricsSink`, `RecordingMetrics`, spans).
+   - `algo`: `UniformCoreset`, `SensitivityCoreset` (k-means++ or bicriteria
+     seeding, with sampling provenance) and `MeanCoreset` (Barger-Feldman,
+     fixed or adaptive m, with the additive offset); `Algorithms.create(id,
+     params)` resolves them by id (`uniform`, `sensitivity`, `mean`).
+   - `sampling`: Vose alias sampler for multinomial draws.
+   - `validate`: empirical distortion over candidate center sets, integrity
+     checks (weight and moments, one-sided oracle), per-query confidence
+     intervals, merge-and-reduce error budgets and a-priori sample sizes.
 2. **kmeans-coreset** (legacy) - the original implementation of coresets algorithms:
     2.1. Uniform coreset
     2.2. Non Uniform coreset (Sensitivity)
