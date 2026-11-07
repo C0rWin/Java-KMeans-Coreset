@@ -29,6 +29,9 @@ The project consists of the following modules:
    computation of the coreset
 4. **coreset-server** (legacy) - implementation of server and client side of the
    distributed protocol which enables coreset computation.
+5. **coreset-node** - transport-agnostic ingestion node: sessions of worker
+   threads that merge-and-reduce incoming batches, with lock-free routing,
+   idempotent (seq-deduplicated) ingest, backpressure and snapshots.
 
 
 APIs
