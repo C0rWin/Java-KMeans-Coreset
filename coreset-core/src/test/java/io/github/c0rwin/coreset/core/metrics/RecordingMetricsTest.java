@@ -153,10 +153,17 @@ class RecordingMetricsTest {
         assertRelative(Math.ceil(0.99 * n) - 1, d.p99());
     }
 
+    /** Review M1: instrumentation must not fail the data path, so a NaN sample is counted instead of thrown. */
     @Test
-    void nanIsRejectedAndResetClears() {
+    void nanIsCountedSeparatelyAndResetClears() {
         RecordingMetrics m = new RecordingMetrics();
-        assertThrows(IllegalArgumentException.class, () -> m.record("x", Double.NaN));
+        m.record("x", 2.0);
+        m.record("x", Double.NaN);
+        m.record("x", Double.NaN);
+        MetricsSnapshot withNan = m.snapshot();
+        assertEquals(2L, withNan.counters().get("x.nan_samples"));
+        assertEquals(1, withNan.distributions().get("x").count());
+        assertEquals(2.0, withNan.distributions().get("x").sum());
         m.count("a", 3);
         m.record("b", 1);
         m.reset();
