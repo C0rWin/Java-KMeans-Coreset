@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -77,7 +78,7 @@ public final class OutputDirectory implements Testbed.Sink, AutoCloseable {
                     .append("| dataset | k | candidates | generation s | full solve s | full-solution cost |\n")
                     .append("|---|---|---|---|---|---|\n");
             for (Testbed.PoolInfo p : pools) {
-                md.append(String.format(java.util.Locale.ROOT, "| %s | %d | %d | %.1f | %.1f | %.6g |%n", p.dataset(),
+                md.append(String.format(Locale.ROOT, "| %s | %d | %d | %.1f | %.1f | %.6g |%n", p.dataset(),
                         p.k(), p.candidates(), p.generationMs() / 1e3, p.fullSolveMs() / 1e3, p.fullSolutionCost()));
             }
             md.append('\n');

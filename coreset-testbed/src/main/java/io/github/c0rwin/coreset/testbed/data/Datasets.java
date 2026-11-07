@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -79,7 +80,7 @@ public final class Datasets {
                 Loaders.Format format = Loaders.Format.of(p.string("format"));
                 List<String> drop = p.list("drop");
                 Loaders.Options options = new Loaders.Options(
-                        Loaders.Header.valueOf(p.string("header", "auto").toUpperCase(java.util.Locale.ROOT)), drop,
+                        Loaders.Header.valueOf(p.string("header", "auto").toUpperCase(Locale.ROOT)), drop,
                         p.integer("dim", 0));
                 List<WeightedPoint> pts = Loaders.load(file, format, options);
                 return Dataset.of(spec.id(), pts, PublicDataset.sha256(file), p.string("license", "unknown"),

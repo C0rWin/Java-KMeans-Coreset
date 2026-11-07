@@ -2,7 +2,8 @@
 # The committed benchmark (docs/benchmarks): dense data up to 1e6 points,
 # high-dimensional sparse data at 1e5, k in {10, 50}, m in {200, 1000, 4000},
 # four algorithms, offline and stream, 5 seeds. The exclusions keep the suite
-# near 30 minutes on a 12-core laptop; docs/benchmarks/README.md explains them.
+# near 30 minutes on an idle 12-core laptop; docs/benchmarks/README.md has
+# the measured cost of each excluded cell.
 name: standard
 problem: kmeans
 seed: 42
@@ -63,10 +64,10 @@ evaluation:
   fullRestarts: 3
   distortionThreshold: 1.2
 exclude:
-  # The mean coreset runs Lloyd with m centers over the input: O(n m) per
-  # iteration.
+  # The mean coreset runs Lloyd with m centers over the input, O(n m) per
+  # iteration: about 30 s per build at m = 1000 already for n = 1e5.
   - {algorithm: mean, size: 4000}
-  - {algorithm: mean, size: 1000, minN: 150000}
-  - {algorithm: mean, size: 1000, dataset: sparse-bow-100k}
-  # Bicriteria seeding costs 10-20 s per build at n = 1e6, k = 50.
+  - {algorithm: mean, size: 1000}
+  # Bicriteria seeding takes about 10 s per build at k = 50 on these inputs.
   - {algorithm: sensitivity-bicriteria, k: 50, dataset: gauss-unbalanced-1m}
+  - {algorithm: sensitivity-bicriteria, k: 50, dataset: sparse-bow-100k}
