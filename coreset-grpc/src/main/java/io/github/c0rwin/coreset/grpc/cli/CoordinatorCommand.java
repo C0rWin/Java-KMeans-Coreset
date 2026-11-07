@@ -105,6 +105,10 @@ public final class CoordinatorCommand implements Callable<Integer> {
     @Option(names = "--keep-session", description = "Leave the session open on the nodes.")
     boolean keepSession;
 
+    @Option(names = "--producer-id",
+            description = "Producer id of this run's batches; fixed ids make runs reproducible. Default: random.")
+    String producerId;
+
     @Option(names = "--tls-ca", description = "PEM CAs trusted for node certificates; enables TLS.")
     Path tlsCa;
 
@@ -142,7 +146,8 @@ public final class CoordinatorCommand implements Callable<Integer> {
         try (CoresetCoordinator coordinator = CoresetCoordinator.connect(nodes, options, security, MetricsSink.NOOP);
              SessionLease ignored = SessionLease.create(coordinator, sessionId, sessionSpec, keepSession)) {
             long points = 0;
-            try (IngestStream stream = coordinator.openIngest(sessionId);
+            try (IngestStream stream = producerId == null ? coordinator.openIngest(sessionId)
+                    : coordinator.openIngest(sessionId, producerId);
                  BufferedReader reader = Files.newBufferedReader(input, StandardCharsets.UTF_8)) {
                 PointsReader pr = new PointsReader(reader, sparseDim);
                 for (List<WeightedPoint> batch = pr.next(batchSize); !batch.isEmpty(); batch = pr.next(batchSize)) {

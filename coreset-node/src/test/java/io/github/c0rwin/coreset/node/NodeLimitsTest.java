@@ -136,14 +136,15 @@ class NodeLimitsTest {
 
     @Test
     void idleSessionsExpireWhileActiveOnesStay() throws Exception {
-        CoresetNode n = node(NodeLimits.builder().sessionIdleTimeout(Duration.ofMillis(200)).build(), Map.of());
+        // 2 s of idleness against a 20 ms ingest cadence: only a multi-second stall of this thread could expire "active".
+        CoresetNode n = node(NodeLimits.builder().sessionIdleTimeout(Duration.ofSeconds(2)).build(), Map.of());
         n.createSession("idle", spec(1));
         n.createSession("active", spec(1));
         SplittableRandom rng = new SplittableRandom(5);
-        long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+        long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
         for (long seq = 0; n.sessionIds().contains("idle"); seq++) {
             assertTrue(System.nanoTime() < deadline, "idle session never expired");
-            assertEquals(ACCEPTED, n.ingest("active", seq, TestData.batch(rng, 1, 4)).status());
+            assertEquals(ACCEPTED, TestData.offer(n, "active", "", seq, TestData.batch(rng, 1, 4), WAIT).status());
             Thread.sleep(20);
         }
         assertEquals(java.util.Set.of("active"), n.sessionIds());

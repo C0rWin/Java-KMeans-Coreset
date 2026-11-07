@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.grpc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -114,6 +115,47 @@ class CoresetCoordinatorTest {
             assertEquals(40, snap.appliedBatches());
             assertEquals(weight, snap.coreset().totalWeight(), 1e-9 * weight);
         }
+    }
+
+    @Test
+    void nodesDrawIndependentRandomnessForEqualSeqs() throws Exception {
+        try (InProcessCluster cluster = new InProcessCluster(2, Map.of("sample8", TestAlgorithms.sample(8)), 16);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels, options(4))) {
+            coordinator.createSession("s", new SessionSpec("sample8", Map.of(), 5L, 1, 4));
+            // Round-robin: the same batch becomes seq 0 on node 0 and seq 0 on node 1.
+            List<WeightedPoint> batch = TestData.batch(new SplittableRandom(12), 64, DIM);
+            try (IngestStream stream = coordinator.openIngest("s")) {
+                stream.submit(batch);
+                stream.submit(batch);
+                stream.flush(WAIT);
+            }
+            GatheredSnapshot g = coordinator.gather("s", WAIT);
+            assertNotEquals(g.nodes().get(0).coreset(), g.nodes().get(1).coreset(),
+                    "both nodes sampled seq 0 with the same random stream");
+        }
+    }
+
+    private static Coreset gatherOneRun(String producer) throws Exception {
+        try (InProcessCluster cluster = new InProcessCluster(2, Map.of("sample8", TestAlgorithms.sample(8)), 16);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels, options(4))) {
+            coordinator.createSession("s", new SessionSpec("sample8", Map.of(), 5L, 2, 8));
+            try (IngestStream stream = producer == null ? coordinator.openIngest("s")
+                    : coordinator.openIngest("s", producer)) {
+                SplittableRandom rng = new SplittableRandom(13);
+                for (int i = 0; i < 12; i++) {
+                    stream.submit(TestData.batch(rng, 32, DIM));
+                }
+                stream.flush(WAIT);
+            }
+            return coordinator.gather("s", WAIT).coreset();
+        }
+    }
+
+    @Test
+    void aFixedProducerIdMakesTheGatheredCoresetReproducible() throws Exception {
+        Coreset first = gatherOneRun("run-1");
+        assertEquals(first, gatherOneRun("run-1"));
+        assertNotEquals(first, gatherOneRun(null)); // the default id is random
     }
 
     @Test

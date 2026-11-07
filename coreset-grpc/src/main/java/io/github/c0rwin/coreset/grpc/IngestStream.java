@@ -11,7 +11,6 @@ import io.grpc.stub.StreamObserver;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ScheduledExecutorService;
@@ -28,8 +27,8 @@ import java.util.concurrent.locks.LockSupport;
  * Distributes batches of one session round-robin over the coordinator's nodes, one bidirectional stream per node.
  *
  * <p>Every batch gets a per-node dense seq (0, 1, 2, ... on each node, which keeps the node's dedupe state
- * compact) under this stream's random {@link #producerId()}, so a later stream into the same session numbers its
- * batches independently instead of colliding with this one. A batch stays in that node's outstanding map until
+ * compact) under this stream's {@link #producerId()} (random by default), so a later stream into the same session
+ * numbers its batches independently instead of colliding with this one. A batch stays in that node's outstanding map until
  * acknowledged ACCEPTED or DUPLICATE. BUSY acks resend the same seq after a backoff; a broken or expired stream is
  * reopened and all outstanding batches are resent with their original seqs, so nothing is lost and nothing is double
  * counted. A DUPLICATE ack for a batch that was sent only once cannot be a retry and fails the stream. At most
@@ -41,7 +40,7 @@ import java.util.concurrent.locks.LockSupport;
 public final class IngestStream implements AutoCloseable {
 
     private final String sessionId;
-    private final String producerId = UUID.randomUUID().toString();
+    private final String producerId;
     private final CoordinatorOptions options;
     private final ScheduledExecutorService scheduler;
     private final NodeStream[] nodes;
@@ -54,9 +53,10 @@ public final class IngestStream implements AutoCloseable {
     private final LongAdder reconnects = new LongAdder();
     private volatile boolean closed;
 
-    IngestStream(String sessionId, List<CoresetNodeServiceGrpc.CoresetNodeServiceStub> stubs,
+    IngestStream(String sessionId, String producerId, List<CoresetNodeServiceGrpc.CoresetNodeServiceStub> stubs,
                  CoordinatorOptions options, ScheduledExecutorService scheduler) {
         this.sessionId = sessionId;
+        this.producerId = producerId;
         this.options = options;
         this.scheduler = scheduler;
         this.nodes = new NodeStream[stubs.size()];
@@ -65,7 +65,7 @@ public final class IngestStream implements AutoCloseable {
         }
     }
 
-    /** Random id naming this stream's seq namespace on every node. */
+    /** Id naming this stream's seq namespace on every node (random unless the caller chose one). */
     public String producerId() {
         return producerId;
     }

@@ -30,9 +30,10 @@ import java.util.function.BooleanSupplier;
  * overlaps a close or a failure is answered FAILED rather than ACCEPTED.
  *
  * <p><b>Determinism.</b> Batch {@code seq} of a producer is compressed with a generator derived only from
- * {@code (seed, producer, seq)}, so a replayed or retried batch yields the identical batch coreset regardless of
- * worker or timing. That is the only reproducibility guarantee in {@link TreeMode#CAS}, where the worker performing a
- * merge, and so the merge generator, depends on timing. In {@link TreeMode#SINGLE_WRITER} the snapshot is reproducible
+ * {@code (seed, partition, producer, seq)}, so a replayed or retried batch yields the identical batch coreset
+ * regardless of worker or timing, while nodes created with distinct partitions draw independent streams. That is the
+ * only reproducibility guarantee in {@link TreeMode#CAS}, where the worker performing a merge, and so the merge
+ * generator, depends on timing. In {@link TreeMode#SINGLE_WRITER} the snapshot is reproducible
  * too, provided every worker receives its batches in the same order (BUSY retries can change that order).
  *
  * <p><b>Tree modes.</b> {@link TreeMode#SINGLE_WRITER}: each worker owns its merge-reduce tree and after every
@@ -108,16 +109,29 @@ public final class CoresetNode implements AutoCloseable {
         }
     }
 
+    /** Creates and starts a session in partition 0; see {@link #createSession(String, SessionSpec, long)}. */
+    public boolean createSession(String sessionId, SessionSpec spec) {
+        return createSession(sessionId, spec, 0);
+    }
+
     /**
-     * Creates and starts a session. Idempotent: repeating the call with an equal spec returns {@code false}. Every
-     * {@link NodeLimits} bound is checked before the algorithm is resolved or any worker queue is allocated.
+     * Creates and starts a session. Idempotent: repeating the call with an equal spec returns {@code false} (the
+     * partition of the first call stays). Every {@link NodeLimits} bound is checked before the algorithm is resolved
+     * or any worker queue is allocated.
      *
+     * @param partition this node's share of a session spread over several nodes; every generator of the session is
+     *                  derived from {@code (seed, partition)}, so give each node a distinct value to keep their random
+     *                  streams independent. 0 derives from the seed alone.
      * @throws IllegalStateException    if the id exists with a different spec, or the node is closed
-     * @throws IllegalArgumentException if the id or spec is outside the limits, or the resolver rejects the algorithm
+     * @throws IllegalArgumentException if the id or spec is outside the limits, the partition is negative, or the
+     *                                  resolver rejects the algorithm
      * @throws NodeLimitException       if the node has no room for another session or for its workers
      */
-    public boolean createSession(String sessionId, SessionSpec spec) {
+    public boolean createSession(String sessionId, SessionSpec spec, long partition) {
         Objects.requireNonNull(spec, "spec");
+        if (partition < 0) {
+            throw new IllegalArgumentException("partition must be >= 0: " + partition);
+        }
         limits.checkSessionId(sessionId);
         limits.checkAlgorithm(spec.algorithmId(), spec.params());
         if (spec.queueCapacity() > limits.maxQueueCapacity()) {
@@ -136,7 +150,7 @@ public final class CoresetNode implements AutoCloseable {
             if (algorithm == null) {
                 throw new IllegalStateException("resolver returned null for " + Messages.bounded(spec.algorithmId()));
             }
-            session = new Session(sessionId, spec, algorithm, metrics, limits);
+            session = new Session(sessionId, spec, partition, algorithm, metrics, limits);
         } catch (Throwable t) {
             release(spec.workers());
             throw asLimit(t);

@@ -34,7 +34,9 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.SplittableRandom;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -128,15 +130,17 @@ public final class CoresetCoordinator implements AutoCloseable {
         return async.size();
     }
 
-    /** Creates the session on every node (idempotent per node). */
+    /**
+     * Creates the session on every node (idempotent per node). Node {@code i} gets partition {@code i}, so the nodes
+     * derive independent random streams from the shared seed.
+     */
     public void createSession(String sessionId, SessionSpec spec) throws InterruptedException {
-        CreateSessionRequest req = CreateSessionRequest.newBuilder()
+        CreateSessionRequest.Builder req = CreateSessionRequest.newBuilder()
                 .setSessionId(sessionId)
-                .setSpec(ProtoCodec.toProto(spec))
-                .build();
-        List<ListenableFuture<?>> calls = new ArrayList<>();
-        for (CoresetNodeServiceGrpc.CoresetNodeServiceFutureStub stub : futures) {
-            calls.add(deadline(stub, options.rpcDeadline()).createSession(req));
+                .setSpec(ProtoCodec.toProto(spec));
+        List<ListenableFuture<?>> calls = new ArrayList<>(futures.size());
+        for (int i = 0; i < futures.size(); i++) {
+            calls.add(deadline(futures.get(i), options.rpcDeadline()).createSession(req.setPartition(i).build()));
         }
         awaitAll(calls);
     }
@@ -150,8 +154,22 @@ public final class CoresetCoordinator implements AutoCloseable {
         awaitAll(calls);
     }
 
+    /** Opens an ingest stream under a fresh random producer id, so it never collides with earlier runs. */
     public IngestStream openIngest(String sessionId) {
-        return new IngestStream(sessionId, async, options, scheduler);
+        return openIngest(sessionId, UUID.randomUUID().toString());
+    }
+
+    /**
+     * Opens an ingest stream under {@code producerId}. Batch coresets are a function of
+     * {@code (seed, node partition, producer, seq)}, so a fixed id makes a run reproducible. Reusing an id that
+     * already sent batches into this session makes the nodes answer DUPLICATE, which fails the stream.
+     */
+    public IngestStream openIngest(String sessionId, String producerId) {
+        Objects.requireNonNull(producerId, "producerId");
+        if (producerId.isEmpty()) {
+            throw new IllegalArgumentException("producer id must not be empty");
+        }
+        return new IngestStream(sessionId, producerId, async, options, scheduler);
     }
 
     /**

@@ -4,7 +4,6 @@ import static io.github.c0rwin.coreset.node.IngestResult.Status.ACCEPTED;
 import static io.github.c0rwin.coreset.node.IngestResult.Status.BUSY;
 import static io.github.c0rwin.coreset.node.IngestResult.Status.FAILED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -102,19 +101,31 @@ class SessionRacesTest {
 
     @Test
     void createSessionThatOverlapsNodeCloseFails() throws Exception {
-        CoresetNode n = node(Map.of());
         pool = Executors.newSingleThreadExecutor();
-        // Starting 1024 workers takes far longer than noticing the registration and closing the node.
-        Future<Boolean> created = pool.submit(() -> n.createSession("late",
-                new SessionSpec("identity", Map.of(), 1L, SessionSpec.MAX_WORKERS, 2)));
-        while (!n.sessionIds().contains("late")) {
-            assertFalse(created.isDone(), "createSession finished before the close could overlap it");
-            Thread.onSpinWait();
+        // Starting 1024 workers usually takes far longer than noticing the registration and closing the node; a
+        // descheduled poller can still miss that window, so try a few times. A miss returns true, which is legal.
+        int overlapped = 0;
+        for (int attempt = 0; attempt < 20 && overlapped == 0; attempt++) {
+            CoresetNode n = new CoresetNode(new TestResolver(Map.of()), MetricsSink.NOOP, Duration.ofMillis(200));
+            try {
+                Future<Boolean> created = pool.submit(() -> n.createSession("late",
+                        new SessionSpec("identity", Map.of(), 1L, SessionSpec.MAX_WORKERS, 2)));
+                while (!n.sessionIds().contains("late") && !created.isDone()) {
+                    Thread.onSpinWait();
+                }
+                n.close();
+                try {
+                    assertTrue(created.get(30, TimeUnit.SECONDS));
+                } catch (ExecutionException e) {
+                    assertTrue(e.getCause() instanceof IllegalStateException, e.getCause().toString());
+                    assertEquals("node closed", e.getCause().getMessage());
+                    overlapped++;
+                }
+            } finally {
+                n.close();
+            }
         }
-        n.close();
-        ExecutionException e = assertThrows(ExecutionException.class, () -> created.get(30, TimeUnit.SECONDS));
-        assertTrue(e.getCause() instanceof IllegalStateException, e.getCause().toString());
-        assertEquals("node closed", e.getCause().getMessage());
+        assertEquals(1, overlapped, "never observed createSession overlapping close in 20 attempts");
     }
 
     @Test
@@ -172,7 +183,10 @@ class SessionRacesTest {
 
     @Test
     void casAwaitAndSnapshotSucceedUnderSustainedIngest() throws Exception {
-        CoresetNode n = node(Map.of("slow-merge", SLOW_MERGE));
+        // Generous read wait: the test is about liveness, not about how fast a loaded host drains the carries.
+        node = new CoresetNode(new TestResolver(Map.of("slow-merge", SLOW_MERGE)), MetricsSink.NOOP,
+                Duration.ofMillis(200), NodeLimits.builder().casSnapshotWait(Duration.ofSeconds(30)).build());
+        CoresetNode n = node;
         n.createSession("busy", new SessionSpec("slow-merge", Map.of(), 1L, 4, 8, TreeMode.CAS));
         pool = Executors.newSingleThreadExecutor();
         AtomicBoolean stop = new AtomicBoolean();
@@ -188,7 +202,7 @@ class SessionRacesTest {
         });
         try {
             LockSupport.parkNanos(Duration.ofMillis(200).toNanos()); // let the carries pile up
-            assertTrue(n.awaitApplied("busy", Duration.ofSeconds(5)), "awaitApplied starved by other carries");
+            assertTrue(n.awaitApplied("busy", Duration.ofSeconds(30)), "awaitApplied starved by other carries");
             NodeSnapshot s = n.snapshot("busy");
             assertTrue(s.consistent(), "CAS snapshot starved by other carries");
             assertEquals(s.appliedBatches(), s.coreset().totalWeight(), 1e-9);

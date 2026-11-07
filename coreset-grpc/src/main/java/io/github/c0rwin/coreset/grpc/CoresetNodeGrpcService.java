@@ -129,7 +129,7 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
     public void createSession(CreateSessionRequest request, StreamObserver<CreateSessionResponse> response) {
         offload(response, () -> CreateSessionResponse.newBuilder()
                 .setCreated(node.createSession(request.getSessionId(),
-                        ProtoCodec.fromProto(request.getSpec(), limits)))
+                        ProtoCodec.fromProto(request.getSpec(), limits), Integer.toUnsignedLong(request.getPartition())))
                 .build());
     }
 

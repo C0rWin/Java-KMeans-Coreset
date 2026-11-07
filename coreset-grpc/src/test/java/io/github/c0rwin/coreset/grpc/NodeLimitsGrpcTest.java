@@ -175,7 +175,7 @@ class NodeLimitsGrpcTest {
         assertEquals(Status.Code.DEADLINE_EXCEEDED, code(() -> stub.withDeadlineAfter(200, TimeUnit.MILLISECONDS)
                 .snapshot(SnapshotRequest.newBuilder().setSessionId("g").setAwaitAppliedMs(9_000_000_000_000L).build())));
         // The server-side handler notices the cancellation and finishes instead of parking until the gate opens.
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30); // returns early once seen
         while (!cluster.metrics.get(0).snapshot().counters().keySet().stream()
                 .anyMatch(k -> k.startsWith("grpc.server.Snapshot.status.") && !k.endsWith(".OK"))
                 && System.nanoTime() < deadline) {

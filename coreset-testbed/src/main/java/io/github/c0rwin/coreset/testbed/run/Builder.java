@@ -35,6 +35,7 @@ final class Builder {
     private static final String SESSION = "testbed";
     private static final Duration TIMEOUT = Duration.ofMinutes(30);
     private static final long FINAL_REDUCE_SALT = 0xF1A1L;
+    private static final long PRODUCER_SALT = 0x9D0CL;
 
     private final AlgorithmResolver resolver;
     private final boolean exclusive;
@@ -147,6 +148,8 @@ final class Builder {
         final int b = Math.min(mode.blockCount(), n);
         final int nodesCount = mode.nodes();
         CoresetAlgorithm finalAlgorithm = resolver.resolve(algorithmId, params);
+        // Same producer id and per-node partitions on both transports, so they build the identical coreset.
+        String producer = "testbed-" + Long.toHexString(Seeds.mix(seed, PRODUCER_SALT));
         SessionSpec spec = new SessionSpec(algorithmId, params, seed, mode.workers(),
                 Integer.highestOneBit(Math.max(2, b)) * 2, TreeMode.fromId(mode.treeMode()));
         RecordingMetrics metrics = new RecordingMetrics();
@@ -176,7 +179,7 @@ final class Builder {
             List<NodeSnapshot> snapshots;
             if (grpc) {
                 coordinator.createSession(SESSION, spec);
-                try (IngestStream stream = coordinator.openIngest(SESSION)) {
+                try (IngestStream stream = coordinator.openIngest(SESSION, producer)) {
                     int start = 0;
                     for (int i = 0; i < b; i++) {
                         int end = blockEnd(n, b, i);
@@ -193,19 +196,20 @@ final class Builder {
                 union = g.coreset();
                 snapshots = g.nodes();
             } else {
-                for (CoresetNode node : nodes) {
-                    node.createSession(SESSION, spec);
+                for (int i = 0; i < nodesCount; i++) {
+                    nodes.get(i).createSession(SESSION, spec, i); // partition i, as the coordinator assigns
                 }
                 long[] nextSeq = new long[nodesCount];
                 int start = 0;
                 for (int i = 0; i < b; i++) {
                     int end = blockEnd(n, b, i);
                     int target = i % nodesCount; // round-robin with per-node dense seqs, as the gRPC coordinator does
-                    ingest(nodes.get(target), nextSeq[target]++, points.subList(start, end));
+                    ingest(nodes.get(target), producer, nextSeq[target]++, points.subList(start, end));
                     start = end;
                 }
                 snapshots = new ArrayList<>(nodesCount);
-                union = Coreset.of(List.of());
+                int total = 0;
+                double offset = 0.0;
                 for (CoresetNode node : nodes) {
                     if (!node.awaitApplied(SESSION, TIMEOUT)) {
                         throw new IllegalStateException("node did not apply its batches within " + TIMEOUT);
@@ -215,8 +219,18 @@ final class Builder {
                         throw new IllegalStateException("node snapshot incomplete: " + s);
                     }
                     snapshots.add(s);
-                    union = Coreset.union(union, s.coreset());
+                    total += s.coreset().size();
+                    offset += s.coreset().offset();
                 }
+                // One pre-sized concatenation, as the coordinator's gather does, instead of re-copying per node.
+                WeightedPoint[] all = new WeightedPoint[total];
+                int at = 0;
+                for (NodeSnapshot s : snapshots) {
+                    for (WeightedPoint p : s.coreset().points()) {
+                        all[at++] = p;
+                    }
+                }
+                union = new Coreset(List.of(all), offset);
             }
             Coreset out = mode.finalReduce() && !union.isEmpty()
                     ? finalAlgorithm.compress(union, new SplittableRandom(Seeds.mix(seed, FINAL_REDUCE_SALT)),
@@ -248,9 +262,9 @@ final class Builder {
         }
     }
 
-    private static void ingest(CoresetNode node, long seq, List<WeightedPoint> batch) {
+    private static void ingest(CoresetNode node, String producer, long seq, List<WeightedPoint> batch) {
         for (;;) {
-            IngestResult r = node.ingest(SESSION, seq, batch);
+            IngestResult r = node.ingest(SESSION, producer, seq, batch);
             switch (r.status()) {
                 case ACCEPTED, DUPLICATE -> {
                     return;
