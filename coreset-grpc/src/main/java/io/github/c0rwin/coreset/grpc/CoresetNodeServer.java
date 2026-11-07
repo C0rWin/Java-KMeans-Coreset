@@ -5,14 +5,31 @@ import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import io.github.c0rwin.coreset.grpc.proto.CoresetNodeServiceGrpc;
 import io.github.c0rwin.coreset.node.CoresetNode;
 import io.grpc.Server;
+import io.grpc.ServerCredentials;
+import io.grpc.ServerInterceptor;
 import io.grpc.ServerInterceptors;
+import io.grpc.TlsServerCredentials;
 import io.grpc.health.v1.HealthCheckResponse.ServingStatus;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
-/** Netty gRPC server exposing a {@link CoresetNode} plus the standard {@code grpc.health.v1.Health} service. */
+/**
+ * Netty gRPC server exposing a {@link CoresetNode} plus the standard {@code grpc.health.v1.Health} service.
+ *
+ * <p>Security posture: listens on loopback unless told otherwise, plaintext unless TLS files are given, and accepts
+ * any caller unless a shared token or client certificates are required (see {@link ServerSecurity}). The health
+ * service stays unauthenticated so load balancers can probe it.
+ */
 public final class CoresetNodeServer implements AutoCloseable {
 
     /**
@@ -25,41 +42,88 @@ public final class CoresetNodeServer implements AutoCloseable {
     private final Server server;
     private final CoresetNodeGrpcService service;
     private final HealthStatusManager health;
+    private final ExecutorService handlers;
 
-    private CoresetNodeServer(Server server, CoresetNodeGrpcService service, HealthStatusManager health) {
+    private CoresetNodeServer(Server server, CoresetNodeGrpcService service, HealthStatusManager health,
+                              ExecutorService handlers) {
         this.server = server;
         this.service = service;
         this.health = health;
+        this.handlers = handlers;
     }
 
     /**
-     * @param port         0 picks an ephemeral port
-     * @param stats        recorder whose JSON snapshot the Stats RPC returns
+     * @param stats         recorder whose JSON snapshot the Stats RPC returns
      * @param transportSink receives per-method gRPC metrics
-     * @param maxInboundMessageBytes largest request message accepted
      */
-    public static CoresetNodeServer start(int port, CoresetNode node, RecordingMetrics stats, MetricsSink transportSink,
-                                          int maxInboundMessageBytes) throws IOException {
-        CoresetNodeGrpcService service = new CoresetNodeGrpcService(node, stats);
+    public static CoresetNodeServer start(NodeServerOptions options, CoresetNode node, RecordingMetrics stats,
+                                          MetricsSink transportSink) throws IOException {
+        ServerSecurity security = options.security();
+        CoresetNodeGrpcService service = new CoresetNodeGrpcService(node, () -> stats.snapshot().toJson(),
+                CoresetNodeGrpcService.Config.defaults()
+                        .withBlocking(options.blockingThreads(), options.blockingQueue())
+                        .withSessionIdsInStats(security.authenticatesCallers()));
         HealthStatusManager health = new HealthStatusManager();
-        Server server = NettyServerBuilder.forPort(port)
-                .maxInboundMessageSize(maxInboundMessageBytes)
-                .addService(ServerInterceptors.intercept(service, GrpcMetrics.server(transportSink)))
+        ExecutorService handlers = Executors.newFixedThreadPool(options.handlerThreads(), daemonThreads());
+        List<ServerInterceptor> interceptors = new ArrayList<>(2);
+        if (security.authToken() != null) {
+            interceptors.add(TokenAuth.server(security.authToken()));
+        }
+        interceptors.add(GrpcMetrics.server(transportSink)); // last added runs first: rejected calls are counted
+        InetSocketAddress address = new InetSocketAddress(options.bindHost(), options.port());
+        NettyServerBuilder builder = security.tls()
+                ? NettyServerBuilder.forAddress(address, credentials(security))
+                : NettyServerBuilder.forAddress(address);
+        Server server = builder
+                .executor(handlers)
+                .maxInboundMessageSize(options.maxInboundMessageBytes())
+                .maxConcurrentCallsPerConnection(options.maxConcurrentCallsPerConnection())
+                .keepAliveTime(NodeServerOptions.KEEPALIVE_TIME.toNanos(), TimeUnit.NANOSECONDS)
+                .keepAliveTimeout(NodeServerOptions.KEEPALIVE_TIMEOUT.toNanos(), TimeUnit.NANOSECONDS)
+                .permitKeepAliveTime(NodeServerOptions.PERMIT_KEEPALIVE.toNanos(), TimeUnit.NANOSECONDS)
+                .maxConnectionIdle(options.maxConnectionIdle().toNanos(), TimeUnit.NANOSECONDS)
+                .maxConnectionAge(options.maxConnectionAge().toNanos(), TimeUnit.NANOSECONDS)
+                .maxConnectionAgeGrace(options.maxConnectionAgeGrace().toNanos(), TimeUnit.NANOSECONDS)
+                .addService(ServerInterceptors.intercept(service, interceptors))
                 .addService(health.getHealthService())
                 .build();
         try {
             server.start();
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             service.close();
+            handlers.shutdownNow();
             throw e;
         }
         health.setStatus(HealthStatusManager.SERVICE_NAME_ALL_SERVICES, ServingStatus.SERVING);
         health.setStatus(CoresetNodeServiceGrpc.SERVICE_NAME, ServingStatus.SERVING);
-        return new CoresetNodeServer(server, service, health);
+        return new CoresetNodeServer(server, service, health, handlers);
+    }
+
+    private static ServerCredentials credentials(ServerSecurity security) throws IOException {
+        TlsServerCredentials.Builder tls = TlsServerCredentials.newBuilder()
+                .keyManager(security.certChain().toFile(), security.privateKey().toFile());
+        if (security.clientCa() != null) {
+            tls.trustManager(security.clientCa().toFile()).clientAuth(TlsServerCredentials.ClientAuth.REQUIRE);
+        }
+        return tls.build();
+    }
+
+    private static ThreadFactory daemonThreads() {
+        AtomicInteger n = new AtomicInteger();
+        return r -> {
+            Thread t = new Thread(r, "coreset-grpc-handler-" + n.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        };
     }
 
     public int port() {
         return server.getPort();
+    }
+
+    /** Addresses the server listens on. */
+    public List<? extends SocketAddress> listenAddresses() {
+        return server.getListenSockets();
     }
 
     public void awaitTermination() throws InterruptedException {
@@ -81,6 +145,7 @@ public final class CoresetNodeServer implements AutoCloseable {
             Thread.currentThread().interrupt();
         } finally {
             service.close();
+            handlers.shutdownNow();
         }
     }
 }

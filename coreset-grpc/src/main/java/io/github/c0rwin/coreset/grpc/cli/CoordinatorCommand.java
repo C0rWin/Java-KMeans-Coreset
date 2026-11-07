@@ -5,6 +5,7 @@ import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
+import io.github.c0rwin.coreset.grpc.ClientSecurity;
 import io.github.c0rwin.coreset.grpc.CoordinatorOptions;
 import io.github.c0rwin.coreset.grpc.CoresetCoordinator;
 import io.github.c0rwin.coreset.grpc.GatheredSnapshot;
@@ -100,6 +101,18 @@ public final class CoordinatorCommand implements Callable<Integer> {
     @Option(names = "--keep-session", description = "Leave the session open on the nodes.")
     boolean keepSession;
 
+    @Option(names = "--tls-ca", description = "PEM CAs trusted for node certificates; enables TLS.")
+    Path tlsCa;
+
+    @Option(names = "--tls-cert", description = "PEM client certificate chain for mutual TLS (with --tls-key).")
+    Path tlsCert;
+
+    @Option(names = "--tls-key", description = "PEM PKCS#8 private key of --tls-cert.")
+    Path tlsKey;
+
+    @Option(names = "--auth-token-file", description = "File holding the nodes' shared auth token.")
+    Path authTokenFile;
+
     private final Supplier<AlgorithmResolver> resolver;
 
     public CoordinatorCommand() {
@@ -120,7 +133,9 @@ public final class CoordinatorCommand implements Callable<Integer> {
                 TreeMode.fromId(treeMode));
         Duration timeout = Duration.ofMillis(timeoutMs);
         CoordinatorOptions options = CoordinatorOptions.defaults().withMaxInFlightPerNode(maxInFlight);
-        try (CoresetCoordinator coordinator = CoresetCoordinator.connect(nodes, options, MetricsSink.NOOP)) {
+        String token = authTokenFile == null ? null : Files.readString(authTokenFile, StandardCharsets.UTF_8).strip();
+        ClientSecurity security = new ClientSecurity(tlsCa, tlsCert, tlsKey, token);
+        try (CoresetCoordinator coordinator = CoresetCoordinator.connect(nodes, options, security, MetricsSink.NOOP)) {
             coordinator.createSession(sessionId, sessionSpec);
             long points = 0;
             try (IngestStream stream = coordinator.openIngest(sessionId);

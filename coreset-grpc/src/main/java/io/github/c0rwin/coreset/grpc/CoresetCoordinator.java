@@ -22,9 +22,13 @@ import io.github.c0rwin.coreset.node.NodeLimits;
 import io.github.c0rwin.coreset.node.NodeSnapshot;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.grpc.Channel;
+import io.grpc.ChannelCredentials;
+import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
+import io.grpc.TlsChannelCredentials;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +44,10 @@ import java.util.concurrent.TimeUnit;
  * way. Snapshots may be gathered at any time, including while an {@link IngestStream} is still sending.
  */
 public final class CoresetCoordinator implements AutoCloseable {
+
+    /** Client keepalive; at least the node's permitted ping interval ({@link NodeServerOptions#PERMIT_KEEPALIVE}). */
+    public static final Duration KEEPALIVE_TIME = Duration.ofSeconds(30);
+    public static final Duration KEEPALIVE_TIMEOUT = Duration.ofSeconds(10);
 
     private final List<ManagedChannel> ownedChannels;
     private final List<CoresetNodeServiceGrpc.CoresetNodeServiceStub> async;
@@ -74,17 +82,42 @@ public final class CoresetCoordinator implements AutoCloseable {
         });
     }
 
-    /** Connects to {@code host:port} targets over plaintext Netty channels owned (and closed) by the coordinator. */
-    public static CoresetCoordinator connect(List<String> targets, CoordinatorOptions options, MetricsSink metrics) {
+    /**
+     * Connects to {@code host:port} targets over channels owned (and closed) by the coordinator, with keepalive
+     * pings so a silently dead node is noticed within about {@link #KEEPALIVE_TIME} plus {@link #KEEPALIVE_TIMEOUT}.
+     */
+    public static CoresetCoordinator connect(List<String> targets, CoordinatorOptions options, ClientSecurity security,
+                                             MetricsSink metrics) throws IOException {
+        ChannelCredentials credentials = credentials(security);
         List<ManagedChannel> channels = new ArrayList<>(targets.size());
-        for (String target : targets) {
-            channels.add(NettyChannelBuilder.forTarget(target)
-                    .usePlaintext()
-                    .maxInboundMessageSize(options.maxMessageBytes())
-                    .intercept(GrpcMetrics.client(metrics))
-                    .build());
+        try {
+            for (String target : targets) {
+                NettyChannelBuilder b = NettyChannelBuilder.forTarget(target, credentials)
+                        .maxInboundMessageSize(options.maxMessageBytes())
+                        .keepAliveTime(KEEPALIVE_TIME.toNanos(), TimeUnit.NANOSECONDS)
+                        .keepAliveTimeout(KEEPALIVE_TIMEOUT.toNanos(), TimeUnit.NANOSECONDS)
+                        .intercept(GrpcMetrics.client(metrics));
+                if (security.authToken() != null) {
+                    b.intercept(TokenAuth.client(security.authToken()));
+                }
+                channels.add(b.build());
+            }
+        } catch (RuntimeException e) {
+            channels.forEach(ManagedChannel::shutdownNow);
+            throw e;
         }
         return new CoresetCoordinator(channels, channels, options);
+    }
+
+    private static ChannelCredentials credentials(ClientSecurity security) throws IOException {
+        if (!security.tls()) {
+            return InsecureChannelCredentials.create();
+        }
+        TlsChannelCredentials.Builder tls = TlsChannelCredentials.newBuilder().trustManager(security.trustCa().toFile());
+        if (security.certChain() != null) {
+            tls.keyManager(security.certChain().toFile(), security.privateKey().toFile());
+        }
+        return tls.build();
     }
 
     public int nodes() {

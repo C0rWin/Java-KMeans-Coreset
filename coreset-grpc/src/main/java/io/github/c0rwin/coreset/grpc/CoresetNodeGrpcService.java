@@ -1,7 +1,6 @@
 package io.github.c0rwin.coreset.grpc;
 
 import io.github.c0rwin.coreset.core.WeightedPoint;
-import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import io.github.c0rwin.coreset.grpc.proto.Ack;
 import io.github.c0rwin.coreset.grpc.proto.Batch;
 import io.github.c0rwin.coreset.grpc.proto.CloseSessionRequest;
@@ -31,11 +30,16 @@ import io.grpc.stub.StreamObserver;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
@@ -47,53 +51,89 @@ import java.util.function.Supplier;
  * front and one more after every non-BUSY ack; after a BUSY ack it waits {@code busyReadDelay} before requesting the
  * next batch, so a saturated node stops reading and HTTP/2 flow control pushes back on the sender instead of the
  * server buffering batches.
+ *
+ * <p>Calls that wait or scan (session create and close, snapshot, cost) run on a bounded executor of their own, so
+ * they can neither starve the ingest callbacks nor grow threads without bound; when its queue is full they fail with
+ * RESOURCE_EXHAUSTED.
  */
 public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.CoresetNodeServiceImplBase
         implements AutoCloseable {
 
-    public static final int DEFAULT_INGEST_WINDOW = 16;
-    public static final Duration DEFAULT_BUSY_READ_DELAY = Duration.ofMillis(1);
+    /**
+     * @param ingestWindow       batches requested ahead on each ingest stream
+     * @param busyReadDelay      pause before reading on after a BUSY ack
+     * @param blockingThreads    threads for blocking calls
+     * @param blockingQueue      blocking calls queued beyond the threads
+     * @param sessionIdsInStats  list session ids in Stats; only safe when every caller is authenticated
+     */
+    public record Config(int ingestWindow, Duration busyReadDelay, int blockingThreads, int blockingQueue,
+                         boolean sessionIdsInStats) {
+
+        public Config {
+            Objects.requireNonNull(busyReadDelay, "busyReadDelay");
+            if (ingestWindow < 1 || blockingThreads < 1 || blockingQueue < 1) {
+                throw new IllegalArgumentException("ingestWindow, blockingThreads and blockingQueue must be >= 1");
+            }
+        }
+
+        public static Config defaults() {
+            return new Config(16, Duration.ofMillis(1), 4, 256, false);
+        }
+
+        public Config withIngest(int window, Duration busyDelay) {
+            return new Config(window, busyDelay, blockingThreads, blockingQueue, sessionIdsInStats);
+        }
+
+        public Config withBlocking(int threads, int queue) {
+            return new Config(ingestWindow, busyReadDelay, threads, queue, sessionIdsInStats);
+        }
+
+        public Config withSessionIdsInStats(boolean expose) {
+            return new Config(ingestWindow, busyReadDelay, blockingThreads, blockingQueue, expose);
+        }
+    }
 
     private final CoresetNode node;
     private final NodeLimits limits;
     private final Supplier<String> statsJson;
-    private final int ingestWindow;
+    private final Config config;
     private final long busyReadDelayNanos;
     private final ScheduledExecutorService scheduler;
-
-    public CoresetNodeGrpcService(CoresetNode node, RecordingMetrics stats) {
-        this(node, () -> stats.snapshot().toJson(), DEFAULT_INGEST_WINDOW, DEFAULT_BUSY_READ_DELAY);
-    }
+    private final ThreadPoolExecutor blocking;
 
     /** @param statsJson source of {@code StatsResponse.metrics_json} */
-    public CoresetNodeGrpcService(CoresetNode node, Supplier<String> statsJson, int ingestWindow,
-                                  Duration busyReadDelay) {
-        if (ingestWindow < 1) {
-            throw new IllegalArgumentException("ingestWindow must be >= 1: " + ingestWindow);
-        }
+    public CoresetNodeGrpcService(CoresetNode node, Supplier<String> statsJson, Config config) {
         this.node = Objects.requireNonNull(node, "node");
         this.limits = node.limits();
         this.statsJson = Objects.requireNonNull(statsJson, "statsJson");
-        this.ingestWindow = ingestWindow;
-        this.busyReadDelayNanos = busyReadDelay.toNanos();
+        this.config = Objects.requireNonNull(config, "config");
+        this.busyReadDelayNanos = config.busyReadDelay().toNanos();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "coreset-grpc-ingest-backoff");
             t.setDaemon(true);
             return t;
         });
+        AtomicInteger n = new AtomicInteger();
+        this.blocking = new ThreadPoolExecutor(config.blockingThreads(), config.blockingThreads(), 60, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(config.blockingQueue()), r -> {
+                    Thread t = new Thread(r, "coreset-grpc-blocking-" + n.incrementAndGet());
+                    t.setDaemon(true);
+                    return t;
+                });
+        this.blocking.allowCoreThreadTimeOut(true);
     }
 
     @Override
     public void createSession(CreateSessionRequest request, StreamObserver<CreateSessionResponse> response) {
-        unary(response, () -> CreateSessionResponse.newBuilder()
+        offload(response, () -> CreateSessionResponse.newBuilder()
                 .setCreated(node.createSession(request.getSessionId(),
-                        ProtoCodec.fromProto(request.getSpec(), node.limits())))
+                        ProtoCodec.fromProto(request.getSpec(), limits)))
                 .build());
     }
 
     @Override
     public void closeSession(CloseSessionRequest request, StreamObserver<CloseSessionResponse> response) {
-        unary(response, () -> CloseSessionResponse.newBuilder()
+        offload(response, () -> CloseSessionResponse.newBuilder()
                 .setClosed(node.closeSession(request.getSessionId()))
                 .build());
     }
@@ -102,7 +142,7 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
     public StreamObserver<Batch> ingest(StreamObserver<Ack> responseObserver) {
         ServerCallStreamObserver<Ack> call = (ServerCallStreamObserver<Ack>) responseObserver;
         call.disableAutoRequest();
-        call.request(ingestWindow);
+        call.request(config.ingestWindow());
         return new StreamObserver<>() {
             private boolean rejected; // inbound callbacks are serialised by gRPC
 
@@ -153,7 +193,7 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
 
     @Override
     public void snapshot(SnapshotRequest request, StreamObserver<SnapshotResponse> response) {
-        unary(response, () -> {
+        offload(response, () -> {
             long ms = request.getAwaitAppliedMs(); // uint64: values above 2^63 arrive negative
             if (ms != 0) {
                 long cap = limits.maxAwait().toMillis();
@@ -179,7 +219,7 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
 
     @Override
     public void partialCost(PartialCostRequest request, StreamObserver<PartialCostResponse> response) {
-        unary(response, () -> {
+        offload(response, () -> {
             BooleanSupplier cancelled = Context.current()::isCancelled;
             PartialCost cost = switch (request.getSourceCase()) {
                 case POINTS -> {
@@ -210,12 +250,22 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
     public void stats(StatsRequest request, StreamObserver<StatsResponse> response) {
         unary(response, () -> StatsResponse.newBuilder()
                 .setMetricsJson(statsJson.get())
-                .addAllSessionIds(new TreeSet<>(node.sessionIds()))
+                .addAllSessionIds(config.sessionIdsInStats() ? new TreeSet<>(node.sessionIds()) : Set.of())
                 .build());
     }
 
     private interface Handler<T> {
         T handle();
+    }
+
+    /** Runs {@code handler} on the blocking executor with the caller's context (deadline, cancellation). */
+    private <T> void offload(StreamObserver<T> response, Handler<T> handler) {
+        try {
+            blocking.execute(Context.current().wrap(() -> unary(response, handler)));
+        } catch (RejectedExecutionException e) {
+            response.onError(Status.RESOURCE_EXHAUSTED.withDescription("node busy: too many blocking calls queued")
+                    .asRuntimeException());
+        }
     }
 
     private static <T> void unary(StreamObserver<T> response, Handler<T> handler) {
@@ -256,9 +306,10 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
         return status.withDescription(Messages.bounded(e.getMessage())).asRuntimeException();
     }
 
-    /** Stops the backoff scheduler; the node is owned by the caller. */
+    /** Stops the backoff scheduler and the blocking executor; the node is owned by the caller. */
     @Override
     public void close() {
         scheduler.shutdownNow();
+        blocking.shutdownNow();
     }
 }

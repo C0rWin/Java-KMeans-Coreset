@@ -65,7 +65,7 @@ class NettyEndToEndTest {
             List<WeightedPoint> all = blobs(new SplittableRandom(11), 30_000);
             double weight = all.stream().mapToDouble(WeightedPoint::weight).sum();
             try (CoresetCoordinator coordinator = CoresetCoordinator.connect(targets, CoordinatorOptions.defaults(),
-                    clientMetrics)) {
+                    ClientSecurity.plaintext(), clientMetrics)) {
                 // merge-equal keeps every node's coreset small (few distinct points) and the cost exact.
                 coordinator.createSession("e2e", new SessionSpec("merge-equal", Map.of(), 7L, 3, 16, TreeMode.CAS));
                 try (IngestStream stream = coordinator.openIngest("e2e")) {

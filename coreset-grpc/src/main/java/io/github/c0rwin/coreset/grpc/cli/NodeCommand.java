@@ -5,6 +5,8 @@ import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import io.github.c0rwin.coreset.grpc.CoresetNodeServer;
 import io.github.c0rwin.coreset.grpc.MetricsHttpServer;
 import io.github.c0rwin.coreset.grpc.MicrometerMetricsSink;
+import io.github.c0rwin.coreset.grpc.NodeServerOptions;
+import io.github.c0rwin.coreset.grpc.ServerSecurity;
 import io.github.c0rwin.coreset.node.AlgorithmResolver;
 import io.github.c0rwin.coreset.node.CoresetNode;
 import io.github.c0rwin.coreset.node.NodeLimits;
@@ -14,8 +16,14 @@ import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -32,9 +40,50 @@ public final class NodeCommand implements Callable<Integer> {
     @Option(names = "--port", defaultValue = "7070", description = "gRPC port (0 = ephemeral). Default: ${DEFAULT-VALUE}")
     int port;
 
+    @Option(names = "--bind", defaultValue = "127.0.0.1",
+            description = "gRPC listen address; 0.0.0.0 exposes the node (use TLS and a token). Default: ${DEFAULT-VALUE}")
+    String bind;
+
     @Option(names = "--metrics-port", defaultValue = "9464",
             description = "HTTP port for /metrics (0 = ephemeral, -1 = disabled). Default: ${DEFAULT-VALUE}")
     int metricsPort;
+
+    @Option(names = "--metrics-bind", defaultValue = "127.0.0.1",
+            description = "/metrics listen address; it has no authentication. Default: ${DEFAULT-VALUE}")
+    String metricsBind;
+
+    @Option(names = "--tls-cert", description = "PEM certificate chain; with --tls-key enables TLS.")
+    Path tlsCert;
+
+    @Option(names = "--tls-key", description = "PEM PKCS#8 private key of --tls-cert.")
+    Path tlsKey;
+
+    @Option(names = "--tls-client-ca", description = "PEM CAs for client certificates; requires them (mutual TLS).")
+    Path tlsClientCa;
+
+    @Option(names = "--auth-token-file",
+            description = "File holding a shared token every call must present as 'authorization: Bearer <token>'.")
+    Path authTokenFile;
+
+    @Option(names = "--handler-threads", defaultValue = "0",
+            description = "gRPC callback threads (0 = max(4, 2 x cores)). Default: ${DEFAULT-VALUE}")
+    int handlerThreads;
+
+    @Option(names = "--blocking-threads", defaultValue = "0",
+            description = "Threads for snapshot, cost and session calls (0 = max(4, cores)). Default: ${DEFAULT-VALUE}")
+    int blockingThreads;
+
+    @Option(names = "--max-connection-idle-ms", defaultValue = "1800000",
+            description = "Close client connections idle this long. Default: ${DEFAULT-VALUE}")
+    long maxConnectionIdleMs;
+
+    @Option(names = "--max-connection-age-ms", defaultValue = "7200000",
+            description = "Recycle client connections after this long. Default: ${DEFAULT-VALUE}")
+    long maxConnectionAgeMs;
+
+    @Option(names = "--max-connection-age-grace-ms", defaultValue = "900000",
+            description = "Time in-flight calls get when a connection is recycled. Default: ${DEFAULT-VALUE}")
+    long maxConnectionAgeGraceMs;
 
     @Option(names = "--shutdown-grace-ms", defaultValue = "10000",
             description = "Wait for busy workers before interrupting them on shutdown. Default: ${DEFAULT-VALUE}")
@@ -103,9 +152,19 @@ public final class NodeCommand implements Callable<Integer> {
             return server.port();
         }
 
+        /** Addresses the gRPC server listens on. */
+        public List<? extends SocketAddress> listenAddresses() {
+            return server.listenAddresses();
+        }
+
         /** HTTP metrics port, or -1 when disabled. */
         public int metricsPort() {
             return metrics == null ? -1 : metrics.port();
+        }
+
+        /** HTTP metrics listen address, or null when disabled. */
+        public InetSocketAddress metricsAddress() {
+            return metrics == null ? null : metrics.address();
         }
 
         public void awaitTermination() throws InterruptedException {
@@ -122,17 +181,36 @@ public final class NodeCommand implements Callable<Integer> {
         }
     }
 
+    NodeServerOptions serverOptions() throws IOException {
+        String token = authTokenFile == null ? null : Files.readString(authTokenFile, StandardCharsets.UTF_8).strip();
+        NodeServerOptions.Builder b = NodeServerOptions.builder().bindHost(bind).port(port)
+                .maxInboundMessageBytes(maxMessageBytes)
+                .security(new ServerSecurity(tlsCert, tlsKey, tlsClientCa, token))
+                .maxConnectionIdle(Duration.ofMillis(maxConnectionIdleMs))
+                .maxConnectionAge(Duration.ofMillis(maxConnectionAgeMs))
+                .maxConnectionAgeGrace(Duration.ofMillis(maxConnectionAgeGraceMs));
+        if (handlerThreads > 0) {
+            b.handlerThreads(handlerThreads);
+        }
+        if (blockingThreads > 0) {
+            b.blockingThreads(blockingThreads);
+        }
+        return b.build();
+    }
+
     /** Starts servers without blocking. */
     public Running start(AlgorithmResolver resolver) throws IOException {
+        NodeServerOptions serverOptions = serverOptions(); // validates the security flags before anything starts
         PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         RecordingMetrics recorder = new RecordingMetrics();
         MetricsSink sink = TeeMetricsSink.of(recorder, new MicrometerMetricsSink(registry));
         CoresetNode node = new CoresetNode(resolver, sink, Duration.ofMillis(shutdownGraceMs), limits());
         CoresetNodeServer server = null;
         try {
-            server = CoresetNodeServer.start(port, node, recorder, sink, maxMessageBytes);
+            server = CoresetNodeServer.start(serverOptions, node, recorder, sink);
             MetricsHttpServer http = metricsPort < 0 ? null
-                    : MetricsHttpServer.start(new InetSocketAddress(metricsPort), registry);
+                    : MetricsHttpServer.start(new InetSocketAddress(InetAddress.getByName(metricsBind), metricsPort),
+                            registry);
             return new Running(node, server, http);
         } catch (IOException | RuntimeException e) {
             if (server != null) {
@@ -148,7 +226,8 @@ public final class NodeCommand implements Callable<Integer> {
         Running running = start(ServiceLoaderAlgorithmResolver.load());
         Runtime.getRuntime().addShutdownHook(new Thread(running::close, "coreset-node-shutdown"));
         PrintWriter out = new PrintWriter(System.out, true);
-        out.printf("coreset-node listening on %d, metrics on %d%n", running.port(), running.metricsPort());
+        out.printf("coreset-node listening on %s, metrics on %s%n", running.listenAddresses(),
+                running.metricsAddress() == null ? "-" : running.metricsAddress());
         running.awaitTermination();
         return 0;
     }

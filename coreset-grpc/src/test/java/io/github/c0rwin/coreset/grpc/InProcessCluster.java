@@ -34,7 +34,7 @@ final class InProcessCluster implements AutoCloseable {
             RecordingMetrics m = new RecordingMetrics();
             CoresetNode node = new CoresetNode(new TestResolver(extra), m, Duration.ofMillis(200));
             CoresetNodeGrpcService service = new CoresetNodeGrpcService(node, () -> m.snapshot().toJson(),
-                    ingestWindow, Duration.ofMillis(1));
+                    CoresetNodeGrpcService.Config.defaults().withIngest(ingestWindow, Duration.ofMillis(1)));
             HealthStatusManager health = new HealthStatusManager();
             health.setStatus(HealthStatusManager.SERVICE_NAME_ALL_SERVICES, ServingStatus.SERVING);
             String name = InProcessServerBuilder.generateName();

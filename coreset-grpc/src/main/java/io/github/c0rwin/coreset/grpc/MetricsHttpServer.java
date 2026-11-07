@@ -51,6 +51,10 @@ public final class MetricsHttpServer implements AutoCloseable {
         return server.getAddress().getPort();
     }
 
+    public InetSocketAddress address() {
+        return server.getAddress();
+    }
+
     @Override
     public void close() {
         server.stop(0);
