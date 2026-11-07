@@ -339,13 +339,59 @@ How to run
    refuses to start without one.
 
    ```
-   java -jar coreset-node.jar --port 7070 --metrics-port 9464
-   java -jar coreset-coordinator.jar --nodes host1:7070,host2:7070 \
+   java -jar coreset-node.jar --port 7070
+   java -jar coreset-coordinator.jar --nodes localhost:7070 \
      --input points.csv --algorithm <id> --param key=value --k 32 --batch-size 1000
    ```
 
    Each node serves the standard `grpc.health.v1.Health` service and Prometheus
-   metrics at `http://<node>:9464/metrics`.
+   metrics at `http://127.0.0.1:9464/metrics`.
+
+   **Security.** A node listens on `127.0.0.1` for both gRPC and metrics unless
+   told otherwise (`--bind`, `--metrics-bind`). Without TLS and authentication
+   any peer that can reach the port can create, read, poison or close every
+   session, so only expose a node on a trusted network, or turn on:
+
+   * TLS: `--tls-cert node.crt --tls-key node.key` on the node (PEM, PKCS#8 key)
+     and `--tls-ca ca.crt` on the coordinator;
+   * mutual TLS: additionally `--tls-client-ca clients-ca.crt` on the node and
+     `--tls-cert`/`--tls-key` on the coordinator;
+   * a shared token: `--auth-token-file <file>` on both sides. Every call then
+     carries `authorization: Bearer <token>`; send it over TLS.
+
+   The health service stays unauthenticated for probes. `Stats` lists session
+   ids only when callers are authenticated (token or client certificates). The
+   metrics endpoint has no authentication of its own.
+
+   **Limits.** Every request is checked against node limits before anything is
+   allocated: vector dimension (`--max-dim`, 2^24), points per batch
+   (`--max-points-per-batch`, 2^18), request size (`--max-message-bytes`,
+   16 MiB), open sessions (`--max-sessions`, 64), workers over all sessions
+   (`--max-total-workers`, 4096), queue capacity (`--max-queue-capacity`, 4096),
+   cost work in points x centers (`--max-cost-work`, 2^31), snapshot size
+   (`--max-snapshot-points`, 2^22) and the longest awaited snapshot
+   (`--max-await-ms`, 10 min). Session ids are at most 128 characters of
+   `[A-Za-z0-9._:-]`; at most 32 algorithm parameters of up to 256 characters.
+   Shape violations answer `INVALID_ARGUMENT` (or a FAILED ack), exhausted
+   capacity `RESOURCE_EXHAUSTED`. Sessions without ingest progress or reads for
+   `--session-idle-timeout-ms` (1 h) are closed.
+
+   **Exactly-once ingest.** Batches are deduplicated per `(producer, seq)`:
+   each coordinator ingest run uses a fresh random producer id and numbers its
+   batches 0, 1, 2, ... per node, so several runs (or coordinators) can feed one
+   kept session. A producer's seqs must stay within `--max-seq-window` (4096) of
+   its lowest unacknowledged seq. An ACCEPTED ack means the batch was enqueued;
+   closing a session drops batches still queued, and an ingest that overlaps a
+   close or a failure is answered FAILED.
+
+   **Reproducibility.** Every batch coreset is a function of the session seed,
+   the producer id and the batch seq only, so it is identical across workers,
+   retries and arrival order. The merged tree is reproducible only in the
+   `single-writer` tree mode with a fixed per-worker arrival order (BUSY
+   retries can reorder it). In `cas` mode, which worker performs a merge, and
+   with which generator, depends on timing, so snapshots differ between runs.
+   A `cas` snapshot briefly holds off new merges until those in flight finish
+   (bounded wait) and is flagged inconsistent if that does not happen in time.
 
 
 Feedback

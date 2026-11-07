@@ -21,22 +21,29 @@ import java.util.function.BooleanSupplier;
 /**
  * Hosts coreset ingestion sessions; transport-agnostic (the gRPC service is a thin adapter).
  *
- * <p><b>Ingestion.</b> A session runs {@code W} worker threads. Batch {@code seq} is deduplicated (lock-free, see
- * {@code SeqDeduplicator}), then offered to worker {@code seq % W}'s bounded MPSC ring buffer; a full ring yields
- * {@link IngestResult.Status#BUSY} instead of blocking, so memory per session is bounded by
- * {@code W * queueCapacity} batches. Producers never take a lock: the hot path is a map insert, one CAS on the ring's
- * producer index and a volatile read to decide whether to unpark the worker.
+ * <p><b>Ingestion.</b> A session runs {@code W} worker threads. Batch {@code (producer, seq)} is deduplicated
+ * (lock-free, see {@code SeqDeduplicator}), then offered to one worker's bounded MPSC ring buffer, chosen by
+ * {@code seq} rotated by the producer; a full ring yields {@link IngestResult.Status#BUSY} instead of blocking, so
+ * memory per session is bounded by {@code W * queueCapacity} batches. Producers never take a lock: the hot path is a
+ * map insert, one CAS on the ring's producer index and a volatile read to decide whether to unpark the worker. An
+ * ACCEPTED batch is enqueued, not yet applied: closing the session drops what is still queued, and an ingest that
+ * overlaps a close or a failure is answered FAILED rather than ACCEPTED.
  *
- * <p><b>Determinism.</b> Batch {@code seq} is compressed with a generator derived only from {@code (seed, seq)}, so a
- * replayed or retried batch yields the identical batch coreset regardless of worker or timing.
+ * <p><b>Determinism.</b> Batch {@code seq} of a producer is compressed with a generator derived only from
+ * {@code (seed, producer, seq)}, so a replayed or retried batch yields the identical batch coreset regardless of
+ * worker or timing. That is the only reproducibility guarantee in {@link TreeMode#CAS}, where the worker performing a
+ * merge, and so the merge generator, depends on timing. In {@link TreeMode#SINGLE_WRITER} the snapshot is reproducible
+ * too, provided every worker receives its batches in the same order (BUSY retries can change that order).
  *
  * <p><b>Tree modes.</b> {@link TreeMode#SINGLE_WRITER}: each worker owns its merge-reduce tree and after every
  * insertion publishes the references of its occupied levels (O(log batches), no points copied), so {@link #snapshot}
  * reads W volatile fields wait-free, unions lazily and is always consistent; the price is W partial trees (W times the levels of a single tree in the union).
  * {@link TreeMode#CAS}: all workers share one tree of CAS slots, giving a single tree of {@code log2(batches)} levels
  * and letting any idle worker perform carries; the price is that a carry holds summaries outside the slots, so a
- * snapshot is validated optimistically and may be returned flagged inconsistent under sustained load, and
- * {@link #awaitApplied} additionally needs a moment with no carry in flight.
+ * snapshot is validated optimistically. Readers ({@link #snapshot}, {@link #awaitApplied}) hold off new carries while
+ * the ones in flight finish, so sustained ingest cannot starve them; the wait is bounded by
+ * {@link NodeLimits#casSnapshotWait()} (snapshot) or the caller's timeout (await), after which a snapshot is
+ * returned flagged inconsistent.
  *
  * <p><b>Failures.</b> An exception in a worker (e.g. from the algorithm) marks the session
  * {@link SessionState#FAILED}: later ingests return FAILED with the cause, snapshots report it and
