@@ -1,6 +1,8 @@
 package univ.ml.sparse.algorithm;
 
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.commons.math3.util.FastMath;
 
@@ -64,8 +66,12 @@ public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
         final List<SparseWeightableVector> dataset = Lists.newArrayList();
 
         // Copy initial set of points to not affect original points weights and probabilities
+        final Map<SparseWeightableVector, Integer> indexOf = new IdentityHashMap<>();
         for (SparseWeightableVector vector : pointset) {
-            dataset.add(new SparseWeightableVector(vector.copy()));
+            // copy() yields a plain OpenMapRealVector, so the weight has to be carried over explicitly
+            final SparseWeightableVector copy = new SparseWeightableVector(vector.copy(), vector.getWeight());
+            indexOf.put(copy, dataset.size());
+            dataset.add(copy);
         }
 
         if (dataset.size() <= sampleSize) {
@@ -92,6 +98,12 @@ public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
             }
         }
 
+        // Zero cost means every point lies on its center, so the distance term must vanish rather than be 0/0.
+        final double variance = totalVariance > 0 ? totalVariance : 1d;
+
+        final double[] sensitivities = new double[dataset.size()];
+        double totalSensitivity = 0d;
+
         for (final SparseCentroidCluster cluster : clusters) {
             // Sum of weights of points belongs to cluster
             final double clusterWeight = getTotalWeight(cluster);
@@ -102,39 +114,39 @@ public class SparseNonUniformCoreset implements SparseCoresetAlgorithm {
                 final double dist = getPoint2ClusterSqDist(center, point);
 
                 // Compute sensitivity for each point.
-                final double s_p = sensitivityFunction.sensitivity(point, dist, clusterWeight, totalVariance);
-
-                // Adjust new weights for cluster points.
-                changePointWeight(clusters, point, s_p);
+                final double s_p = sensitivityFunction.sensitivity(point, dist, clusterWeight, variance);
+                sensitivities[indexOf.get(point)] = s_p;
+                totalSensitivity += s_p;
             }
+        }
+
+        // Normalize by the actual sum: 8k+2 overcounts whenever the seeding leaves some clusters empty.
+        for (int i = 0; i < dataset.size(); i++) {
+            dataset.get(i).setProbability(sensitivities[i] / totalSensitivity);
         }
 
         final List<SparseWeightableVector> sample = samplingAlg.getSampleOfSize(dataset, sampleSize);
 
-        // Since sampling with repetitions sampleSize could be greater or equal to real sample.size()
-        // therefore loop below used to balance weights
-        double t_bound = 8 * clusters.size() + 2;
+        // Samplers either list a point once per draw, or once with probability and weight scaled by its draw count.
+        final int[] draws = new int[dataset.size()];
+        final List<SparseWeightableVector> coreset = Lists.newArrayList();
         for (SparseWeightableVector point : sample) {
-            double s_p = point.getProbability() * t_bound;
-            point.setWeight(point.getWeight() / (sample.size() * s_p));
+            final int i = indexOf.get(point);
+            if (draws[i] == 0) {
+                coreset.add(point);
+            }
+            draws[i] += (int) Math.round(point.getProbability() * totalSensitivity / sensitivities[i]);
         }
 
-        return sample;
-    }
+        // u_p = w_p * c_p / (m * q_p) makes the expected coreset cost equal the input cost for any centers.
+        for (SparseWeightableVector point : coreset) {
+            final int i = indexOf.get(point);
+            final double q_p = sensitivities[i] / totalSensitivity;
+            point.setWeight(pointset.get(i).getWeight() * draws[i] / (sampleSize * q_p));
+            point.setProbability(q_p);
+        }
 
-    private void changePointWeight(List<SparseCentroidCluster> clusters, SparseWeightableVector point, double s_p) {
-        double t_bound = 8 * clusters.size() + 2; // \sum_{p \in P} s(p) = 8 * k + 2
-
-        point.setProbability(s_p / t_bound);
-        /**
-         * Adjust new weight, s.t. \sum_{p \in P}dist(p, Q)^2 = E[\sum_{p \in S} dist(p, Q)^2]
-         *
-         * Based on sensitivity framework new weight should be u(p) := \frac{t_bound * w(p)}{|S|*s(p)} or
-         *
-         * u_p = (t_bound * w_p)/(sampleSize * s_p)
-         */
-        point.setWeight((t_bound * point.getWeight()));
-//        point.setWeight((t_bound * point.getWeight()) / (sampleSize * s_p));
+        return coreset;
     }
 
     private double getTotalWeight(SparseCentroidCluster cluster) {
