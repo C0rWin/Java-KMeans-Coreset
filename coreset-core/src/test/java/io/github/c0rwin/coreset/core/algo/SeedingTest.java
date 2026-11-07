@@ -95,7 +95,7 @@ class SeedingTest {
                 if (total == 0.0) {
                     break;
                 }
-                s.add(Seeding.D2.draw(s.mass, total, rng));
+                s.add(Seeding.D2.draw(s.mass, total, rng), active);
             }
             double activeWeight = 0.0;
             for (int i = 0; i < s.n; i++) {

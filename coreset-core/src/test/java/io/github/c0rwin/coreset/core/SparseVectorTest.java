@@ -171,6 +171,40 @@ class SparseVectorTest {
         assertEquals(0.25 + 1e-6, partial.squaredDistance(skewed, skewedNorm), 1e-12);
     }
 
+    /** The scattered kernel must equal the dense one bit for bit, including where the cancellation guard trips. */
+    @Test
+    void scatteredDistanceIsBitIdenticalToDense() {
+        SplittableRandom rng = new SplittableRandom(7);
+        int dim = 64;
+        double[] scratch = new double[dim];
+        for (int t = 0; t < 2000; t++) {
+            double shift = t % 3 == 0 ? 1e9 : 0.0;
+            SparseVector c = randomSparse(rng, dim, 1 + rng.nextInt(dim), shift);
+            SparseVector p = t % 5 == 0 ? c : randomSparse(rng, dim, 1 + rng.nextInt(dim), shift);
+            c.scatterInto(scratch);
+            double expected = p.squaredDistance(c.toDense(), c.squaredNorm());
+            assertEquals(Double.doubleToLongBits(expected),
+                    Double.doubleToLongBits(p.squaredDistanceScattered(scratch, c)), "trial " + t);
+            c.clearFrom(scratch);
+            assertArrayEquals(new double[dim], scratch);
+        }
+        SparseVector base = SparseVector.dense(new double[] {1e9, 1e-3});
+        SparseVector partial = SparseVector.of(2, new int[] {0}, new double[] {1e9 + 0.5});
+        double[] s = new double[2];
+        base.scatterInto(s);
+        assertEquals(0.25 + 1e-6, partial.squaredDistanceScattered(s, base), 1e-12);
+    }
+
+    private static SparseVector randomSparse(SplittableRandom rng, int dim, int nnz, double shift) {
+        int[] idx = new int[nnz];
+        double[] val = new double[nnz];
+        for (int k = 0; k < nnz; k++) {
+            idx[k] = rng.nextInt(dim);
+            val[k] = shift + rng.nextGaussian();
+        }
+        return SparseVector.of(dim, idx, val);
+    }
+
     @Test
     void addToAccumulatesScaledEntries() {
         double[] acc = {1.0, 1.0, 1.0};

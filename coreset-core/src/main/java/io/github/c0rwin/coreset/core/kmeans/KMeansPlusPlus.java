@@ -28,7 +28,8 @@ public final class KMeansPlusPlus {
      * Returns {@code min(k, number of distinct points with positive weight)} distinct centers, chosen from the
      * input. Zero-weight points are never chosen. Performs {@code n * (c - 1)} distance evaluations when {@code c = k}
      * centers are returned and {@code n * c} when the input runs out of distinct points first, where {@code n} is the
-     * number of positive-weight points.
+     * number of positive-weight points. On sparse input each new center is scattered into one O(dim) buffer, so a
+     * distance costs O(nnz(point)) ({@link SparseVector#scatterPays}, {@link SparseVector#squaredDistanceScattered}).
      *
      * @throws IllegalArgumentException if {@code k < 1} or the input overflows ({@link Guards#requireSummable})
      */
@@ -41,9 +42,11 @@ public final class KMeansPlusPlus {
             int n = 0;
             double totalWeight = 0.0;
             double moment = 0.0;
+            long entries = 0;
             for (int i = 0, size = points.size(); i < size; i++) {
                 WeightedPoint p = points.get(i);
                 moment += p.weight() * p.vector().squaredNorm();
+                entries += p.vector().nnz();
                 if (p.weight() > 0.0) {
                     n++;
                     totalWeight += p.weight();
@@ -71,17 +74,27 @@ public final class KMeansPlusPlus {
             double[] minD2 = new double[n];
             Arrays.fill(minD2, Double.POSITIVE_INFINITY);
             double[] score = new double[n];
+            // The latest center scattered into one O(dim) buffer: O(nnz(point)) per distance on sparse input.
+            double[] scratch = k > 1 && SparseVector.scatterPays(last.dim(), points.size(), entries)
+                    ? new double[last.dim()] : null;
             long evaluations = 0;
             while (centers.size() < k) {
                 Guards.checkInterrupted("k-means++ seeding");
+                if (scratch != null) {
+                    last.scatterInto(scratch);
+                }
                 double total = 0.0;
                 for (int i = 0; i < n; i++) {
-                    double d = vectors[i].squaredDistance(last);
+                    double d = scratch != null ? vectors[i].squaredDistanceScattered(scratch, last)
+                            : vectors[i].squaredDistance(last);
                     if (d < minD2[i]) {
                         minD2[i] = d;
                     }
                     score[i] = weights[i] * minD2[i];
                     total += score[i];
+                }
+                if (scratch != null) {
+                    last.clearFrom(scratch);
                 }
                 evaluations += n;
                 if (total == 0.0) {

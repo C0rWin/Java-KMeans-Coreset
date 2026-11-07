@@ -315,6 +315,78 @@ public final class SparseVector implements Serializable {
         return s;
     }
 
+    /**
+     * Whether a pass of distances from {@code rows} points holding {@code storedEntries} entries to one center should
+     * scatter the center into a dense scratch of {@code dim} doubles ({@link #squaredDistanceScattered}) instead of
+     * merging supports: only for sparse rows (under half the coordinates stored on average; denser rows merge as
+     * cheaply) and only while the scratch is affordable (up to 2^20 coordinates, beyond that no larger than the input's
+     * own values, so memory keeps following the stored entries in very high dimensions).
+     */
+    public static boolean scatterPays(int dim, int rows, long storedEntries) {
+        return 2 * storedEntries < (long) rows * dim && dim <= Math.max(1L << 20, storedEntries);
+    }
+
+    /**
+     * {@link #squaredDistance(double[], double)} to {@code c} whose entries the caller scattered into {@code scratch}
+     * (zero elsewhere), bit-identical to it but O(nnz(this)) lookups. When the cancellation guard trips, a center whose
+     * whole support was hit has no off-support term; otherwise the exact O(nnz(this) + nnz(c)) merge replaces the
+     * O(dim) sweep. Lets one dense scratch serve a whole pass of distances to the same center.
+     */
+    public double squaredDistanceScattered(double[] scratch, SparseVector c) {
+        checkDim(scratch.length);
+        checkDim(c.dim);
+        double onSupport = 0.0;
+        double centerOnSupport = 0.0;
+        int hits = 0;
+        for (int k = 0; k < indices.length; k++) {
+            double x = scratch[indices[k]];
+            double d = values[k] - x;
+            onSupport += d * d;
+            centerOnSupport += x * x;
+            hits += x != 0.0 ? 1 : 0; // stored center values are non-zero
+        }
+        double norm = c.squaredNorm;
+        double offSupport = norm - centerOnSupport;
+        if (offSupport > CANCELLATION_GUARD * norm) {
+            return onSupport + offSupport;
+        }
+        return hits == c.indices.length ? onSupport : onSupport + offSupportSquaredNorm(c);
+    }
+
+    /** {@code sum of c_i^2} over {@code c}'s stored coordinates outside this vector's support, in index order. */
+    private double offSupportSquaredNorm(SparseVector c) {
+        final int[] ci = c.indices;
+        final double[] cv = c.values;
+        double s = 0.0;
+        int k = 0;
+        for (int t = 0; t < ci.length; t++) {
+            int i = ci[t];
+            while (k < indices.length && indices[k] < i) {
+                k++;
+            }
+            if (k == indices.length || indices[k] != i) {
+                s += cv[t] * cv[t];
+            }
+        }
+        return s;
+    }
+
+    /** {@code scratch[i] = this_i} over the stored entries; {@link #clearFrom} undoes it in O(nnz). */
+    public void scatterInto(double[] scratch) {
+        checkDim(scratch.length);
+        for (int k = 0; k < indices.length; k++) {
+            scratch[indices[k]] = values[k];
+        }
+    }
+
+    /** Zeroes {@code scratch} at this vector's stored coordinates. */
+    public void clearFrom(double[] scratch) {
+        checkDim(scratch.length);
+        for (int k = 0; k < indices.length; k++) {
+            scratch[indices[k]] = 0.0;
+        }
+    }
+
     /** {@code acc += scale * this}. */
     public void addTo(double[] acc, double scale) {
         checkDim(acc.length);

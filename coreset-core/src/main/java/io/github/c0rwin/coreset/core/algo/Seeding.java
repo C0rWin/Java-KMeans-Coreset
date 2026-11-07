@@ -92,13 +92,9 @@ public abstract class Seeding {
 
         @Override
         Clustering run(D2 s, List<WeightedPoint> points, int k, RandomGenerator rng, MetricsSink metrics) {
-            s.add(D2.draw(s.weights, s.totalWeight, rng));
-            while (s.centers.size() < k) {
-                double total = s.fillD2Mass(null);
-                if (total == 0.0) {
-                    break; // every positive-weight point coincides with a center
-                }
-                s.add(D2.draw(s.mass, total, rng));
+            double total = s.add(D2.draw(s.weights, s.totalWeight, rng), null);
+            while (s.centers.size() < k && total != 0.0) { // zero: every positive-weight point sits on a center
+                total = s.add(D2.draw(s.mass, total, rng), null);
             }
             if (lloydIterations == 0) {
                 return s.toClustering();
@@ -144,7 +140,7 @@ public abstract class Seeding {
                     if (total == 0.0) {
                         break; // all remaining points sit on centers and are removed below
                     }
-                    s.add(D2.draw(s.mass, total, rng));
+                    s.add(D2.draw(s.mass, total, rng), active);
                 }
                 int a = 0;
                 double activeWeight = 0.0;
@@ -264,6 +260,8 @@ public abstract class Seeding {
         final int positive;
         final double totalWeight;
         long evaluations;
+        private final boolean useScratch;
+        private double[] scratch; // O(dim), zero outside the center being added
 
         D2(List<WeightedPoint> points) {
             n = points.size();
@@ -272,11 +270,13 @@ public abstract class Seeding {
             int pos = 0;
             double total = 0.0;
             double moment = 0.0;
+            long entries = 0;
             for (int i = 0; i < n; i++) {
                 WeightedPoint p = points.get(i);
                 vectors[i] = p.vector();
                 weights[i] = p.weight();
                 moment += p.weight() * p.vector().squaredNorm();
+                entries += p.vector().nnz();
                 if (p.weight() > 0.0) {
                     pos++;
                     total += p.weight();
@@ -285,6 +285,7 @@ public abstract class Seeding {
             Guards.requireSummable(total, moment);
             positive = pos;
             totalWeight = total;
+            useScratch = n > 0 && SparseVector.scatterPays(vectors[0].dim(), n, entries);
             minD2 = new double[n];
             Arrays.fill(minD2, Double.POSITIVE_INFINITY);
             nearest = new int[n];
@@ -292,20 +293,39 @@ public abstract class Seeding {
             mass = new double[n];
         }
 
-        /** Adds {@code vectors[index]} as a center: one pass over the points, preceded by a cancellation check. */
-        void add(int index) {
+        /**
+         * Adds {@code vectors[index]} as a center in one pass over the points (preceded by a cancellation check): the
+         * center is scattered into a dense scratch once, so each distance costs O(nnz(point)) lookups (the exact merge
+         * when the dimension is too large for a scratch). The same pass refreshes {@code mass} as {@link #fillD2Mass}
+         * would and returns its total.
+         */
+        double add(int index, boolean[] active) {
             Guards.checkInterrupted("seeding");
             SparseVector c = vectors[index];
             int id = centers.size();
             centers.add(c);
+            if (useScratch) {
+                if (scratch == null) {
+                    scratch = new double[c.dim()];
+                }
+                c.scatterInto(scratch);
+            }
+            double total = 0.0;
             for (int i = 0; i < n; i++) {
-                double d = vectors[i].squaredDistance(c);
+                double d = useScratch ? vectors[i].squaredDistanceScattered(scratch, c) : vectors[i].squaredDistance(c);
                 if (d < minD2[i]) {
                     minD2[i] = d;
                     nearest[i] = id;
                 }
+                double v = active == null || active[i] ? weights[i] * minD2[i] : 0.0;
+                mass[i] = v;
+                total += v;
+            }
+            if (useScratch) {
+                c.clearFrom(scratch);
             }
             evaluations += n;
+            return total;
         }
 
         /** {@code mass = w * minD2} over eligible points ({@code active == null}: all); returns the total. */
