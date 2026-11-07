@@ -159,6 +159,23 @@ class WeightedLloydTest {
         assertEquals(Centroids.Layout.SPARSE, Centroids.layoutFor(1000, 10_000_000, 25_000));
     }
 
+    @Test
+    void pointsScannedAndLayoutAreReported() {
+        List<WeightedPoint> pts = blobs(new double[][] {{0, 0}, {50, 50}}, 20, 1.0, 35);
+        int n = pts.size();
+        List<SparseVector> seeds = List.of(v(1, 1), v(49, 49), v(25, 25));
+        RecordingMetrics dense = new RecordingMetrics();
+        KMeansResult d = WeightedLloyd.run(pts, seeds, 10, dense, Centroids.Layout.DENSE, null);
+        long it = d.iterations();
+        assertEquals(n * (1 + (it + 1) + it), dense.snapshot().counters().get(MetricNames.LLOYD_POINTS_SCANNED));
+        assertEquals(null, dense.snapshot().counters().get(MetricNames.LLOYD_SPARSE_CENTERS));
+
+        RecordingMetrics sparse = new RecordingMetrics();
+        WeightedLloyd.run(pts, seeds, 10, sparse, Centroids.Layout.SPARSE, null);
+        assertEquals(n * (1 + (it + 1) * 3 + it * 3), sparse.snapshot().counters().get(MetricNames.LLOYD_POINTS_SCANNED));
+        assertEquals(1L, sparse.snapshot().counters().get(MetricNames.LLOYD_SPARSE_CENTERS));
+    }
+
     /** meansOf against a dense reference: means, part weights, and phi from exact distances. */
     @Test
     void meansOfMatchesDenseReference() {

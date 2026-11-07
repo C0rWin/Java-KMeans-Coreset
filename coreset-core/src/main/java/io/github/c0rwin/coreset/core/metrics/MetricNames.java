@@ -29,6 +29,10 @@ public final class MetricNames {
     public static final String LLOYD_ITERATIONS = "lloyd.iterations";
     /** Counter: squared-distance evaluations performed by Lloyd assignment steps (excludes seeding). */
     public static final String LLOYD_DISTANCE_EVALUATIONS = "lloyd.distance_evaluations";
+    /** Counter: Lloyd calls that kept sparse centers because m * dim was large next to the stored entries. */
+    public static final String LLOYD_SPARSE_CENTERS = "lloyd.sparse_centers";
+    /** Counter: points read by Lloyd passes (input read, assignment and update steps; excludes seeding). */
+    public static final String LLOYD_POINTS_SCANNED = "lloyd.points_scanned";
     /** Distribution: weighted cost after each assignment step, in squared input units. */
     public static final String LLOYD_ITERATION_COST = "lloyd.iteration_cost";
     /** Counter: centers re-seeded because their cluster had no positive weight. */

@@ -75,7 +75,7 @@ abstract class Centroids {
 
     /**
      * Moves every center whose cluster has positive weight to the cluster's weighted mean and leaves the others in
-     * place; fills {@code clusterWeight}, summed in point order. One pass over the points (two for {@link Sparse}).
+     * place; fills {@code clusterWeight}, summed in point order. Passes over the points: {@link #updatePasses()}.
      */
     abstract void moveToMeans(SparseVector[] vectors, double[] weights, int[] assignment, double[] clusterWeight);
 
@@ -83,6 +83,16 @@ abstract class Centroids {
     abstract void set(int j, SparseVector v);
 
     abstract SparseVector center(int j);
+
+    /** Passes over the points one assignment step makes (reported as {@code lloyd.points_scanned}). */
+    int assignPasses() {
+        return 1;
+    }
+
+    /** Passes over the points one update step makes. */
+    int updatePasses() {
+        return 1;
+    }
 
     /** m x dim arrays; the spare copy receives the next update's sums. */
     static final class Dense extends Centroids {
@@ -309,6 +319,18 @@ abstract class Centroids {
         @Override
         SparseVector center(int j) {
             return SparseVector.of(dim, indices[j], values[j]);
+        }
+
+        /** Center-major: every center streams all points. */
+        @Override
+        int assignPasses() {
+            return norms.length;
+        }
+
+        /** Two to bucket the points by cluster, one to gather each cluster's entries. */
+        @Override
+        int updatePasses() {
+            return 3;
         }
     }
 }

@@ -156,6 +156,11 @@ public final class WeightedLloyd {
         }
         metrics.count(MetricNames.LLOYD_DISTANCE_EVALUATIONS, (long) n * m * (iterations + 1));
         metrics.count(MetricNames.LLOYD_EMPTY_CLUSTER_RESEEDS, reseeds);
+        metrics.count(MetricNames.LLOYD_POINTS_SCANNED, (long) n * (1 + (iterations + 1L) * centers.assignPasses()
+                + (long) iterations * centers.updatePasses()));
+        if (centers instanceof Centroids.Sparse) {
+            metrics.count(MetricNames.LLOYD_SPARSE_CENTERS, 1);
+        }
         metrics.record(MetricNames.LLOYD_ITERATIONS, iterations);
 
         List<SparseVector> out = new ArrayList<>(m);
