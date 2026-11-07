@@ -62,6 +62,57 @@ class MergeReduceTreeTest {
         return new Coreset(pts, 0.125);
     }
 
+    /** Review F3: a null from compress used to become an "empty" level, silently dropping both inputs. */
+    @Test
+    void nullFromCompressFailsAndKeepsTheTreeIntact() {
+        for (MetricsSink metrics : List.of(MetricsSink.NOOP, new RecordingMetrics())) {
+            MergeReduceTree tree = new MergeReduceTree((input, rng, m) -> null, new SplittableRandom(1), metrics);
+            SplittableRandom rnd = new SplittableRandom(2);
+            Coreset first = batch(rnd, 3);
+            tree.add(first);
+            Coreset second = batch(rnd, 3);
+            IllegalStateException e = assertThrows(IllegalStateException.class, () -> tree.add(second));
+            assertTrue(e.getMessage().contains("null"), e.getMessage());
+            assertEquals(1, tree.batchesAdded());
+            assertEquals(1, tree.levels());
+            assertEquals(first, tree.snapshot());
+        }
+    }
+
+    /** Review F3: a throw on the second merge of a carry chain used to lose the level already merged. */
+    @Test
+    void compressFailureMidCarryLosesNothing() {
+        boolean[] failSecondMerge = {false};
+        int[] merges = {0};
+        CoresetAlgorithm flaky = (input, rng, m) -> {
+            if (failSecondMerge[0] && ++merges[0] == 2) {
+                throw new IllegalArgumentException("injected");
+            }
+            return input;
+        };
+        MergeReduceTree tree = new MergeReduceTree(flaky, new SplittableRandom(3));
+        SplittableRandom rnd = new SplittableRandom(4);
+        double weight = 0.0;
+        for (int i = 0; i < 3; i++) {
+            Coreset b = batch(rnd, 2);
+            weight += b.totalWeight();
+            tree.add(b);
+        }
+        Coreset before = tree.snapshot();
+        failSecondMerge[0] = true;
+        Coreset fourth = batch(rnd, 2);
+        assertThrows(IllegalArgumentException.class, () -> tree.add(fourth)); // carry 0 -> 1 -> 2 fails at level 1
+        assertEquals(3, tree.batchesAdded());
+        assertEquals(2, tree.levels());
+        assertEquals(before, tree.snapshot());
+
+        failSecondMerge[0] = false;
+        tree.add(fourth);
+        assertEquals(4, tree.batchesAdded());
+        assertEquals(1, tree.levels());
+        assertEquals(weight + fourth.totalWeight(), tree.snapshot().totalWeight(), 1e-12);
+    }
+
     @Test
     void occupiedLevelsFollowBinaryCounter() {
         RecordingMetrics m = new RecordingMetrics();
