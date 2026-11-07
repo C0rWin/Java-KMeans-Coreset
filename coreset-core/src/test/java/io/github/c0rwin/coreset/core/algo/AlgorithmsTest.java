@@ -12,9 +12,12 @@ class AlgorithmsTest {
     @Test
     void buildsEachAlgorithmWithDefaults() {
         assertEquals("uniform(m=10)", Algorithms.create("uniform", Map.of("m", "10")).toString());
-        String alpha3 = "standard(alpha=" + SensitivityBound.kMeansPlusPlusAlpha(3) + ")";
+        String alpha3 = "standard(alpha=2.0)"; // default alpha; see SensitivityBound.DEFAULT_ALPHA
         assertEquals("sensitivity(k=3, m=50, seeding=kmeans++(lloydIterations=0), bound=" + alpha3 + ")",
                 Algorithms.create("sensitivity", Map.of("k", "3", "m", "50")).toString());
+        assertEquals("sensitivity(k=3, m=50, seeding=kmeans++(lloydIterations=0), bound=standard(alpha="
+                        + SensitivityBound.kMeansPlusPlusAlpha(3) + "))",
+                Algorithms.create("sensitivity", Map.of("k", "3", "m", "50", "alpha", "kmeans++")).toString());
         assertEquals("sensitivity(k=3, m=50, seeding=bicriteria(removeFraction=0.5), bound=" + alpha3 + ")",
                 Algorithms.create("sensitivity", Map.of("k", "3", "m", "50", "seeding", "bicriteria")).toString());
         assertEquals("sensitivity(k=3, m=50, seeding=kmeans++(lloydIterations=0), bound=legacy)",
