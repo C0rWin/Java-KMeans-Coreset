@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package coreset.v1;
+
+option java_package = "io.github.c0rwin.coreset.grpc.proto";
+option java_multiple_files = true;
+option java_outer_classname = "CoresetProto";
+
+// Sparse vector: strictly increasing indices in [0, dim) with their non-zero values.
+// Wire cost is O(nnz), independent of dim.
+message SparseVector {
+  uint32 dim = 1;
+  repeated uint32 indices = 2 [packed = true];
+  repeated double values = 3 [packed = true];
+}
+
+message WeightedPoint {
+  SparseVector vector = 1;
+  double weight = 2;
+}
+
+// cost(C) ~= sum_p weight_p * min_c ||p - c||^2 + offset.
+message Coreset {
+  repeated WeightedPoint points = 1;
+  double offset = 2;
+}
+
+enum TreeMode {
+  TREE_MODE_UNSPECIFIED = 0; // single-writer
+  TREE_MODE_SINGLE_WRITER = 1;
+  TREE_MODE_CAS = 2;
+}
+
+message SessionSpec {
+  string algorithm_id = 1;
+  map<string, string> params = 2;
+  uint64 seed = 3;
+  uint32 workers = 4;
+  uint32 queue_capacity = 5;
+  TreeMode tree_mode = 6;
+}
+
+message CreateSessionRequest {
+  string session_id = 1;
+  SessionSpec spec = 2;
+}
+
+message CreateSessionResponse {
+  // False when the session already existed with an equal spec (idempotent retry).
+  bool created = 1;
+}
+
+message CloseSessionRequest {
+  string session_id = 1;
+}
+
+message CloseSessionResponse {
+  bool closed = 1;
+}
+
+// One batch of an ingest stream. seq is unique per batch within (session, node); retries reuse it.
+// seq must be below 2^63: larger values fail the stream with INVALID_ARGUMENT.
+message Batch {
+  string session_id = 1;
+  uint64 seq = 2;
+  repeated WeightedPoint points = 3;
+}
+
+enum AckStatus {
+  ACK_STATUS_UNSPECIFIED = 0;
+  ACK_STATUS_ACCEPTED = 1;
+  ACK_STATUS_DUPLICATE = 2; // already accepted earlier: the retry is a no-op
+  ACK_STATUS_BUSY = 3;      // not enqueued: back off and resend the same seq
+  ACK_STATUS_FAILED = 4;    // permanent rejection, see message
+}
+
+message Ack {
+  uint64 seq = 1;
+  AckStatus status = 2;
+  string message = 3;
+  uint32 accepted_points = 4;
+}
+
+enum SessionState {
+  SESSION_STATE_UNSPECIFIED = 0;
+  SESSION_STATE_ACTIVE = 1;
+  SESSION_STATE_FAILED = 2;
+  SESSION_STATE_CLOSED = 3;
+}
+
+message SnapshotRequest {
+  string session_id = 1;
+  // If > 0, first wait up to this long for every batch accepted before the call to be applied.
+  uint64 await_applied_ms = 2;
+}
+
+message SnapshotResponse {
+  Coreset coreset = 1;
+  SessionState state = 2;
+  string failure = 3;
+  uint64 accepted_batches = 4;
+  uint64 applied_batches = 5;
+  double accepted_weight = 6;
+  double applied_weight = 7;
+  double pending_weight = 8;
+  bool consistent = 9;
+  bool complete = 10;
+}
+
+message PointList {
+  repeated WeightedPoint points = 1;
+}
+
+message PartialCostRequest {
+  repeated SparseVector centers = 1;
+  oneof source {
+    PointList points = 2; // raw shard sent by the caller
+    string session_id = 3; // the session's current coreset, offset included
+  }
+}
+
+message PartialCostResponse {
+  double cost = 1;
+  double weight = 2;
+  uint64 points = 3;
+}
+
+message StatsRequest {
+}
+
+message StatsResponse {
+  // MetricsSnapshot.toJson() of the node's in-memory recorder.
+  string metrics_json = 1;
+  repeated string session_ids = 2;
+}
+
+service CoresetNodeService {
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+  // One Ack per Batch, in order. After a BUSY ack the server delays reading further batches, so a full
+  // node pushes back through HTTP/2 flow control instead of buffering.
+  rpc Ingest(stream Batch) returns (stream Ack);
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc PartialCost(PartialCostRequest) returns (PartialCostResponse);
+  rpc Stats(StatsRequest) returns (StatsResponse);
+}

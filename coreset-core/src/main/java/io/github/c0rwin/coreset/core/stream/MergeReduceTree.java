@@ -7,6 +7,7 @@ import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.Span;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.random.RandomGenerator;
@@ -106,6 +107,20 @@ public final class MergeReduceTree {
             metrics.record(MetricNames.MRTREE_SNAPSHOT_BYTES, snapshot.estimatedBytes());
         }
         return snapshot;
+    }
+
+    /**
+     * Occupied levels, lowest first, as an immutable list of references to the tree's own (immutable) coresets. Costs
+     * O(levels) and copies no points, so a writer can publish it after every add; later adds never change it.
+     */
+    public List<Coreset> levelsView() {
+        List<Coreset> out = new ArrayList<>(occupied);
+        for (Coreset c : levels) {
+            if (c != null) {
+                out.add(c);
+            }
+        }
+        return Collections.unmodifiableList(out);
     }
 
     /** {@link #snapshot()} compressed once by the tree's algorithm; an empty tree yields an empty coreset. */
