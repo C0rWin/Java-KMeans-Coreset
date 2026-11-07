@@ -131,12 +131,13 @@ public class BiCriteriaSeedingAlgorithm implements SparseSeedingAlgorithm, Seria
                     }
                 }
 
-                // Update distances
+                // Update distances; the sum is rebuilt over the remaining points only, the
+                // point just selected (and removed) must not keep contributing to it.
+                sumSqDist = 0d;
                 for (PointInfo point : points) {
                     final SparseWeightableVector vector = point.getVector();
                     double d = vector.getDistance(selectedVector) * FastMath.sqrt(vector.getWeight());
 
-                    sumSqDist -= point.getDistance() * point.getDistance();
                     point.setDistance(Math.min(point.getDistance(), d));
                     sumSqDist += point.getDistance() * point.getDistance();
                 }
@@ -149,10 +150,14 @@ public class BiCriteriaSeedingAlgorithm implements SparseSeedingAlgorithm, Seria
             }
             final double bound = median.evaluate(dist);
 
+            sumSqDist = 0d;
             final Iterator<PointInfo> it = points.iterator();
             while (it.hasNext()) {
-                if (it.next().getDistance() <= bound) {
+                final PointInfo point = it.next();
+                if (point.getDistance() <= bound) {
                     it.remove();
+                } else {
+                    sumSqDist += point.getDistance() * point.getDistance();
                 }
             }
         }

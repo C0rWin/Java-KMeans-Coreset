@@ -1,8 +1,6 @@
 package univ.ml.sparse.algorithm;
 
 import java.io.Serializable;
-import java.util.Arrays;
-import java.util.BitSet;
 import java.util.List;
 
 import org.apache.commons.math3.random.JDKRandomGenerator;
@@ -29,7 +27,6 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
     @Override
     public List<SparseCentroidCluster> seed(final List<SparseWeightableVector> vectors) {
         List<SparseCentroidCluster> result = Lists.newArrayList();
-        final BitSet selected = new BitSet();
 
         final int N = vectors.size();
         double[] sqDist = new double[N];
@@ -37,7 +34,6 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
         int selectedIdx = rnd.nextInt(N);
         SparseWeightableVector selectedCenter = vectors.get(selectedIdx);
         result.add(new SparseCentroidCluster(selectedCenter));
-        selected.set(selectedIdx);
 
         double sumSqDist = 0d;
 
@@ -48,23 +44,18 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
             sumSqDist += sqDist[i];
         }
 
-        while (result.size() < k) {
+        // Selected points and duplicates of centers have zero D^2 mass, so once the mass is gone
+        // there is nothing new left to pick and we return fewer than k centers.
+        while (result.size() < k && sumSqDist > 0) {
             selectedIdx = selectNext(sqDist, sumSqDist);
-
-            if (selected.get(selectedIdx)) {
-                continue;
-            }
-
-            // Mark point index as already selected to avoid repetitions
-            selected.set(selectedIdx);
             selectedCenter = vectors.get(selectedIdx);
             result.add(new SparseCentroidCluster(selectedCenter));
 
-            // Updated distances.
+            // Updated distances; the sum is rebuilt so it cannot drift away from zero.
+            sumSqDist = 0d;
             for (int i = 0; i < N; i++) {
                 final SparseWeightableVector p = vectors.get(i);
                 final double d = p.getVector().getDistance(selectedCenter);
-                sumSqDist -= sqDist[i];
                 sqDist[i] = FastMath.min(sqDist[i], d * d * p.getWeight());
                 sumSqDist += sqDist[i];
             }
@@ -98,13 +89,18 @@ public class KMeansPlusPlusSeed implements SparseSeedingAlgorithm, Serializable 
 
         final double X = rnd.nextDouble() * sumSqDist;
         double cdf = 0d;
+        int last = -1;
         for (int i = 0; i < sqDist.length; i++) {
+            if (sqDist[i] <= 0) {
+                continue;
+            }
+            last = i;
             cdf += sqDist[i];
             if (cdf >= X) {
                 return i;
             }
         }
-        System.out.println("XXXXXX [SIMON SAYS]: " + Arrays.toString(sqDist) + ", total sum is: " + sumSqDist);
-        return sqDist.length - 1;
+        // Rounding can leave cdf just below X; fall back to the last point that has mass.
+        return last;
     }
 }
