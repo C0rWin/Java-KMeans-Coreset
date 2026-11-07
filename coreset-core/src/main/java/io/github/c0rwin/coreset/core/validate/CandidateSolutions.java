@@ -84,6 +84,10 @@ public final class CandidateSolutions {
                     lambda[t] = -Math.log(1.0 - rng.nextDouble()); // Exp(1); normalised below
                     total += lambda[t];
                 }
+                if (total == 0.0) { // every draw was nextDouble() == 0.0: Exp(1) gave -0.0, so mix equally
+                    Arrays.fill(lambda, 0, arity, 1.0);
+                    total = arity;
+                }
                 Arrays.fill(acc, 0.0);
                 for (int t = 0; t < arity; t++) {
                     b.get(order[t]).addTo(acc, lambda[t] / total);
