@@ -20,8 +20,10 @@ import java.util.random.RandomGenerator;
  * Q and the total weight unbiased, whatever the bound; the bound only has to dominate the true sensitivities for
  * Hoeffding-type guarantees. Inputs with at most m points are returned unchanged; the offset passes through.
  *
- * <p>Time: the seeding (O(n k nnz) for k-means++) plus O(n + m) for sensitivities and sampling: two passes over the
- * points for the bounds and one to build the output. Stateless and thread-safe.
+ * <p>Time: the seeding (O(n k nnz) for k-means++) plus one pass over the points for the bounds and O(m log m) for
+ * sampling and the output. Scratch beyond the seeding's 12 bytes per point: the bounds overwrite the seeding's
+ * distances, the alias table reuses its assignment array, and only the probability table (8 bytes per point) is
+ * new. Stateless and thread-safe.
  */
 public final class SensitivityCoreset implements CoresetAlgorithm {
 
@@ -75,36 +77,36 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
             if (b.cost() == 0.0) {
                 metrics.count(MetricNames.SENSITIVITY_ZERO_COST_SEEDINGS, 1);
             }
-            double[] s = bound.sensitivities(points, b);
-            double total = 0.0;
-            for (double v : s) {
-                total += v;
-            }
+            // b is private to this call: its distances become the bounds and its assignment the alias table.
+            double[] s = b.squaredDistances;
+            double total = bound.fill(points, b, s);
+            long scanned = b.clusterWeights == null ? 2L * n : n;
             metrics.record(MetricNames.SENSITIVITY_TOTAL, total);
 
-            int[] counts = AliasSampler.drawCounts(s, m, rng);
+            int[] draws = AliasSampler.ofOwned(s.clone(), b.assignment).sortedDraws(m, rng);
             int distinct = 0;
-            for (int c : counts) {
-                distinct += c > 0 ? 1 : 0;
+            for (int j = 0; j < m; j++) {
+                distinct += j == 0 || draws[j] != draws[j - 1] ? 1 : 0;
             }
             int[] rows = new int[distinct];
             double[] outWeights = new double[distinct];
             int[] outCounts = new int[distinct];
             double[] outProb = new double[distinct];
-            for (int t = 0, g = 0, j = 0; t < points.segmentCount(); t++) {
-                PointBlock p = points.segment(t);
-                for (int i = 0, size = p.size(); i < size; i++, g++) {
-                    int c = counts[g];
-                    if (c > 0) {
-                        double q = s[g] / total;
-                        rows[j] = g;
-                        outWeights[j] = p.weight(i) * c / (m * q);
-                        outCounts[j] = c;
-                        outProb[j] = q;
-                        j++;
-                    }
+            for (int j = 0, d = 0; j < m; d++) {
+                int g = draws[j];
+                int end = j + 1;
+                while (end < m && draws[end] == g) {
+                    end++;
                 }
+                int c = end - j;
+                double q = s[g] / total;
+                rows[d] = g;
+                outWeights[d] = points.weight(g) * c / (m * q);
+                outCounts[d] = c;
+                outProb[d] = q;
+                j = end;
             }
+            metrics.count(MetricNames.SENSITIVITY_POINTS_SCANNED, scanned + distinct);
             metrics.record(MetricNames.SENSITIVITY_OUTPUT_POINTS, distinct);
             return new SampledCoreset(new Coreset(points.select(rows, outWeights, distinct), input.offset()),
                     outCounts, outProb, m, total);

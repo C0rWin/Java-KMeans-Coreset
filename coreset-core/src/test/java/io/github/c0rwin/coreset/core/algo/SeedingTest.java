@@ -80,26 +80,35 @@ class SeedingTest {
         }
     }
 
-    /** Bicriteria with the threshold found by scanning all active points for every candidate. */
+    /**
+     * Bicriteria with every total recomputed from scratch before each draw and the threshold found by scanning all
+     * active points for every candidate.
+     */
     private static Clustering directBicriteria(List<WeightedPoint> pts, int k, double fraction, SplittableRandom rng) {
         Seeding.D2 s = new Seeding.D2(pts);
+        double[] w = new double[s.n];
         boolean[] active = new boolean[s.n];
         int activeCount = 0;
         for (int i = 0; i < s.n; i++) {
-            active[i] = s.weights[i] > 0.0;
+            w[i] = pts.get(i).weight();
+            active[i] = w[i] > 0.0;
             activeCount += active[i] ? 1 : 0;
         }
         while (activeCount > 0) {
             for (int r = 0; r < k; r++) {
-                double total = s.centers.isEmpty() ? s.fillWeightMass(active) : s.fillD2Mass(active);
+                boolean first = s.centers.isEmpty();
+                double total = 0.0;
+                for (int i = 0; i < s.n; i++) {
+                    total += active[i] ? (first ? w[i] : w[i] * s.minD2[i]) : 0.0;
+                }
                 if (total == 0.0) {
                     break;
                 }
-                s.add(Seeding.D2.draw(s.mass, total, rng), active);
+                s.add(s.draw(active, first, total, rng), active);
             }
             double activeWeight = 0.0;
             for (int i = 0; i < s.n; i++) {
-                activeWeight += active[i] ? s.weights[i] : 0.0;
+                activeWeight += active[i] ? w[i] : 0.0;
             }
             double threshold = Double.POSITIVE_INFINITY;
             for (int c = 0; c < s.n; c++) {
@@ -108,7 +117,7 @@ class SeedingTest {
                 }
                 double within = 0.0;
                 for (int i = 0; i < s.n; i++) {
-                    within += active[i] && s.minD2[i] <= s.minD2[c] ? s.weights[i] : 0.0;
+                    within += active[i] && s.minD2[i] <= s.minD2[c] ? w[i] : 0.0;
                 }
                 if (within >= fraction * activeWeight) {
                     threshold = s.minD2[c];

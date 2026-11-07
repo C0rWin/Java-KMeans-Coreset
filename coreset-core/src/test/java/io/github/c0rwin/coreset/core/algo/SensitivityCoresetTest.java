@@ -9,9 +9,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.Cost;
+import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
+import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
+import io.github.c0rwin.coreset.core.metrics.MetricsSnapshot;
+import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
+import io.github.c0rwin.coreset.core.sampling.AliasSampler;
 import io.github.c0rwin.coreset.core.validate.TheoryBounds;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,6 +27,91 @@ import java.util.SplittableRandom;
 import org.junit.jupiter.api.Test;
 
 class SensitivityCoresetTest {
+
+    /** The construction before the in-place scratch: fresh bounds, an int[n] of counts and a scan over them. */
+    private static SampledCoreset countsReference(Coreset input, int k, int m, Seeding seeding, SensitivityBound bound,
+                                                  SplittableRandom rng) {
+        PointSet points = input.pointSet();
+        Clustering b = seeding.cluster(points, k, rng, MetricsSink.NOOP);
+        double[] s = bound.sensitivities(points, b);
+        double total = 0.0;
+        for (double v : s) {
+            total += v;
+        }
+        int[] counts = AliasSampler.drawCounts(s, m, rng);
+        List<Integer> rows = new ArrayList<>();
+        for (int g = 0; g < counts.length; g++) {
+            if (counts[g] > 0) {
+                rows.add(g);
+            }
+        }
+        int[] r = new int[rows.size()];
+        double[] w = new double[r.length];
+        int[] c = new int[r.length];
+        double[] q = new double[r.length];
+        for (int j = 0; j < r.length; j++) {
+            r[j] = rows.get(j);
+            c[j] = counts[r[j]];
+            q[j] = s[r[j]] / total;
+            w[j] = points.weight(r[j]) * c[j] / (m * q[j]);
+        }
+        return new SampledCoreset(new Coreset(points.select(r, w, r.length), input.offset()), c, q, m, total);
+    }
+
+    /** Bounds written over the seeding's distances and sorted draws give exactly the previous output and provenance. */
+    @Test
+    void outputIsBitIdenticalToTheCountsConstruction() {
+        Coreset weighted = new Coreset(TestData.mixture(2500, 5, 3, true, 41).points(), 1.5);
+        PointSet ps = weighted.pointSet();
+        Coreset segmented = new Coreset(PointSet.concat(List.of(ps.slice(0, 900),
+                PointSet.of(PointBlock.of(ps.slice(900, 1700).asList())), ps.slice(1700, 2500))), 1.5);
+        List<Seeding> seedings = List.of(Seeding.kMeansPlusPlus(0), Seeding.kMeansPlusPlus(2), Seeding.bicriteria());
+        List<SensitivityBound> bounds = List.of(SensitivityBound.standard(2.0), SensitivityBound.legacy());
+        for (Coreset input : List.of(weighted, segmented, TestData.mixture(2000, 4, 2, false, 42))) {
+            for (Seeding seeding : seedings) {
+                for (SensitivityBound bound : bounds) {
+                    for (int m : new int[] {1, 300, 1999}) {
+                        long seed = 43 + m;
+                        SampledCoreset expected = countsReference(input, 5, m, seeding, bound,
+                                new SplittableRandom(seed));
+                        SampledCoreset actual = new SensitivityCoreset(5, m, seeding, bound)
+                                .compressWithProvenance(input, new SplittableRandom(seed), MetricsSink.NOOP);
+                        assertEquals(expected, actual, seeding + " " + bound + " m=" + m);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Guard: seeding passes, then exactly one pass for the bounds and only the output rows; per-point scratch is the
+     * seeding's 12 bytes plus the 8-byte probability table.
+     */
+    @Test
+    void boundsTakeOnePassAndTwentyBytesPerPoint() {
+        int n = 200_000;
+        int k = 4;
+        List<WeightedPoint> pts = new ArrayList<>(n);
+        SplittableRandom rnd = new SplittableRandom(44);
+        for (int i = 0; i < n; i++) {
+            pts.add(new WeightedPoint(SparseVector.dense(new double[] {rnd.nextGaussian() + 10 * (i % k),
+                    rnd.nextGaussian()}), 1.0 + i % 3));
+        }
+        Coreset input = Coreset.of(pts);
+        SensitivityCoreset algo = new SensitivityCoreset(k, 500, Seeding.kMeansPlusPlus(0));
+        algo.compress(input, new SplittableRandom(1)); // warm-up: class loading must not count
+        RecordingMetrics metrics = new RecordingMetrics(true);
+        Coreset c = algo.compress(input, new SplittableRandom(45), metrics);
+        MetricsSnapshot snap = metrics.snapshot();
+        assertEquals((long) n + c.size(), snap.counters().get(MetricNames.SENSITIVITY_POINTS_SCANNED));
+        // Seeding: input read, one pass per center, the final clustering pass.
+        assertEquals((long) n * (k + 2), snap.counters().get(MetricNames.SEEDING_POINTS_SCANNED));
+        assertTrue(snap.counters().get(MetricNames.SEEDING_DRAW_POINTS_SCANNED) <= (long) n * k);
+        double alloc = snap.distributions().get(MetricNames.SENSITIVITY_COMPRESS + MetricNames.ALLOC_BYTES_SUFFIX)
+                .max();
+        // Before: 60 bytes per point (weights, mass, bounds, four alias arrays, counts). Slack: output and metrics.
+        assertTrue(alloc < 22.0 * n, "allocated " + alloc + " bytes, " + alloc / n + " per point");
+    }
 
     /**
      * Averages cost(C, Q) and total weight over R seeded runs; both are unbiased, so the means must lie within 5

@@ -68,55 +68,65 @@ public abstract class SensitivityBound {
         return Legacy.INSTANCE;
     }
 
-    /** {@link #sensitivities(PointSet, Clustering)} reading the weights from a list. */
+    /** {@link #sensitivities(PointSet, Clustering)} on a copy of {@code points} in one block. */
     public final double[] sensitivities(List<WeightedPoint> points, Clustering b) {
-        double[] weights = new double[points.size()];
-        for (int i = 0; i < weights.length; i++) {
-            weights[i] = points.get(i).weight();
-        }
-        return sensitivities(weights, b);
+        return sensitivities(PointSet.of(PointBlock.of(points)), b);
     }
 
     /**
      * Per-point bounds for {@code points} under the clustering {@code b} of the same points (zero for zero-weight
-     * points). Two passes: cluster weights and costs, then the bounds.
+     * points), as a new array; {@code b} is not modified. One pass when {@code b} comes from a {@link Seeding}
+     * (which supplies the per-cluster totals), else two.
      */
     public final double[] sensitivities(PointSet points, Clustering b) {
-        double[] weights = new double[points.size()];
-        for (int t = 0, g = 0; t < points.segmentCount(); t++) {
-            PointBlock p = points.segment(t);
-            for (int i = 0, n = p.size(); i < n; i++, g++) {
-                weights[g] = p.weight(i);
-            }
-        }
-        return sensitivities(weights, b);
+        double[] s = new double[points.size()];
+        fill(points, b, s);
+        return s;
     }
 
-    private double[] sensitivities(double[] weights, Clustering b) {
-        final int n = weights.length;
-        if (b.assignment.length != n) {
-            throw new IllegalArgumentException("clustering has " + b.assignment.length + " points, input " + n);
+    /**
+     * Writes the bounds into {@code out} in one pass (two without per-cluster totals) and returns their sum, added
+     * in row order. {@code out} may be {@code b.squaredDistances}: each entry is read before it is overwritten.
+     */
+    final double fill(PointSet points, Clustering b, double[] out) {
+        final int n = points.size();
+        if (b.assignment.length != n || out.length != n) {
+            throw new IllegalArgumentException("clustering has " + b.assignment.length + " points, output "
+                    + out.length + ", input " + n);
         }
-        final int clusters = b.centers().size();
-        double[] clusterWeight = new double[clusters];
-        double[] clusterCost = new double[clusters];
-        for (int i = 0; i < n; i++) {
-            double w = weights[i];
-            if (w > 0.0) {
-                int c = b.assignment[i];
-                clusterWeight[c] += w;
-                clusterCost[c] += w * b.squaredDistances[i];
+        double[] clusterWeight = b.clusterWeights;
+        double[] clusterCost = b.clusterCosts;
+        if (clusterWeight == null) {
+            clusterWeight = new double[b.centers().size()];
+            clusterCost = new double[clusterWeight.length];
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock p = points.segment(t);
+                for (int i = 0, rows = p.size(); i < rows; i++, g++) {
+                    double w = p.weight(i);
+                    if (w > 0.0) {
+                        int c = b.assignment[g];
+                        clusterWeight[c] += w;
+                        clusterCost[c] += w * b.squaredDistances[g];
+                    }
+                }
             }
         }
-        double[] s = weights; // overwritten in place: one array per call
-        for (int i = 0; i < n; i++) {
-            double w = weights[i];
-            if (w > 0.0) {
-                int c = b.assignment[i];
-                s[i] = bound(w, b.squaredDistances[i], clusterWeight[c], clusterCost[c], b.cost());
+        final double costB = b.cost();
+        double total = 0.0;
+        for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+            PointBlock p = points.segment(t);
+            for (int i = 0, rows = p.size(); i < rows; i++, g++) {
+                double w = p.weight(i);
+                double s = 0.0;
+                if (w > 0.0) {
+                    int c = b.assignment[g];
+                    s = bound(w, b.squaredDistances[g], clusterWeight[c], clusterCost[c], costB);
+                }
+                out[g] = s;
+                total += s;
             }
         }
-        return s;
+        return total;
     }
 
     /** {@code s_p} for weight w, squared distance d2 to B, its cluster's weight and cost, and cost(B). */

@@ -86,6 +86,8 @@ public abstract class Seeding {
             }
             Clustering result = run(state, k, rng, metrics);
             metrics.count(MetricNames.SEEDING_DISTANCE_EVALUATIONS, state.evaluations);
+            metrics.count(MetricNames.SEEDING_POINTS_SCANNED, state.scanned);
+            metrics.count(MetricNames.SEEDING_DRAW_POINTS_SCANNED, state.drawScanned);
             metrics.record(MetricNames.SEEDING_CENTERS, result.centers().size());
             return result;
         }
@@ -102,16 +104,31 @@ public abstract class Seeding {
 
         @Override
         Clustering run(D2 s, int k, RandomGenerator rng, MetricsSink metrics) {
-            double total = s.add(D2.draw(s.weights, s.totalWeight, rng), null);
+            double total = s.add(s.draw(null, true, s.totalWeight, rng), null);
             while (s.centers.size() < k && total != 0.0) { // zero: every positive-weight point sits on a center
-                total = s.add(D2.draw(s.mass, total, rng), null);
+                total = s.add(s.draw(null, false, total, rng), null);
             }
             if (lloydIterations == 0) {
                 return s.toClustering();
             }
             double[] sq = new double[s.n];
             KMeansResult r = WeightedLloyd.refine(s.points, s.centers, lloydIterations, metrics, sq);
-            return new Clustering(r.centers(), r.assignment(), sq, r.cost());
+            int[] assignment = r.assignment();
+            int clusters = r.centers().size();
+            double[] clusterWeights = new double[clusters];
+            double[] clusterCosts = new double[clusters];
+            for (int t = 0, g = 0; t < s.points.segmentCount(); t++) {
+                PointBlock b = s.points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                    double w = b.weight(i);
+                    if (w > 0.0) {
+                        clusterWeights[assignment[g]] += w;
+                        clusterCosts[assignment[g]] += w * sq[g];
+                    }
+                }
+            }
+            s.scanned += s.n;
+            return new Clustering(r.centers(), assignment, sq, r.cost(), clusterWeights, clusterCosts);
         }
 
         @Override
@@ -130,14 +147,17 @@ public abstract class Seeding {
         @Override
         Clustering run(D2 s, int k, RandomGenerator rng, MetricsSink metrics) {
             final int n = s.n;
-            final double[] w = s.weights;
+            final PointSet points = s.points;
             final double[] d2 = s.minD2;
             boolean[] active = new boolean[n];
             int activeCount = 0;
-            for (int i = 0; i < n; i++) {
-                if (w[i] > 0.0) {
-                    active[i] = true;
-                    activeCount++;
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                    if (b.weight(i) > 0.0) {
+                        active[g] = true;
+                        activeCount++;
+                    }
                 }
             }
             double[] keys = new double[activeCount];
@@ -146,19 +166,24 @@ public abstract class Seeding {
             while (activeCount > 0) {
                 rounds++;
                 for (int r = 0; r < k; r++) {
-                    double total = s.centers.isEmpty() ? s.fillWeightMass(active) : s.fillD2Mass(active);
+                    boolean first = s.centers.isEmpty();
+                    double total = first ? weightTotal(points, active) : s.d2Total(active);
                     if (total == 0.0) {
                         break; // all remaining points sit on centers and are removed below
                     }
-                    s.add(D2.draw(s.mass, total, rng), active);
+                    s.add(s.draw(active, first, total, rng), active);
                 }
                 int a = 0;
                 double activeWeight = 0.0;
-                for (int i = 0; i < n; i++) {
-                    if (active[i]) {
-                        keys[a] = d2[i];
-                        keyWeights[a++] = w[i];
-                        activeWeight += w[i];
+                for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                    PointBlock b = points.segment(t);
+                    for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                        if (active[g]) {
+                            double w = b.weight(i);
+                            keys[a] = d2[g];
+                            keyWeights[a++] = w;
+                            activeWeight += w;
+                        }
                     }
                 }
                 double threshold = weightedThreshold(keys, keyWeights, a, removeFraction * activeWeight);
@@ -171,6 +196,17 @@ public abstract class Seeding {
             }
             metrics.record(MetricNames.SEEDING_BICRITERIA_ROUNDS, rounds);
             return s.toClustering();
+        }
+
+        private static double weightTotal(PointSet points, boolean[] active) {
+            double total = 0.0;
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                    total += active[g] ? b.weight(i) : 0.0;
+                }
+            }
+            return total;
         }
 
         @Override
@@ -258,18 +294,22 @@ public abstract class Seeding {
         weights[j] = w;
     }
 
-    /** D^2 seeding state: every point's distance to, and index of, its nearest chosen center. */
+    /**
+     * D^2 seeding state: every point's distance to, and index of, its nearest chosen center (12 bytes per point).
+     * Weights are read from the segments, and sampling masses {@code w * minD2} are recomputed where needed instead
+     * of being stored, with the same products in the same order.
+     */
     static final class D2 {
         final int n;
         final PointSet points;
-        final double[] weights;
         final double[] minD2;
         final int[] nearest;
-        final double[] mass;
         final List<SparseVector> centers = new ArrayList<>();
         final int positive;
         final double totalWeight;
         long evaluations;
+        long scanned; // points visited by full passes
+        long drawScanned; // points visited by draws
         private final boolean useScratch;
         private double[] scratch; // O(dim), zero outside the center being added
 
@@ -280,15 +320,13 @@ public abstract class Seeding {
         D2(PointSet points) {
             n = points.size();
             this.points = points;
-            weights = new double[n];
             int pos = 0;
             double total = 0.0;
             double moment = 0.0;
-            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+            for (int t = 0; t < points.segmentCount(); t++) {
                 PointBlock b = points.segment(t);
-                for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                for (int i = 0, rows = b.size(); i < rows; i++) {
                     double w = b.weight(i);
-                    weights[g] = w;
                     moment += w * b.squaredNorm(i);
                     if (w > 0.0) {
                         pos++;
@@ -296,6 +334,7 @@ public abstract class Seeding {
                     }
                 }
             }
+            scanned += n;
             Guards.requireSummable(total, moment);
             positive = pos;
             totalWeight = total;
@@ -304,14 +343,13 @@ public abstract class Seeding {
             Arrays.fill(minD2, Double.POSITIVE_INFINITY);
             nearest = new int[n];
             Arrays.fill(nearest, -1);
-            mass = new double[n];
         }
 
         /**
          * Adds row {@code index} as a center in one pass over the points (preceded by a cancellation check): on sparse
          * input the center is scattered into a dense scratch once, so each distance costs O(nnz(point)) lookups
-         * ({@link SparseVector#scatterPays}); otherwise supports are merged. The same pass refreshes {@code mass} as
-         * {@link #fillD2Mass} would and returns its total.
+         * ({@link SparseVector#scatterPays}); otherwise supports are merged. Returns {@link #d2Total} of the updated
+         * distances, computed in the same pass.
          */
         double add(int index, boolean[] active) {
             Guards.checkInterrupted("seeding");
@@ -336,76 +374,101 @@ public abstract class Seeding {
                         minD2[g] = d;
                         nearest[g] = id;
                     }
-                    double v = active == null || active[g] ? weights[g] * minD2[g] : 0.0;
-                    mass[g] = v;
-                    total += v;
+                    total += active == null || active[g] ? b.weight(i) * minD2[g] : 0.0;
                 }
             }
             if (useScratch) {
                 cb.clearRow(ci, scratch);
             }
             evaluations += n;
+            scanned += n;
             return total;
         }
 
-        /** {@code mass = w * minD2} over eligible points ({@code active == null}: all); returns the total. */
-        double fillD2Mass(boolean[] active) {
+        /** {@code sum w * minD2} over eligible points ({@code active == null}: all), in row order. */
+        double d2Total(boolean[] active) {
             double total = 0.0;
-            for (int i = 0; i < n; i++) {
-                double v = active == null || active[i] ? weights[i] * minD2[i] : 0.0;
-                mass[i] = v;
-                total += v;
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                    total += active == null || active[g] ? b.weight(i) * minD2[g] : 0.0;
+                }
             }
+            scanned += n;
             return total;
         }
 
-        double fillWeightMass(boolean[] active) {
-            double total = 0.0;
-            for (int i = 0; i < n; i++) {
-                double v = active[i] ? weights[i] : 0.0;
-                mass[i] = v;
-                total += v;
-            }
-            return total;
-        }
-
-        Clustering toClustering() {
-            double cost = 0.0;
-            for (int i = 0; i < n; i++) {
-                cost += weights[i] * minD2[i];
-            }
-            return new Clustering(centers, nearest, minD2, cost);
-        }
-
-        /** Index drawn with probability proportional to {@code mass[i]}; only positive masses qualify. */
-        static int draw(double[] mass, double total, RandomGenerator rng) {
+        /**
+         * Row drawn with probability proportional to its mass among eligible points ({@code active == null}: all):
+         * {@code w} when {@code byWeight}, else {@code w * minD2}. Only positive masses qualify; {@code total} is the
+         * sum of the masses. The scan stops at the drawn row.
+         */
+        int draw(boolean[] active, boolean byWeight, double total, RandomGenerator rng) {
             if (!Double.isFinite(total)) {
-                return argMax(mass); // overflowed masses cannot be sampled proportionally
+                return argMax(active, byWeight); // overflowed masses cannot be sampled proportionally
             }
             double r = rng.nextDouble() * total;
             double cumulative = 0.0;
             int lastPositive = -1;
-            for (int i = 0; i < mass.length; i++) {
-                double m = mass[i];
-                if (m > 0.0) {
-                    cumulative += m;
-                    lastPositive = i;
-                    if (r < cumulative) {
-                        return i;
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                    double v = mass(b.weight(i), g, active, byWeight);
+                    if (v > 0.0) {
+                        cumulative += v;
+                        lastPositive = g;
+                        if (r < cumulative) {
+                            drawScanned += g + 1;
+                            return g;
+                        }
                     }
                 }
             }
+            drawScanned += n;
             return lastPositive; // rounding left r at the very top of the range
         }
 
-        private static int argMax(double[] mass) {
+        private double mass(double w, int g, boolean[] active, boolean byWeight) {
+            return active == null || active[g] ? (byWeight ? w : w * minD2[g]) : 0.0;
+        }
+
+        private int argMax(boolean[] active, boolean byWeight) {
             int best = 0;
-            for (int i = 1; i < mass.length; i++) {
-                if (mass[i] > mass[best]) {
-                    best = i;
+            double bestMass = Double.NEGATIVE_INFINITY;
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                    double v = mass(b.weight(i), g, active, byWeight);
+                    if (v > bestMass) {
+                        bestMass = v;
+                        best = g;
+                    }
                 }
             }
+            drawScanned += n;
             return best;
+        }
+
+        /** The clustering with its cost and per-center totals, gathered in one pass. */
+        Clustering toClustering() {
+            int k = centers.size();
+            double[] clusterWeights = new double[k];
+            double[] clusterCosts = new double[k];
+            double cost = 0.0;
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                    double w = b.weight(i);
+                    double c = w * minD2[g];
+                    cost += c;
+                    if (w > 0.0) {
+                        clusterWeights[nearest[g]] += w;
+                        clusterCosts[nearest[g]] += c;
+                    }
+                }
+            }
+            scanned += n;
+            return new Clustering(centers, nearest, minD2, cost, clusterWeights, clusterCosts);
         }
     }
 }
