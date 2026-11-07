@@ -1,0 +1,5 @@
+# git commit 6dd0059 (clean tree), JDK Amazon Corretto 17.0.5, Apple M2 Max (12 cores), 96 GiB, macOS
+mvn -B -pl coreset-testbed -am package -DskipTests
+java -Xms16g -Xmx16g -XX:+UseG1GC -XX:+AlwaysPreTouch \
+  -jar coreset-testbed/target/coreset-testbed.jar suite standard --out /tmp/tb_final
+# finished in 22.9 min; 740 runs; one-minute load average 3.6-54 (mean 12) during the run

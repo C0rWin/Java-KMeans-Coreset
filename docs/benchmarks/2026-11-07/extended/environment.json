@@ -1,0 +1,16 @@
+{
+  "gitCommit" : "868d8e94bfabf6af5a4e4c58c9651d8f00c5d796",
+  "gitDirty" : "false",
+  "host" : {
+    "os" : "Mac OS X 27.0.1",
+    "arch" : "aarch64",
+    "cpu" : "Apple M2 Max",
+    "cores" : 12,
+    "memBytes" : 103079215104
+  },
+  "jvm" : {
+    "vendor" : "Amazon.com Inc.",
+    "version" : "17.0.5",
+    "flags" : [ "-Xms16g", "-Xmx16g", "-XX:+UseG1GC", "-XX:+AlwaysPreTouch" ]
+  }
+}

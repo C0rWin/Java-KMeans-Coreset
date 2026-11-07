@@ -1,0 +1,65 @@
+[ {
+  "dataset" : "gauss-unbalanced-1m",
+  "k" : 10,
+  "candidates" : 11,
+  "generationMs" : 5724.291791,
+  "fullSolveMs" : 2161.262958,
+  "fullSolutionCost" : 6.215299982322688E8,
+  "distanceEvals" : 110000000
+}, {
+  "dataset" : "gauss-unbalanced-1m",
+  "k" : 50,
+  "candidates" : 11,
+  "generationMs" : 51334.544458,
+  "fullSolveMs" : 39196.056,
+  "fullSolutionCost" : 7.21594396659566E7,
+  "distanceEvals" : 550000000
+}, {
+  "dataset" : "gauss-balanced-200k",
+  "k" : 10,
+  "candidates" : 11,
+  "generationMs" : 3174.206792,
+  "fullSolveMs" : 2322.279208,
+  "fullSolutionCost" : 2.0493176477128215E9,
+  "distanceEvals" : 22000000
+}, {
+  "dataset" : "gauss-balanced-200k",
+  "k" : 50,
+  "candidates" : 11,
+  "generationMs" : 16763.341208,
+  "fullSolveMs" : 13391.983084,
+  "fullSolutionCost" : 1.6514600702263302E8,
+  "distanceEvals" : 110000000
+}, {
+  "dataset" : "esa22-k10-a5",
+  "k" : 10,
+  "candidates" : 11,
+  "generationMs" : 1576.966916,
+  "fullSolveMs" : 1034.888292,
+  "fullSolutionCost" : 368000.0000000154,
+  "distanceEvals" : 11000000
+}, {
+  "dataset" : "esa22-k10-a5",
+  "k" : 50,
+  "candidates" : 11,
+  "generationMs" : 12198.729416,
+  "fullSolveMs" : 10540.365792,
+  "fullSolutionCost" : 324320.2747103382,
+  "distanceEvals" : 55000000
+}, {
+  "dataset" : "sparse-bow-100k",
+  "k" : 10,
+  "candidates" : 11,
+  "generationMs" : 9165.770375,
+  "fullSolveMs" : 3582.576541,
+  "fullSolutionCost" : 61260.07561223662,
+  "distanceEvals" : 11000000
+}, {
+  "dataset" : "sparse-bow-100k",
+  "k" : 50,
+  "candidates" : 11,
+  "generationMs" : 47117.041875,
+  "fullSolveMs" : 21605.682584,
+  "fullSolutionCost" : 47542.24025479606,
+  "distanceEvals" : 55000000
+} ]

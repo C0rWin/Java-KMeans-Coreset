@@ -1,0 +1,7 @@
+# git commit 868d8e9 (clean tree), same machine and JDK as ../command.txt
+# The standard suite before its exclusions were tightened: adds mean at m = 1000
+# on the 1e5-point inputs and sensitivity-bicriteria at k = 50 on sparse-bow-100k.
+java -Xms16g -Xmx16g -XX:+UseG1GC -XX:+AlwaysPreTouch \
+  -jar coreset-testbed/target/coreset-testbed.jar suite standard --out /tmp/tb_standard
+# finished in 51.3 min; 790 runs; one-minute load average 3.1-256 (other jobs were running)
+# The 740 runs shared with ../ produced bit-identical coresets and distortions.

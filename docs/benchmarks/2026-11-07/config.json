@@ -1,0 +1,140 @@
+{
+  "name" : "standard",
+  "problem" : "kmeans",
+  "datasets" : [ {
+    "id" : "gauss-unbalanced-1m",
+    "type" : "gaussian-mixture",
+    "params" : {
+      "clusters" : "20",
+      "d" : "10",
+      "imbalance" : "1.5",
+      "n" : "1000000",
+      "seed" : "1",
+      "sigma" : "3"
+    }
+  }, {
+    "id" : "gauss-balanced-200k",
+    "type" : "gaussian-mixture",
+    "params" : {
+      "clusters" : "50",
+      "d" : "20",
+      "imbalance" : "0",
+      "n" : "200000",
+      "seed" : "2",
+      "sigma" : "5"
+    }
+  }, {
+    "id" : "esa22-k10-a5",
+    "type" : "esa22",
+    "params" : {
+      "alpha" : "5",
+      "k" : "10"
+    }
+  }, {
+    "id" : "sparse-bow-100k",
+    "type" : "sparse-bow",
+    "params" : {
+      "d" : "20000",
+      "docLength" : "50",
+      "imbalance" : "1.0",
+      "n" : "100000",
+      "seed" : "3",
+      "topics" : "20"
+    }
+  } ],
+  "ks" : [ 10, 50 ],
+  "sizes" : [ 200, 1000, 4000 ],
+  "algorithms" : [ {
+    "label" : "uniform",
+    "id" : "uniform",
+    "params" : { },
+    "inject" : [ "m" ],
+    "oneSided" : false
+  }, {
+    "label" : "sensitivity-kmeans++",
+    "id" : "sensitivity",
+    "params" : {
+      "seeding" : "kmeans++"
+    },
+    "inject" : [ "k", "m" ],
+    "oneSided" : false
+  }, {
+    "label" : "sensitivity-bicriteria",
+    "id" : "sensitivity",
+    "params" : {
+      "seeding" : "bicriteria"
+    },
+    "inject" : [ "k", "m" ],
+    "oneSided" : false
+  }, {
+    "label" : "mean",
+    "id" : "mean",
+    "params" : {
+      "lloydIterations" : "3"
+    },
+    "inject" : [ "m" ],
+    "oneSided" : true
+  } ],
+  "modes" : [ {
+    "type" : "offline",
+    "blockCount" : null,
+    "finalReduce" : null,
+    "nodes" : null,
+    "transport" : null,
+    "workers" : null,
+    "treeMode" : null,
+    "label" : "offline"
+  }, {
+    "type" : "stream",
+    "blockCount" : 64,
+    "finalReduce" : true,
+    "nodes" : null,
+    "transport" : null,
+    "workers" : null,
+    "treeMode" : null,
+    "label" : "stream-b64"
+  } ],
+  "replicates" : 5,
+  "seed" : 42,
+  "evaluation" : {
+    "candidatesPerGenerator" : 5,
+    "lloydOnCoreset" : 3,
+    "lloydIterations" : 30,
+    "downstreamRestarts" : 10,
+    "fullRestarts" : 3,
+    "confidence" : 0.95,
+    "distortionThreshold" : 1.2,
+    "deltaSteps" : 50,
+    "verifyReplay" : false,
+    "evaluationThreads" : 0
+  },
+  "exclude" : [ {
+    "dataset" : null,
+    "algorithm" : "mean",
+    "mode" : null,
+    "k" : null,
+    "size" : 4000,
+    "minN" : null
+  }, {
+    "dataset" : null,
+    "algorithm" : "mean",
+    "mode" : null,
+    "k" : null,
+    "size" : 1000,
+    "minN" : null
+  }, {
+    "dataset" : "gauss-unbalanced-1m",
+    "algorithm" : "sensitivity-bicriteria",
+    "mode" : null,
+    "k" : 50,
+    "size" : null,
+    "minN" : null
+  }, {
+    "dataset" : "sparse-bow-100k",
+    "algorithm" : "sensitivity-bicriteria",
+    "mode" : null,
+    "k" : 50,
+    "size" : null,
+    "minN" : null
+  } ]
+}

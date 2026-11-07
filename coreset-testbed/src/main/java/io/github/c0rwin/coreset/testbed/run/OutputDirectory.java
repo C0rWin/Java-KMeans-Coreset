@@ -11,7 +11,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 /**
  * Writes a run's results: {@code runs/<run>.json} (one validity report each), {@code reports.jsonl.gz} (all reports,
@@ -33,11 +32,13 @@ public final class OutputDirectory implements Testbed.Sink, AutoCloseable {
         this.runs = dir.resolve("runs");
         Files.createDirectories(runs);
         Files.writeString(dir.resolve("config.json"), Json.toJson(config) + "\n", StandardCharsets.UTF_8);
-        Files.writeString(dir.resolve("environment.json"), Json.toJson(Map.of(
-                "gitCommit", String.valueOf(provenance.gitCommit()),
-                "gitDirty", String.valueOf(provenance.gitDirty()),
-                "jvm", provenance.jvm(), "host", provenance.host())) + "\n", StandardCharsets.UTF_8);
+        Files.writeString(dir.resolve("environment.json"), Json.toJson(new Environment(provenance.gitCommit(),
+                provenance.gitDirty(), provenance.jvm(), provenance.host())) + "\n", StandardCharsets.UTF_8);
         this.lines = Json.jsonLinesGzip(dir.resolve(REPORTS));
+    }
+
+    /** Contents of {@code environment.json}; null git fields mean the working directory is not a checkout. */
+    record Environment(String gitCommit, Boolean gitDirty, ValidityReport.Jvm jvm, ValidityReport.Host host) {
     }
 
     @Override
