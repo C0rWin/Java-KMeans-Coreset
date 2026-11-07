@@ -14,11 +14,15 @@ import java.util.Objects;
  *                             consecutive attempt
  * @param maxBackoff           cap of the backoff
  * @param maxTransportFailures consecutive stream failures without any ack before the ingest is failed
- * @param maxMessageBytes      inbound message limit for snapshot responses
+ * @param maxMessageBytes      message limit; inbound it bounds snapshot responses, outbound the batches (which the
+ *                             node accepts only up to its own inbound limit)
  */
 public record CoordinatorOptions(int maxInFlightPerNode, Duration rpcDeadline, Duration streamDeadline,
                                  Duration initialBackoff, Duration maxBackoff, int maxTransportFailures,
                                  int maxMessageBytes) {
+
+    /** Snapshots of large sessions exceed gRPC's 4 MiB default; the node caps them by point count. */
+    public static final int DEFAULT_MAX_MESSAGE_BYTES = 256 * 1024 * 1024;
 
     public CoordinatorOptions {
         Objects.requireNonNull(rpcDeadline, "rpcDeadline");
@@ -38,7 +42,7 @@ public record CoordinatorOptions(int maxInFlightPerNode, Duration rpcDeadline, D
 
     public static CoordinatorOptions defaults() {
         return new CoordinatorOptions(16, Duration.ofSeconds(30), Duration.ofMinutes(10), Duration.ofMillis(1),
-                Duration.ofMillis(250), 8, CoresetNodeServer.DEFAULT_MAX_MESSAGE_BYTES);
+                Duration.ofMillis(250), 8, DEFAULT_MAX_MESSAGE_BYTES);
     }
 
     public CoordinatorOptions withMaxInFlightPerNode(int n) {

@@ -41,7 +41,7 @@ class CoresetCoordinatorTest {
 
     private static CoordinatorOptions options(int inFlight) {
         return new CoordinatorOptions(inFlight, WAIT, Duration.ofMinutes(5), Duration.ofMillis(1),
-                Duration.ofMillis(20), 5, CoresetNodeServer.DEFAULT_MAX_MESSAGE_BYTES);
+                Duration.ofMillis(20), 5, CoordinatorOptions.DEFAULT_MAX_MESSAGE_BYTES);
     }
 
     private static double ingestAll(IngestStream stream, SplittableRandom rng, int batches, List<WeightedPoint> all)

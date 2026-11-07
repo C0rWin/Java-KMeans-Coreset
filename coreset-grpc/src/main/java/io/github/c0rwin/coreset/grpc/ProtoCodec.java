@@ -7,6 +7,8 @@ import io.github.c0rwin.coreset.grpc.proto.Ack;
 import io.github.c0rwin.coreset.grpc.proto.AckStatus;
 import io.github.c0rwin.coreset.grpc.proto.SnapshotResponse;
 import io.github.c0rwin.coreset.node.IngestResult;
+import io.github.c0rwin.coreset.node.Messages;
+import io.github.c0rwin.coreset.node.NodeLimits;
 import io.github.c0rwin.coreset.node.NodeSnapshot;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.github.c0rwin.coreset.node.SessionState;
@@ -30,8 +32,18 @@ public final class ProtoCodec {
         return b.build();
     }
 
-    /** @throws IllegalArgumentException if the message is not a valid vector */
-    public static SparseVector fromProto(io.github.c0rwin.coreset.grpc.proto.SparseVector v) {
+    /**
+     * Decodes one vector. The dimension is checked against {@code maxDim} before anything is allocated; the packed
+     * arrays are copied once here (and once more by {@code SparseVector.of}, which owns its arrays).
+     *
+     * @throws IllegalArgumentException if the message is not a valid vector or its dimension exceeds {@code maxDim}
+     */
+    public static SparseVector fromProto(io.github.c0rwin.coreset.grpc.proto.SparseVector v, int maxDim) {
+        int dim = v.getDim(); // uint32 above 2^31 arrives negative and is rejected here
+        if (dim < 0 || dim > maxDim) {
+            throw new IllegalArgumentException("dim " + Integer.toUnsignedString(dim) + " exceeds the limit of "
+                    + maxDim);
+        }
         int n = v.getIndicesCount();
         if (n != v.getValuesCount()) {
             throw new IllegalArgumentException("indices and values lengths differ: " + n + " vs " + v.getValuesCount());
@@ -42,7 +54,7 @@ public final class ProtoCodec {
             idx[k] = v.getIndices(k);
             val[k] = v.getValues(k);
         }
-        return SparseVector.of(v.getDim(), idx, val); // uint32 above 2^31 arrives negative and is rejected here
+        return SparseVector.of(dim, idx, val);
     }
 
     public static io.github.c0rwin.coreset.grpc.proto.WeightedPoint toProto(WeightedPoint p) {
@@ -52,11 +64,11 @@ public final class ProtoCodec {
                 .build();
     }
 
-    public static WeightedPoint fromProto(io.github.c0rwin.coreset.grpc.proto.WeightedPoint p) {
+    public static WeightedPoint fromProto(io.github.c0rwin.coreset.grpc.proto.WeightedPoint p, int maxDim) {
         if (!p.hasVector()) {
             throw new IllegalArgumentException("point without vector");
         }
-        return new WeightedPoint(fromProto(p.getVector()), p.getWeight());
+        return new WeightedPoint(fromProto(p.getVector(), maxDim), p.getWeight());
     }
 
     public static List<io.github.c0rwin.coreset.grpc.proto.WeightedPoint> pointsToProto(List<WeightedPoint> points) {
@@ -67,12 +79,17 @@ public final class ProtoCodec {
         return out;
     }
 
-    public static List<WeightedPoint> pointsFromProto(List<io.github.c0rwin.coreset.grpc.proto.WeightedPoint> points) {
-        List<WeightedPoint> out = new ArrayList<>(points.size());
-        for (io.github.c0rwin.coreset.grpc.proto.WeightedPoint p : points) {
-            out.add(fromProto(p));
+    /**
+     * Decodes into an immutable list that {@code List.copyOf} (node ingest, {@code Coreset}) takes by reference: one
+     * pass, one reference array plus the copy {@code List.of} makes.
+     */
+    public static List<WeightedPoint> pointsFromProto(List<io.github.c0rwin.coreset.grpc.proto.WeightedPoint> points,
+                                                      int maxDim) {
+        WeightedPoint[] out = new WeightedPoint[points.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = fromProto(points.get(i), maxDim);
         }
-        return out;
+        return List.of(out);
     }
 
     public static List<io.github.c0rwin.coreset.grpc.proto.SparseVector> vectorsToProto(List<SparseVector> vectors) {
@@ -83,12 +100,13 @@ public final class ProtoCodec {
         return out;
     }
 
-    public static List<SparseVector> vectorsFromProto(List<io.github.c0rwin.coreset.grpc.proto.SparseVector> vectors) {
-        List<SparseVector> out = new ArrayList<>(vectors.size());
-        for (io.github.c0rwin.coreset.grpc.proto.SparseVector v : vectors) {
-            out.add(fromProto(v));
+    public static List<SparseVector> vectorsFromProto(List<io.github.c0rwin.coreset.grpc.proto.SparseVector> vectors,
+                                                      int maxDim) {
+        SparseVector[] out = new SparseVector[vectors.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = fromProto(vectors.get(i), maxDim);
         }
-        return out;
+        return List.of(out);
     }
 
     public static io.github.c0rwin.coreset.grpc.proto.Coreset toProto(Coreset c) {
@@ -98,8 +116,8 @@ public final class ProtoCodec {
                 .build();
     }
 
-    public static Coreset fromProto(io.github.c0rwin.coreset.grpc.proto.Coreset c) {
-        return new Coreset(pointsFromProto(c.getPointsList()), c.getOffset());
+    public static Coreset fromProto(io.github.c0rwin.coreset.grpc.proto.Coreset c, int maxDim) {
+        return new Coreset(pointsFromProto(c.getPointsList(), maxDim), c.getOffset());
     }
 
     public static io.github.c0rwin.coreset.grpc.proto.SessionSpec toProto(SessionSpec s) {
@@ -115,13 +133,22 @@ public final class ProtoCodec {
                 .build();
     }
 
-    /** @throws IllegalArgumentException if the spec is invalid */
-    public static SessionSpec fromProto(io.github.c0rwin.coreset.grpc.proto.SessionSpec s) {
+    /**
+     * Checks the algorithm id and params against {@code limits} on the wire message, before the map is copied.
+     *
+     * @throws IllegalArgumentException if the spec is invalid or outside the limits
+     */
+    public static SessionSpec fromProto(io.github.c0rwin.coreset.grpc.proto.SessionSpec s, NodeLimits limits) {
         TreeMode mode = switch (s.getTreeMode()) {
             case TREE_MODE_UNSPECIFIED, TREE_MODE_SINGLE_WRITER -> TreeMode.SINGLE_WRITER;
             case TREE_MODE_CAS -> TreeMode.CAS;
             default -> throw new IllegalArgumentException("unknown tree mode: " + s.getTreeModeValue());
         };
+        limits.checkAlgorithm(s.getAlgorithmId(), s.getParamsMap());
+        if (Integer.compareUnsigned(s.getQueueCapacity(), limits.maxQueueCapacity()) > 0) {
+            throw new IllegalArgumentException("queueCapacity " + Integer.toUnsignedString(s.getQueueCapacity())
+                    + " exceeds the node limit of " + limits.maxQueueCapacity());
+        }
         return new SessionSpec(s.getAlgorithmId(), s.getParamsMap(), s.getSeed(), s.getWorkers(),
                 s.getQueueCapacity(), mode);
     }
@@ -136,7 +163,7 @@ public final class ProtoCodec {
         return Ack.newBuilder()
                 .setSeq(seq)
                 .setStatus(status)
-                .setMessage(r.reason())
+                .setMessage(Messages.bounded(r.reason()))
                 .setAcceptedPoints(r.acceptedPoints())
                 .build();
     }
@@ -161,14 +188,14 @@ public final class ProtoCodec {
                 .build();
     }
 
-    public static NodeSnapshot fromProto(SnapshotResponse r) {
+    public static NodeSnapshot fromProto(SnapshotResponse r, int maxDim) {
         SessionState state = switch (r.getState()) {
             case SESSION_STATE_FAILED -> SessionState.FAILED;
             case SESSION_STATE_CLOSED -> SessionState.CLOSED;
             case SESSION_STATE_ACTIVE -> SessionState.ACTIVE;
             default -> throw new IllegalArgumentException("unknown session state: " + r.getStateValue());
         };
-        return new NodeSnapshot(fromProto(r.getCoreset()), state, r.getFailure(), r.getAcceptedBatches(),
+        return new NodeSnapshot(fromProto(r.getCoreset(), maxDim), state, r.getFailure(), r.getAcceptedBatches(),
                 r.getAppliedBatches(), r.getAcceptedWeight(), r.getAppliedWeight(), r.getConsistent());
     }
 }

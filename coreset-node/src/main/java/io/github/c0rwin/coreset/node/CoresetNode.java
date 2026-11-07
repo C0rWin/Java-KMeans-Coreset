@@ -1,15 +1,18 @@
 package io.github.c0rwin.coreset.node;
 
-import io.github.c0rwin.coreset.core.Cost;
+import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 /**
  * Hosts coreset ingestion sessions; transport-agnostic (the gRPC service is a thin adapter).
@@ -45,6 +48,8 @@ public final class CoresetNode implements AutoCloseable {
     private final MetricsSink metrics;
     private final NodeLimits limits;
     private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
+    private final AtomicInteger openSessions = new AtomicInteger();
+    private final AtomicInteger openWorkers = new AtomicInteger();
     private volatile boolean closed;
 
     public CoresetNode(AlgorithmResolver resolver) {
@@ -69,45 +74,100 @@ public final class CoresetNode implements AutoCloseable {
     }
 
     /**
-     * Creates and starts a session. Idempotent: repeating the call with an equal spec returns {@code false}.
+     * Creates and starts a session. Idempotent: repeating the call with an equal spec returns {@code false}. Every
+     * {@link NodeLimits} bound is checked before the algorithm is resolved or any worker queue is allocated.
      *
      * @throws IllegalStateException    if the id exists with a different spec, or the node is closed
-     * @throws IllegalArgumentException if the id is blank or the resolver rejects the algorithm
+     * @throws IllegalArgumentException if the id or spec is outside the limits, or the resolver rejects the algorithm
+     * @throws NodeLimitException       if the node has no room for another session or for its workers
      */
     public boolean createSession(String sessionId, SessionSpec spec) {
         Objects.requireNonNull(spec, "spec");
-        if (sessionId == null || sessionId.isBlank()) {
-            throw new IllegalArgumentException("session id must not be blank");
+        limits.checkSessionId(sessionId);
+        limits.checkAlgorithm(spec.algorithmId(), spec.params());
+        if (spec.queueCapacity() > limits.maxQueueCapacity()) {
+            throw new IllegalArgumentException("queueCapacity " + spec.queueCapacity() + " exceeds the node limit of "
+                    + limits.maxQueueCapacity());
         }
         requireOpen();
         Session existing = sessions.get(sessionId);
         if (existing != null) {
             return requireSameSpec(existing, spec);
         }
-        CoresetAlgorithm algorithm = resolver.resolve(spec.algorithmId(), spec.params());
-        if (algorithm == null) {
-            throw new IllegalStateException("resolver returned null for " + spec.algorithmId());
+        reserve(spec.workers());
+        Session session;
+        try {
+            CoresetAlgorithm algorithm = resolver.resolve(spec.algorithmId(), spec.params());
+            if (algorithm == null) {
+                throw new IllegalStateException("resolver returned null for " + Messages.bounded(spec.algorithmId()));
+            }
+            session = new Session(sessionId, spec, algorithm, metrics, limits);
+        } catch (Throwable t) {
+            release(spec.workers());
+            throw asLimit(t);
         }
-        Session session = new Session(sessionId, spec, algorithm, metrics, limits);
         Session raced = sessions.putIfAbsent(sessionId, session);
         if (raced != null) {
+            release(spec.workers());
             return requireSameSpec(raced, spec);
         }
-        session.start();
+        // From here on, whoever removes the session from the map closes it and releases its reservation.
+        try {
+            session.start();
+        } catch (Throwable t) {
+            discard(sessionId, session);
+            throw asLimit(t);
+        }
         if (closed) {
-            // If close() already removed the session it has closed it too; either way it is dead.
-            if (sessions.remove(sessionId, session)) {
-                session.close(shutdownGrace);
-            }
+            discard(sessionId, session); // a no-op if close() already took it
             throw new IllegalStateException("node closed");
         }
         metrics.count(NodeMetricNames.SESSIONS_CREATED, 1);
         return true;
     }
 
+    private void reserve(int workers) {
+        if (openSessions.incrementAndGet() > limits.maxSessions()) {
+            openSessions.decrementAndGet();
+            throw new NodeLimitException("node already hosts the maximum of " + limits.maxSessions() + " sessions");
+        }
+        if (openWorkers.addAndGet(workers) > limits.maxTotalWorkers()) {
+            openWorkers.addAndGet(-workers);
+            openSessions.decrementAndGet();
+            throw new NodeLimitException(workers + " more workers would exceed the node limit of "
+                    + limits.maxTotalWorkers());
+        }
+    }
+
+    private void release(int workers) {
+        openWorkers.addAndGet(-workers);
+        openSessions.decrementAndGet();
+    }
+
+    private void discard(String sessionId, Session session) {
+        if (sessions.remove(sessionId, session)) {
+            session.close(shutdownGrace);
+            release(session.spec.workers());
+        }
+    }
+
+    /** Out of heap or native threads while setting a session up is the node's capacity, not a bug: map it. */
+    private static RuntimeException asLimit(Throwable t) {
+        if (t instanceof VirtualMachineError) {
+            return new NodeLimitException("not enough memory or threads for the session: " + Messages.bounded(t), t);
+        }
+        if (t instanceof RuntimeException r) {
+            return r;
+        }
+        if (t instanceof Error e) {
+            throw e;
+        }
+        return new IllegalStateException(t);
+    }
+
     private static boolean requireSameSpec(Session existing, SessionSpec spec) {
         if (!existing.spec.equals(spec)) {
-            throw new IllegalStateException("session " + existing.id + " exists with a different spec");
+            throw new IllegalStateException("session " + Messages.bounded(existing.id) + " exists with a different spec");
         }
         return false;
     }
@@ -119,6 +179,7 @@ public final class CoresetNode implements AutoCloseable {
             return false;
         }
         s.close(shutdownGrace);
+        release(s.spec.workers());
         metrics.count(NodeMetricNames.SESSIONS_CLOSED, 1);
         return true;
     }
@@ -140,7 +201,7 @@ public final class CoresetNode implements AutoCloseable {
         Objects.requireNonNull(producerId, "producerId");
         long start = metrics == MetricsSink.NOOP ? 0L : System.nanoTime();
         Session s = sessions.get(sessionId);
-        IngestResult r = s == null ? IngestResult.failed("unknown session: " + sessionId)
+        IngestResult r = s == null ? IngestResult.failed("unknown session: " + Messages.bounded(sessionId))
                 : s.ingest(producerId, seq, batch);
         if (metrics != MetricsSink.NOOP) {
             metrics.timeNanos(NodeMetricNames.INGEST_LATENCY, System.nanoTime() - start);
@@ -163,23 +224,57 @@ public final class CoresetNode implements AutoCloseable {
     }
 
     /**
-     * Waits until every batch accepted before this call is reflected in {@link #snapshot}.
+     * Waits until every batch accepted before this call is reflected in {@link #snapshot}; never cancelled.
      *
-     * @return false on timeout
-     * @throws SessionFailedException if the session failed
+     * @see #awaitApplied(String, Duration, BooleanSupplier)
      */
     public boolean awaitApplied(String sessionId, Duration timeout) throws InterruptedException {
-        return session(sessionId).awaitApplied(timeout);
+        return awaitApplied(sessionId, timeout, () -> false);
     }
 
-    /** {@code sum_p w_p * min_c ||p - c||^2} over the given points: one shard of a distributed cost evaluation. */
-    public double partialCost(List<SparseVector> centers, List<WeightedPoint> points) {
-        return Cost.cost(points, centers);
+    /**
+     * Waits until every batch accepted before this call is reflected in {@link #snapshot}, at most
+     * {@code min(timeout, limits.maxAwait())}.
+     *
+     * @param cancelled polled whenever the waiting thread wakes; whoever flips it should unpark that thread
+     * @return false on timeout
+     * @throws SessionFailedException                       if the session failed
+     * @throws java.util.concurrent.CancellationException once {@code cancelled} returns true
+     */
+    public boolean awaitApplied(String sessionId, Duration timeout, BooleanSupplier cancelled)
+            throws InterruptedException {
+        return session(sessionId).awaitApplied(timeout, cancelled);
+    }
+
+    /** Cost of {@code centers} on raw {@code points}; never cancelled. */
+    public PartialCost partialCost(List<SparseVector> centers, List<WeightedPoint> points) {
+        return partialCost(centers, points, () -> false);
+    }
+
+    /**
+     * {@code sum_p w_p * min_c ||p - c||^2} over the given points: one shard of a distributed cost evaluation, in one
+     * pass with no allocation.
+     *
+     * @throws IllegalArgumentException                     if the shard or the center count exceeds the limits
+     * @throws NodeLimitException                           if points times centers exceeds the work budget
+     * @throws java.util.concurrent.CancellationException if {@code cancelled} turns true midway
+     */
+    public PartialCost partialCost(List<SparseVector> centers, List<WeightedPoint> points, BooleanSupplier cancelled) {
+        limits.checkPoints(points.size());
+        limits.checkCost(points.size(), centers.size());
+        return PartialCost.of(points, centers, 0.0, cancelled);
+    }
+
+    /** Cost of {@code centers} on the session's current snapshot; never cancelled. */
+    public PartialCost partialCost(String sessionId, List<SparseVector> centers) {
+        return partialCost(sessionId, centers, () -> false);
     }
 
     /** Cost of {@code centers} on the session's current snapshot, including its additive offset. */
-    public double partialCost(String sessionId, List<SparseVector> centers) {
-        return Cost.cost(snapshot(sessionId).coreset(), centers);
+    public PartialCost partialCost(String sessionId, List<SparseVector> centers, BooleanSupplier cancelled) {
+        Coreset c = snapshot(sessionId).coreset();
+        limits.checkCost(c.size(), centers.size());
+        return PartialCost.of(c.points(), centers, c.offset(), cancelled);
     }
 
     public SessionSpec spec(String sessionId) {
@@ -194,12 +289,26 @@ public final class CoresetNode implements AutoCloseable {
         return metrics;
     }
 
-    /** Closes every session and joins all worker threads. */
+    public NodeLimits limits() {
+        return limits;
+    }
+
+    /** Closes every session and joins all worker threads; sessions are stopped together, not one after another. */
     @Override
     public void close() {
         closed = true;
+        List<Session> taken = new ArrayList<>();
         for (String id : sessions.keySet()) {
-            closeSession(id);
+            Session s = sessions.remove(id);
+            if (s != null) {
+                s.signalStop();
+                taken.add(s);
+            }
+        }
+        for (Session s : taken) {
+            s.close(shutdownGrace);
+            release(s.spec.workers());
+            metrics.count(NodeMetricNames.SESSIONS_CLOSED, 1);
         }
     }
 

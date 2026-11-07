@@ -430,12 +430,12 @@ class CoresetNodeTest {
         SparseVector b = SparseVector.dense(new double[] {3, 4});
         List<WeightedPoint> pts = List.of(new WeightedPoint(a, 2), new WeightedPoint(b, 3));
         List<SparseVector> center = List.of(SparseVector.dense(new double[] {0, 0}));
-        assertEquals(3 * 25.0, n.partialCost(center, pts));
+        assertEquals(new PartialCost(3 * 25.0, 5.0, 2), n.partialCost(center, pts));
 
         n.createSession("cost", spec("identity", 2, 2, TreeMode.SINGLE_WRITER));
         n.ingest("cost", 0, pts);
         assertTrue(n.awaitApplied("cost", WAIT));
-        assertEquals(75.0, n.partialCost("cost", center));
+        assertEquals(75.0, n.partialCost("cost", center).cost());
     }
 
     @Test

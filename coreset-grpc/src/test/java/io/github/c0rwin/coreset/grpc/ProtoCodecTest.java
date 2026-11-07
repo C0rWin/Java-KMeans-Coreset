@@ -8,6 +8,7 @@ import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.node.IngestResult;
+import io.github.c0rwin.coreset.node.NodeLimits;
 import io.github.c0rwin.coreset.node.NodeSnapshot;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.github.c0rwin.coreset.node.SessionState;
@@ -22,14 +23,14 @@ class ProtoCodecTest {
     @Test
     void roundTripsCoreTypes() {
         SparseVector v = SparseVector.of(10, new int[] {7, 2}, new double[] {-1.5, 3});
-        assertEquals(v, ProtoCodec.fromProto(ProtoCodec.toProto(v)));
+        assertEquals(v, ProtoCodec.fromProto(ProtoCodec.toProto(v), 10));
         Coreset c = new Coreset(List.of(new WeightedPoint(v, 2.5), new WeightedPoint(SparseVector.of(10,
                 new int[0], new double[0]), 0)), 4.25);
-        assertEquals(c, ProtoCodec.fromProto(ProtoCodec.toProto(c)));
+        assertEquals(c, ProtoCodec.fromProto(ProtoCodec.toProto(c), 10));
         SessionSpec spec = new SessionSpec("x", Map.of("k", "3"), -5L, 3, 8, TreeMode.CAS);
-        assertEquals(spec, ProtoCodec.fromProto(ProtoCodec.toProto(spec)));
+        assertEquals(spec, ProtoCodec.fromProto(ProtoCodec.toProto(spec), NodeLimits.defaults()));
         NodeSnapshot s = new NodeSnapshot(c, SessionState.FAILED, "boom", 5, 4, 10.0, 8.0, false);
-        assertEquals(s, ProtoCodec.fromProto(ProtoCodec.toProto(s)));
+        assertEquals(s, ProtoCodec.fromProto(ProtoCodec.toProto(s), 10));
         assertEquals(AckStatus.ACK_STATUS_BUSY, ProtoCodec.ack(3, IngestResult.busy("full")).getStatus());
     }
 
@@ -47,12 +48,17 @@ class ProtoCodecTest {
     void rejectsMalformedVectors() {
         io.github.c0rwin.coreset.grpc.proto.SparseVector mismatch = io.github.c0rwin.coreset.grpc.proto.SparseVector
                 .newBuilder().setDim(4).addIndices(1).build();
-        assertThrows(IllegalArgumentException.class, () -> ProtoCodec.fromProto(mismatch));
+        assertThrows(IllegalArgumentException.class, () -> ProtoCodec.fromProto(mismatch, 4));
         io.github.c0rwin.coreset.grpc.proto.SparseVector outOfRange = io.github.c0rwin.coreset.grpc.proto.SparseVector
                 .newBuilder().setDim(4).addIndices(4).addValues(1).build();
-        assertThrows(IllegalArgumentException.class, () -> ProtoCodec.fromProto(outOfRange));
+        assertThrows(IllegalArgumentException.class, () -> ProtoCodec.fromProto(outOfRange, 4));
         io.github.c0rwin.coreset.grpc.proto.SparseVector hugeDim = io.github.c0rwin.coreset.grpc.proto.SparseVector
                 .newBuilder().setDim(-1).build(); // uint32 0xFFFFFFFF
-        assertThrows(IllegalArgumentException.class, () -> ProtoCodec.fromProto(hugeDim));
+        assertThrows(IllegalArgumentException.class, () -> ProtoCodec.fromProto(hugeDim, Integer.MAX_VALUE));
+        io.github.c0rwin.coreset.grpc.proto.SparseVector aboveLimit = io.github.c0rwin.coreset.grpc.proto.SparseVector
+                .newBuilder().setDim(5).build();
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> ProtoCodec.fromProto(aboveLimit, 4));
+        assertEquals("dim 5 exceeds the limit of 4", e.getMessage());
     }
 }

@@ -61,7 +61,10 @@ final class Worker implements Runnable {
                 }
             }
         } catch (Throwable t) {
+            // Includes OutOfMemoryError: only this session fails, and its queued batches are released below.
             session.fail(t);
+        } finally {
+            queue.clear(); // this thread is the only consumer; frees the batches a stopped session will not apply
         }
     }
 

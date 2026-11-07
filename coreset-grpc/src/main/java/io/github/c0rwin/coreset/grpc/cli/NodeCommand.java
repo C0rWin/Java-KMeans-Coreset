@@ -7,6 +7,7 @@ import io.github.c0rwin.coreset.grpc.MetricsHttpServer;
 import io.github.c0rwin.coreset.grpc.MicrometerMetricsSink;
 import io.github.c0rwin.coreset.node.AlgorithmResolver;
 import io.github.c0rwin.coreset.node.CoresetNode;
+import io.github.c0rwin.coreset.node.NodeLimits;
 import io.github.c0rwin.coreset.node.ServiceLoaderAlgorithmResolver;
 import io.github.c0rwin.coreset.node.TeeMetricsSink;
 import io.micrometer.prometheusmetrics.PrometheusConfig;
@@ -38,6 +39,53 @@ public final class NodeCommand implements Callable<Integer> {
     @Option(names = "--shutdown-grace-ms", defaultValue = "10000",
             description = "Wait for busy workers before interrupting them on shutdown. Default: ${DEFAULT-VALUE}")
     long shutdownGraceMs;
+
+    @Option(names = "--max-message-bytes", defaultValue = "16777216",
+            description = "Largest inbound gRPC request (batch, cost shard). Default: ${DEFAULT-VALUE}")
+    int maxMessageBytes;
+
+    @Option(names = "--max-dim", defaultValue = "16777216",
+            description = "Largest vector dimension (dense buffers are O(dim)). Default: ${DEFAULT-VALUE}")
+    int maxDim;
+
+    @Option(names = "--max-points-per-batch", defaultValue = "262144",
+            description = "Points per batch or raw cost shard. Default: ${DEFAULT-VALUE}")
+    int maxPointsPerBatch;
+
+    @Option(names = "--max-sessions", defaultValue = "64", description = "Open sessions. Default: ${DEFAULT-VALUE}")
+    int maxSessions;
+
+    @Option(names = "--max-total-workers", defaultValue = "4096",
+            description = "Worker threads over all sessions. Default: ${DEFAULT-VALUE}")
+    int maxTotalWorkers;
+
+    @Option(names = "--max-queue-capacity", defaultValue = "4096",
+            description = "Per-worker queue capacity (power of two). Default: ${DEFAULT-VALUE}")
+    int maxQueueCapacity;
+
+    @Option(names = "--max-cost-work", defaultValue = "2147483648",
+            description = "Points x centers per cost evaluation. Default: ${DEFAULT-VALUE}")
+    long maxCostWork;
+
+    @Option(names = "--max-snapshot-points", defaultValue = "4194304",
+            description = "Points in one session snapshot. Default: ${DEFAULT-VALUE}")
+    int maxSnapshotPoints;
+
+    @Option(names = "--max-await-ms", defaultValue = "600000",
+            description = "Longest awaitApplied wait a client may request. Default: ${DEFAULT-VALUE}")
+    long maxAwaitMs;
+
+    @Option(names = "--max-seq-window", defaultValue = "4096",
+            description = "Dedupe window per producer; must exceed the senders' in-flight batches. "
+                    + "Default: ${DEFAULT-VALUE}")
+    int maxSeqWindow;
+
+    NodeLimits limits() {
+        return NodeLimits.builder().maxDim(maxDim).maxPointsPerBatch(maxPointsPerBatch).maxSessions(maxSessions)
+                .maxTotalWorkers(maxTotalWorkers).maxQueueCapacity(maxQueueCapacity).maxCostWork(maxCostWork)
+                .maxSnapshotPoints(maxSnapshotPoints).maxAwait(Duration.ofMillis(maxAwaitMs))
+                .maxSeqWindow(maxSeqWindow).build();
+    }
 
     /** A started node; {@link #close()} stops servers, then sessions. */
     public static final class Running implements AutoCloseable {
@@ -79,10 +127,10 @@ public final class NodeCommand implements Callable<Integer> {
         PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         RecordingMetrics recorder = new RecordingMetrics();
         MetricsSink sink = TeeMetricsSink.of(recorder, new MicrometerMetricsSink(registry));
-        CoresetNode node = new CoresetNode(resolver, sink, Duration.ofMillis(shutdownGraceMs));
+        CoresetNode node = new CoresetNode(resolver, sink, Duration.ofMillis(shutdownGraceMs), limits());
         CoresetNodeServer server = null;
         try {
-            server = CoresetNodeServer.start(port, node, recorder, sink);
+            server = CoresetNodeServer.start(port, node, recorder, sink, maxMessageBytes);
             MetricsHttpServer http = metricsPort < 0 ? null
                     : MetricsHttpServer.start(new InetSocketAddress(metricsPort), registry);
             return new Running(node, server, http);

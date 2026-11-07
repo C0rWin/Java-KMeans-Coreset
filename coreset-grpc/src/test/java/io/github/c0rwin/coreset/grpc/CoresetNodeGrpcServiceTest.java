@@ -165,7 +165,7 @@ class CoresetNodeGrpcServiceTest {
         assertEquals(2, snap.getAcceptedBatches());
         assertEquals(2, snap.getAppliedBatches());
         assertTrue(snap.getComplete());
-        assertEquals(TestData.weight(b0) + TestData.weight(b1), ProtoCodec.fromProto(snap.getCoreset()).totalWeight());
+        assertEquals(TestData.weight(b0) + TestData.weight(b1), ProtoCodec.fromProto(snap.getCoreset(), DIM).totalWeight());
     }
 
     @Test

@@ -8,6 +8,6 @@ public class UnknownSessionException extends NoSuchElementException {
     private static final long serialVersionUID = 1L;
 
     public UnknownSessionException(String sessionId) {
-        super("unknown session: " + sessionId);
+        super("unknown session: " + Messages.bounded(sessionId));
     }
 }

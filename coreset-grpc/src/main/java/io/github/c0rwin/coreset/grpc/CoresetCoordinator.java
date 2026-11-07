@@ -18,6 +18,7 @@ import io.github.c0rwin.coreset.grpc.proto.SnapshotRequest;
 import io.github.c0rwin.coreset.grpc.proto.SnapshotResponse;
 import io.github.c0rwin.coreset.grpc.proto.StatsRequest;
 import io.github.c0rwin.coreset.grpc.proto.StatsResponse;
+import io.github.c0rwin.coreset.node.NodeLimits;
 import io.github.c0rwin.coreset.node.NodeSnapshot;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.grpc.Channel;
@@ -134,7 +135,7 @@ public final class CoresetCoordinator implements AutoCloseable {
         List<NodeSnapshot> snaps = new ArrayList<>(calls.size());
         Coreset union = Coreset.of(List.of());
         for (SnapshotResponse r : awaitAll(calls)) {
-            NodeSnapshot s = ProtoCodec.fromProto(r);
+            NodeSnapshot s = ProtoCodec.fromProto(r, NodeLimits.defaults().maxDim());
             snaps.add(s);
             union = Coreset.union(union, s.coreset());
         }
