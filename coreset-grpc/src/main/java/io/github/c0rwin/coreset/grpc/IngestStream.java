@@ -10,6 +10,7 @@ import io.grpc.stub.StreamObserver;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ScheduledExecutorService;
@@ -25,9 +26,11 @@ import java.util.concurrent.locks.LockSupport;
  * Distributes batches of one session round-robin over the coordinator's nodes, one bidirectional stream per node.
  *
  * <p>Every batch gets a per-node dense seq (0, 1, 2, ... on each node, which keeps the node's dedupe state
- * compact) and stays in that node's outstanding map until acknowledged ACCEPTED or DUPLICATE. BUSY acks resend the
- * same seq after a backoff; a broken or expired stream is reopened and all outstanding batches are resent with
- * their original seqs, so nothing is lost and nothing is double counted. At most
+ * compact) under this stream's random {@link #producerId()}, so a later stream into the same session numbers its
+ * batches independently instead of colliding with this one. A batch stays in that node's outstanding map until
+ * acknowledged ACCEPTED or DUPLICATE. BUSY acks resend the same seq after a backoff; a broken or expired stream is
+ * reopened and all outstanding batches are resent with their original seqs, so nothing is lost and nothing is double
+ * counted. A DUPLICATE ack for a batch that was sent only once cannot be a retry and fails the stream. At most
  * {@link CoordinatorOptions#maxInFlightPerNode()} batches are outstanding per node: {@link #submit} blocks beyond.
  *
  * <p>{@link #submit} may be called from several threads. Sends on a stream are serialised by a monitor because
@@ -36,6 +39,7 @@ import java.util.concurrent.locks.LockSupport;
 public final class IngestStream implements AutoCloseable {
 
     private final String sessionId;
+    private final String producerId = UUID.randomUUID().toString();
     private final CoordinatorOptions options;
     private final ScheduledExecutorService scheduler;
     private final NodeStream[] nodes;
@@ -57,6 +61,11 @@ public final class IngestStream implements AutoCloseable {
         for (int i = 0; i < nodes.length; i++) {
             nodes[i] = new NodeStream(i, stubs.get(i));
         }
+    }
+
+    /** Random id naming this stream's seq namespace on every node. */
+    public String producerId() {
+        return producerId;
     }
 
     /**
@@ -164,6 +173,8 @@ public final class IngestStream implements AutoCloseable {
     private static final class Pending {
         final Batch batch;
         int busyAttempts;
+        /** Times handed to a stream; written under the NodeStream monitor before the send. */
+        volatile int sends;
 
         Pending(Batch batch) {
             this.batch = batch;
@@ -191,12 +202,14 @@ public final class IngestStream implements AutoCloseable {
             permits.acquire();
             throwIfFailed();
             long seq = nextSeq.getAndIncrement();
-            Batch batch = Batch.newBuilder().setSessionId(sessionId).setSeq(seq).addAllPoints(points).build();
-            outstanding.put(seq, new Pending(batch));
-            send(batch);
+            Batch batch = Batch.newBuilder().setSessionId(sessionId).setProducerId(producerId).setSeq(seq)
+                    .addAllPoints(points).build();
+            Pending p = new Pending(batch);
+            outstanding.put(seq, p);
+            send(p);
         }
 
-        synchronized void send(Batch batch) {
+        synchronized void send(Pending p) {
             if (closed || failure.get() != null) {
                 return;
             }
@@ -204,7 +217,8 @@ public final class IngestStream implements AutoCloseable {
             if (r == null) {
                 r = open(); // a synchronous start failure may already have reset `requests`
             }
-            r.onNext(batch);
+            p.sends++; // before the send, so an ack racing back never sees a resend counted as the first send
+            r.onNext(p.batch);
         }
 
         /** Opens a new stream generation; acks or errors from older generations are ignored. */
@@ -243,6 +257,12 @@ public final class IngestStream implements AutoCloseable {
             long seq = ack.getSeq();
             switch (ack.getStatus()) {
                 case ACK_STATUS_ACCEPTED, ACK_STATUS_DUPLICATE -> {
+                    Pending p = outstanding.get(seq);
+                    if (p != null && ack.getStatus() == AckStatus.ACK_STATUS_DUPLICATE && p.sends == 1) {
+                        fail("node " + index + " acknowledged batch " + seq + " of producer " + producerId
+                                + " as DUPLICATE although it was sent once; refusing to count it as ingested", null);
+                        return;
+                    }
                     // A batch resent after a reconnect or BUSY can be acknowledged twice; count it once.
                     if (outstanding.remove(seq) != null) {
                         (ack.getStatus() == AckStatus.ACK_STATUS_ACCEPTED ? accepted : duplicates).increment();
@@ -257,7 +277,7 @@ public final class IngestStream implements AutoCloseable {
                         int attempt = ++p.busyAttempts;
                         scheduler.schedule(() -> {
                             if (outstanding.containsKey(seq)) {
-                                send(p.batch);
+                                send(p);
                             }
                         }, options.backoffNanos(attempt), TimeUnit.NANOSECONDS);
                     }
@@ -293,7 +313,7 @@ public final class IngestStream implements AutoCloseable {
 
         private void resendAll() {
             for (Map.Entry<Long, Pending> e : outstanding.entrySet()) {
-                send(e.getValue().batch);
+                send(e.getValue());
             }
         }
 

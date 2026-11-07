@@ -113,7 +113,7 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
                 IngestResult r;
                 try {
                     List<WeightedPoint> points = ProtoCodec.pointsFromProto(batch.getPointsList());
-                    r = node.ingest(batch.getSessionId(), batch.getSeq(), points);
+                    r = node.ingest(batch.getSessionId(), batch.getProducerId(), batch.getSeq(), points);
                 } catch (IllegalArgumentException e) {
                     r = IngestResult.failed("invalid batch: " + e.getMessage());
                 }

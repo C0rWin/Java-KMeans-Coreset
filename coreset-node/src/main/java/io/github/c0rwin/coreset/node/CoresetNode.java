@@ -114,13 +114,24 @@ public final class CoresetNode implements AutoCloseable {
     }
 
     /**
-     * Offers one batch. Never blocks. Idempotent by {@code seq} (non-negative, unique per batch within the session;
-     * dense seqs from 0 keep the dedupe state small): a seq that was already accepted returns DUPLICATE.
+     * Offers one batch of the default producer; see {@link #ingest(String, String, long, List)}.
      */
     public IngestResult ingest(String sessionId, long seq, List<WeightedPoint> batch) {
+        return ingest(sessionId, "", seq, batch);
+    }
+
+    /**
+     * Offers one batch. Never blocks. Idempotent by {@code (producerId, seq)}: {@code seq} is non-negative and unique
+     * per batch within the producer (dense seqs from 0 keep the dedupe state small), and a pair that was already
+     * accepted returns DUPLICATE. Independent producers, e.g. successive coordinator runs into one session, must use
+     * distinct ids; the empty id is the default producer.
+     */
+    public IngestResult ingest(String sessionId, String producerId, long seq, List<WeightedPoint> batch) {
+        Objects.requireNonNull(producerId, "producerId");
         long start = metrics == MetricsSink.NOOP ? 0L : System.nanoTime();
         Session s = sessions.get(sessionId);
-        IngestResult r = s == null ? IngestResult.failed("unknown session: " + sessionId) : s.ingest(seq, batch);
+        IngestResult r = s == null ? IngestResult.failed("unknown session: " + sessionId)
+                : s.ingest(producerId, seq, batch);
         if (metrics != MetricsSink.NOOP) {
             metrics.timeNanos(NodeMetricNames.INGEST_LATENCY, System.nanoTime() - start);
             switch (r.status()) {

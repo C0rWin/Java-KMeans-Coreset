@@ -61,6 +61,30 @@ class CoresetNodeTest {
     }
 
     @Test
+    void producersNumberSeqsIndependently() throws Exception {
+        CoresetNode n = node(Map.of());
+        n.createSession("multi", spec("identity", 2, 16, TreeMode.SINGLE_WRITER));
+        SplittableRandom rng = new SplittableRandom(21);
+        double total = 0;
+        for (String producer : List.of("", "run-a", "run-b")) {
+            for (int seq = 0; seq < 4; seq++) {
+                List<WeightedPoint> b = TestData.batch(rng, 3, DIM);
+                total += TestData.weight(b);
+                assertEquals(ACCEPTED, n.ingest("multi", producer, seq, b).status(), producer + "/" + seq);
+                assertEquals(DUPLICATE, n.ingest("multi", producer, seq, b).status(), producer + "/" + seq);
+            }
+        }
+        assertTrue(n.awaitApplied("multi", WAIT));
+        NodeSnapshot s = n.snapshot("multi");
+        assertEquals(12, s.appliedBatches());
+        assertEquals(total, s.coreset().totalWeight(), 1e-9 * total);
+        IngestResult tooLong = n.ingest("multi", "p".repeat(Session.MAX_PRODUCER_ID_LENGTH + 1), 0,
+                TestData.batch(rng, 1, DIM));
+        assertEquals(FAILED, tooLong.status());
+        assertTrue(tooLong.reason().contains("producer id longer than"), tooLong.reason());
+    }
+
+    @Test
     void retriedSeqIsAcknowledgedWithoutDoubleCounting() throws Exception {
         CoresetNode n = node(Map.of());
         n.createSession("retry", spec("identity", 2, 16, TreeMode.SINGLE_WRITER));

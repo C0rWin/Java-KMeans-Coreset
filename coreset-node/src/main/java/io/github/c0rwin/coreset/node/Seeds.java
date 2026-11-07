@@ -19,9 +19,12 @@ final class Seeds {
         return z ^ (z >>> 31);
     }
 
-    /** Generator for compressing batch {@code seq}; independent of worker, arrival order and retries. */
-    static RandomGenerator batch(long sessionSeed, long seq) {
-        return new SplittableRandom(mix64(sessionSeed ^ mix64(seq * GOLDEN + 1)));
+    /**
+     * Generator for compressing batch {@code seq} of the producer with {@code producerSalt}; independent of worker,
+     * arrival order and retries. Salt 0 (the default producer) reproduces the unsalted stream.
+     */
+    static RandomGenerator batch(long sessionSeed, long producerSalt, long seq) {
+        return new SplittableRandom(mix64(sessionSeed ^ producerSalt ^ mix64(seq * GOLDEN + 1)));
     }
 
     /** One merge generator per worker, split in index order from a root derived from the session seed. */

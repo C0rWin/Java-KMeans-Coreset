@@ -7,6 +7,7 @@ import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -18,6 +19,9 @@ import java.util.random.RandomGenerator;
 final class Session {
 
     private static final int CAS_READ_ATTEMPTS = 1024;
+    /** Bound on distinct producer ids per session; each one keeps a small dedupe state for the session's life. */
+    static final int MAX_PRODUCERS = 1024;
+    static final int MAX_PRODUCER_ID_LENGTH = 128;
 
     final String id;
     final SessionSpec spec;
@@ -25,7 +29,9 @@ final class Session {
     final MetricsSink metrics;
     final CasMergeReduceTree casTree;
     private final Worker[] workers;
-    private final SeqDeduplicator dedupe = new SeqDeduplicator();
+    private final Producer defaultProducer = new Producer(Producer.DEFAULT_ID);
+    private final ConcurrentHashMap<String, Producer> producers = new ConcurrentHashMap<>();
+    private final AtomicInteger producerCount = new AtomicInteger();
     private final DoubleAdder acceptedWeight = new DoubleAdder();
     private final AtomicInteger dim = new AtomicInteger(-1);
     private final AtomicReference<Throwable> failure = new AtomicReference<>();
@@ -62,7 +68,7 @@ final class Session {
         return closed ? SessionState.CLOSED : SessionState.ACTIVE;
     }
 
-    IngestResult ingest(long seq, List<WeightedPoint> batch) {
+    IngestResult ingest(String producerId, long seq, List<WeightedPoint> batch) {
         Throwable f = failure.get();
         if (f != null) {
             return IngestResult.failed("session failed: " + f);
@@ -96,6 +102,13 @@ final class Session {
                 return IngestResult.failed("batch dimension " + d + " differs from session dimension " + sessionDim);
             }
         }
+        Producer producer = producer(producerId);
+        if (producer == null) {
+            return IngestResult.failed(producerId.length() > MAX_PRODUCER_ID_LENGTH
+                    ? "producer id longer than " + MAX_PRODUCER_ID_LENGTH + " chars"
+                    : "session has the maximum of " + MAX_PRODUCERS + " producers");
+        }
+        SeqDeduplicator dedupe = producer.dedupe;
         switch (dedupe.claim(seq)) {
             case DUPLICATE:
                 return IngestResult.duplicate();
@@ -106,8 +119,8 @@ final class Session {
             default:
                 throw new AssertionError();
         }
-        Worker w = workers[(int) (seq % workers.length)];
-        if (!w.queue.offer(new Worker.PendingBatch(seq, points, weight))) {
+        Worker w = workers[producer.worker(seq, workers.length)];
+        if (!w.queue.offer(new Worker.PendingBatch(seq, producer.salt, points, weight))) {
             dedupe.release(seq);
             return IngestResult.busy("worker queue full");
         }
@@ -118,6 +131,31 @@ final class Session {
             metrics.record(NodeMetricNames.QUEUE_DEPTH, w.queue.size());
         }
         return IngestResult.accepted(points.size());
+    }
+
+    /** The producer's state, created on first use; null if the id is too long or the session has too many. */
+    private Producer producer(String id) {
+        if (id.isEmpty()) {
+            return defaultProducer;
+        }
+        Producer p = producers.get(id);
+        if (p != null) {
+            return p;
+        }
+        if (id.length() > MAX_PRODUCER_ID_LENGTH) {
+            return null;
+        }
+        if (producerCount.incrementAndGet() > MAX_PRODUCERS) {
+            producerCount.decrementAndGet();
+            return producers.get(id);
+        }
+        Producer fresh = new Producer(id);
+        Producer raced = producers.putIfAbsent(id, fresh);
+        if (raced != null) {
+            producerCount.decrementAndGet();
+            return raced;
+        }
+        return fresh;
     }
 
     NodeSnapshot snapshot() {

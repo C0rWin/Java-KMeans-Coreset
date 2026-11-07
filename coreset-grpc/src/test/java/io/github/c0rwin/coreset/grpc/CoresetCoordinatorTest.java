@@ -117,6 +117,24 @@ class CoresetCoordinatorTest {
     }
 
     @Test
+    void duplicateAckForABatchSentOnceFailsTheStream() throws Exception {
+        try (InProcessCluster cluster = new InProcessCluster(1, Map.of(), 16);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels, options(4))) {
+            coordinator.createSession("s", new SessionSpec("identity", Map.of(), 1L, 1, 4));
+            try (IngestStream stream = coordinator.openIngest("s")) {
+                List<WeightedPoint> b = TestData.batch(new SplittableRandom(7), 2, DIM);
+                // Some other sender already used this producer id and seq 0 with different content.
+                assertEquals(io.github.c0rwin.coreset.node.IngestResult.Status.ACCEPTED, cluster.nodes.get(0)
+                        .ingest("s", stream.producerId(), 0, TestData.batch(new SplittableRandom(8), 3, DIM)).status());
+                stream.submit(b);
+                IngestFailedException e = assertThrows(IngestFailedException.class, () -> stream.flush(WAIT));
+                assertTrue(e.getMessage().contains("as DUPLICATE although it was sent once"), e.getMessage());
+                assertEquals(0, stream.duplicateAcks());
+            }
+        }
+    }
+
+    @Test
     void busyNodesAreRetriedWithTheSameSeqUntilAccepted() throws Exception {
         TestAlgorithms.Gated gated = new TestAlgorithms.Gated(TestAlgorithms.IDENTITY);
         try (InProcessCluster cluster = new InProcessCluster(1, Map.of("gated", gated), 16);
