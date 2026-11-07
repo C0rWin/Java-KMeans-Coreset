@@ -102,14 +102,25 @@ public final class MetricNames {
     public static final String MEAN_ADAPTIVE_M = "mean.adaptive.m";
 
     private static final String MRTREE_LEVEL_PREFIX = "mrtree.level.";
+    // A tree over at most 2^63 batches has levels 0..63; precomputed so recording builds no strings.
+    private static final String[] LEVEL_MERGES = levelNames(".merges");
+    private static final String[] LEVEL_POINTS = levelNames(".points");
+
+    private static String[] levelNames(String suffix) {
+        String[] out = new String[64];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = MRTREE_LEVEL_PREFIX + i + suffix;
+        }
+        return out;
+    }
 
     /** Counter: merges whose inputs lived at {@code level} (result is carried to {@code level + 1}). */
     public static String mrtreeLevelMerges(int level) {
-        return MRTREE_LEVEL_PREFIX + level + ".merges";
+        return level >= 0 && level < 64 ? LEVEL_MERGES[level] : MRTREE_LEVEL_PREFIX + level + ".merges";
     }
 
     /** Distribution: size (points) of each coreset stored at {@code level}. */
     public static String mrtreeLevelPoints(int level) {
-        return MRTREE_LEVEL_PREFIX + level + ".points";
+        return level >= 0 && level < 64 ? LEVEL_POINTS[level] : MRTREE_LEVEL_PREFIX + level + ".points";
     }
 }

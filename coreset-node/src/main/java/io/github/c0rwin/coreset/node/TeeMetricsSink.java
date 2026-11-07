@@ -12,6 +12,17 @@ public final class TeeMetricsSink implements MetricsSink {
         this.sinks = sinks;
     }
 
+    /** True if any sink wants thread probes: they are read once per span and forwarded to all. */
+    @Override
+    public boolean threadProbes() {
+        for (MetricsSink s : sinks) {
+            if (s.threadProbes()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Returns {@link MetricsSink#NOOP} for no real sinks and the sink itself for exactly one. */
     public static MetricsSink of(MetricsSink... sinks) {
         MetricsSink[] real = List.of(sinks).stream().filter(s -> s != MetricsSink.NOOP).toArray(MetricsSink[]::new);

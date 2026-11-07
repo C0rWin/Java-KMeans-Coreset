@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.core.metrics;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -9,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SplittableRandom;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -189,8 +191,9 @@ class RecordingMetricsTest {
     }
 
     @Test
-    void spanRecordsNonNegativeWallAndCpu() {
-        RecordingMetrics m = new RecordingMetrics();
+    void spanWithThreadProbesRecordsNonNegativeWallAndCpu() {
+        RecordingMetrics m = new RecordingMetrics(true);
+        assertTrue(m.threadProbes());
         double sink = 0;
         try (Span ignored = m.span("work")) {
             for (int i = 1; i < 200_000; i++) {
@@ -210,6 +213,18 @@ class RecordingMetricsTest {
         if (alloc != null) {
             assertTrue(alloc.min() >= 0);
         }
+    }
+
+    /** Default spans skip the CPU and allocation probes, which cost far more than the wall clock. */
+    @Test
+    void defaultSpanRecordsWallTimeOnly() {
+        RecordingMetrics m = new RecordingMetrics();
+        assertFalse(m.threadProbes());
+        try (Span ignored = m.span("work")) {
+            assertTrue(m.snapshot().distributions().isEmpty());
+        }
+        Map<String, Distribution> d = m.snapshot().distributions();
+        assertEquals(Set.of("work" + MetricNames.WALL_NS_SUFFIX), d.keySet());
     }
 
     @Test

@@ -21,8 +21,8 @@ import org.openjdk.jmh.annotations.Warmup;
 /**
  * {@link RecordingMetrics} record paths under 1, 4 and 12 threads hitting one shared metric name, against a bare
  * shared {@link LongAdder} (the floor for any lock-free counter). {@code record} samples log-normal latencies so
- * histogram buckets vary as in production. {@code span} is one open/close of a {@link Span} (clock, CPU and
- * allocation probes plus three timings).
+ * histogram buckets vary as in production. {@code span} is one open/close of a default {@link Span} (wall clock and
+ * one timing); {@code spanWithProbes} adds the thread CPU and allocation probes and their two timings.
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -36,6 +36,7 @@ public class MetricsBenchmark {
     @State(Scope.Benchmark)
     public static class Shared {
         final RecordingMetrics metrics = new RecordingMetrics();
+        final RecordingMetrics probing = new RecordingMetrics(true);
         final LongAdder adder = new LongAdder();
     }
 
@@ -117,6 +118,14 @@ public class MetricsBenchmark {
     @Threads(1)
     public void span(Shared s) {
         try (Span ignored = s.metrics.span(NAME)) {
+            // empty body: measures the probe and record overhead alone
+        }
+    }
+
+    @Benchmark
+    @Threads(1)
+    public void spanWithProbes(Shared s) {
+        try (Span ignored = s.probing.span(NAME)) {
             // empty body: measures the probe and record overhead alone
         }
     }

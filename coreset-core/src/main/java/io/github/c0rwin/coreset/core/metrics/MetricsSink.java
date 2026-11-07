@@ -19,6 +19,15 @@ public interface MetricsSink {
     /** Adds one duration sample, in nanoseconds, to the distribution {@code name}. */
     void timeNanos(String name, long nanos);
 
+    /**
+     * Whether {@link Span}s opened on this sink also read the thread CPU clock and the thread allocation counter, which
+     * cost several hundred nanoseconds each (a {@code thread_info} call on macOS). Off by default, so a span costs two
+     * {@code nanoTime} reads and one timing.
+     */
+    default boolean threadProbes() {
+        return false;
+    }
+
     default Span span(String name) {
         return Span.start(this, name);
     }

@@ -1,18 +1,20 @@
 package io.github.c0rwin.coreset.core.metrics;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLongArray;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.DoubleAccumulator;
-import java.util.concurrent.atomic.DoubleAdder;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
  * In-memory {@link MetricsSink} whose record paths are lock-free: counters are {@link LongAdder}s; each distribution
- * keeps count ({@link LongAdder}), sum ({@link DoubleAdder}), exact min/max ({@link DoubleAccumulator}) and a
- * log-linear histogram of {@link AtomicLongArray} buckets. A map entry is created via
+ * keeps count, sum, exact min/max and a log-linear histogram, striped like {@link LongAdder}: threads that collide on
+ * a stripe make the distribution grow more stripes (up to the next power of two of the processor count), so
+ * concurrent recording does not serialise on one cache line. A map entry is created via
  * {@link ConcurrentHashMap#computeIfAbsent} only the first time a name is seen.
  *
  * <p>Histogram: {@value #SUB_BUCKETS} linear sub-buckets per power of two for magnitudes in
@@ -21,6 +23,9 @@ import java.util.concurrent.atomic.LongAdder;
  * Quantiles use the nearest-rank definition (the {@code ceil(p * n)}-th smallest sample), are reported at the bucket
  * midpoint and clamped to {@code [min, max]}; within the covered range the relative error is at most
  * {@link #QUANTILE_RELATIVE_ERROR}. Timings ({@link #timeNanos}) are stored as distributions in nanoseconds.
+ *
+ * <p>Spans opened on a default instance record wall time only; {@link #RecordingMetrics(boolean)} with {@code true}
+ * adds the thread CPU and allocation probes (see {@link MetricsSink#threadProbes()}).
  */
 public final class RecordingMetrics implements MetricsSink {
 
@@ -36,9 +41,27 @@ public final class RecordingMetrics implements MetricsSink {
     private static final int SUB_BITS = Integer.numberOfTrailingZeros(SUB_BUCKETS);
     private static final int BUCKETS = (MAX_EXPONENT - MIN_EXPONENT + 1) * SUB_BUCKETS;
     private static final double MIN_MAGNITUDE = Math.scalb(1.0, MIN_EXPONENT);
+    private static final int STRIPE_LIMIT =
+            Math.min(64, Integer.highestOneBit(Math.max(1, Runtime.getRuntime().availableProcessors() * 2 - 1)));
 
     private final ConcurrentHashMap<String, LongAdder> counters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Histogram> distributions = new ConcurrentHashMap<>();
+    private final boolean threadProbes;
+
+    /** Spans record wall time only. */
+    public RecordingMetrics() {
+        this(false);
+    }
+
+    /** @param threadProbes whether spans also record thread CPU time and allocated bytes (about 0.5-1.5 us each) */
+    public RecordingMetrics(boolean threadProbes) {
+        this.threadProbes = threadProbes;
+    }
+
+    @Override
+    public boolean threadProbes() {
+        return threadProbes;
+    }
 
     @Override
     public void count(String name, long delta) {
@@ -105,54 +128,86 @@ public final class RecordingMetrics implements MetricsSink {
         return Math.scalb(1.0 + (sub + 0.5) / SUB_BUCKETS, e);
     }
 
+    /**
+     * One distribution as a table of {@link Stripe}s: a sample goes to the stripe its thread's probe selects. When the
+     * stripe's sum CAS fails, i.e. only after threads actually collided, the table doubles (up to
+     * {@link #STRIPE_LIMIT}) or, once full, the thread moves to another stripe. An uncontended distribution keeps one
+     * stripe; snapshots merge them, and the count is the number of bucketed samples.
+     */
     private static final class Histogram {
-        private final LongAdder count = new LongAdder();
-        private final DoubleAdder sum = new DoubleAdder();
-        private final DoubleAccumulator min = new DoubleAccumulator(Math::min, Double.POSITIVE_INFINITY);
-        private final DoubleAccumulator max = new DoubleAccumulator(Math::max, Double.NEGATIVE_INFINITY);
-        private final LongAdder zeros = new LongAdder();
-        private final AtomicLongArray positive = new AtomicLongArray(BUCKETS);
-        // Negative samples are rare (e.g. drift), so their buckets are allocated on first use.
-        private final AtomicReference<AtomicLongArray> negative = new AtomicReference<>();
+        private static final VarHandle STRIPES;
 
-        void add(double v) {
-            count.increment();
-            sum.add(v);
-            min.accumulate(v);
-            max.accumulate(v);
-            double a = Math.abs(v);
-            if (a < MIN_MAGNITUDE) {
-                zeros.increment();
-            } else if (v > 0) {
-                positive.incrementAndGet(bucketOf(a));
-            } else {
-                AtomicLongArray neg = negative.get();
-                if (neg == null) {
-                    negative.compareAndSet(null, new AtomicLongArray(BUCKETS));
-                    neg = negative.get();
-                }
-                neg.incrementAndGet(bucketOf(a));
+        static {
+            try {
+                STRIPES = MethodHandles.lookup().findVarHandle(Histogram.class, "stripes", Stripe[].class);
+            } catch (ReflectiveOperationException e) {
+                throw new ExceptionInInitializerError(e);
             }
         }
 
+        private volatile Stripe[] stripes = {new Stripe()};
+
+        void add(double v) {
+            int[] probe = PROBE.get();
+            Stripe[] table = stripes;
+            Stripe s = table[probe[0] & (table.length - 1)];
+            if (!s.trySum(v)) {
+                s = contended(table, probe);
+                s.addSum(v);
+            }
+            s.addRest(v);
+        }
+
+        private Stripe contended(Stripe[] table, int[] probe) {
+            if (table.length < STRIPE_LIMIT) {
+                Stripe[] bigger = Arrays.copyOf(table, table.length * 2);
+                for (int i = table.length; i < bigger.length; i++) {
+                    bigger[i] = new Stripe();
+                }
+                STRIPES.compareAndSet(this, table, bigger); // losing the race means another thread grew it
+            } else {
+                int h = probe[0]; // xorshift: move this thread to another stripe
+                h ^= h << 13;
+                h ^= h >>> 17;
+                h ^= h << 5;
+                probe[0] = h;
+            }
+            Stripe[] now = stripes;
+            return now[probe[0] & (now.length - 1)];
+        }
+
         Distribution summary() {
-            AtomicLongArray neg = negative.get();
-            long[] negCounts = new long[neg == null ? 0 : BUCKETS];
+            long[] negCounts = null;
             long[] posCounts = new long[BUCKETS];
-            long total = zeros.sum();
-            long zeroCount = total;
-            for (int i = 0; i < negCounts.length; i++) {
-                negCounts[i] = neg.get(i);
-                total += negCounts[i];
+            long zeroCount = 0;
+            double s = 0.0;
+            double lo = Double.POSITIVE_INFINITY;
+            double hi = Double.NEGATIVE_INFINITY;
+            for (Stripe st : stripes) {
+                s += (double) Stripe.SUM.getVolatile(st);
+                lo = Math.min(lo, (double) Stripe.MIN.getVolatile(st));
+                hi = Math.max(hi, (double) Stripe.MAX.getVolatile(st));
+                zeroCount += (long) Stripe.ZEROS.getVolatile(st);
+                st.positive.addTo(posCounts);
+                Chunks neg = st.negative;
+                if (neg != null) {
+                    if (negCounts == null) {
+                        negCounts = new long[BUCKETS];
+                    }
+                    neg.addTo(negCounts);
+                }
             }
-            for (int i = 0; i < BUCKETS; i++) {
-                posCounts[i] = positive.get(i);
-                total += posCounts[i];
+            if (negCounts == null) {
+                negCounts = new long[0];
             }
-            long n = count.sum();
-            double s = sum.sum();
-            double lo = min.get();
-            double hi = max.get();
+            long total = zeroCount;
+            for (long c : negCounts) {
+                total += c;
+            }
+            for (long c : posCounts) {
+                total += c;
+            }
+            long n = total;
             return new Distribution(n, s, lo, hi, n == 0 ? 0.0 : s / n,
                     quantile(negCounts, zeroCount, posCounts, total, 0.50, lo, hi),
                     quantile(negCounts, zeroCount, posCounts, total, 0.95, lo, hi),
@@ -188,6 +243,110 @@ public final class RecordingMetrics implements MetricsSink {
                 }
             }
             return fallback;
+        }
+    }
+
+    /** Per-thread stripe selector, seeded from the thread id and rehashed when its stripe is contended. */
+    private static final ThreadLocal<int[]> PROBE = ThreadLocal.withInitial(
+            () -> new int[] {(int) ((Thread.currentThread().getId() * 0x9E3779B97F4A7C15L) >>> 32) | 1});
+
+    /**
+     * Sum, min, max and zero count of one stripe, updated with CAS (uncontended unless two threads share the stripe),
+     * plus its buckets. Padding keeps neighbouring stripes' hot fields off a shared cache line.
+     */
+    @SuppressWarnings("unused")
+    private static final class Stripe {
+        static final VarHandle SUM;
+        static final VarHandle MIN;
+        static final VarHandle MAX;
+        static final VarHandle ZEROS;
+        static final VarHandle NEGATIVE;
+
+        static {
+            try {
+                MethodHandles.Lookup l = MethodHandles.lookup();
+                SUM = l.findVarHandle(Stripe.class, "sum", double.class);
+                MIN = l.findVarHandle(Stripe.class, "min", double.class);
+                MAX = l.findVarHandle(Stripe.class, "max", double.class);
+                ZEROS = l.findVarHandle(Stripe.class, "zeros", long.class);
+                NEGATIVE = l.findVarHandle(Stripe.class, "negative", Chunks.class);
+            } catch (ReflectiveOperationException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+        }
+
+        private long p0, p1, p2, p3, p4, p5, p6;
+        private volatile double sum;
+        private volatile double min = Double.POSITIVE_INFINITY;
+        private volatile double max = Double.NEGATIVE_INFINITY;
+        private volatile long zeros;
+        final Chunks positive = new Chunks();
+        // Negative samples are rare (e.g. drift), so their buckets are allocated on first use.
+        volatile Chunks negative;
+        private long q0, q1, q2, q3, q4, q5, q6;
+
+        /** One strong CAS: failure means another thread updated this stripe in between. */
+        boolean trySum(double v) {
+            double s = sum;
+            return SUM.compareAndSet(this, s, s + v);
+        }
+
+        void addSum(double v) {
+            double s = sum;
+            while (!SUM.weakCompareAndSet(this, s, s + v)) {
+                s = sum;
+            }
+        }
+
+        /** Everything but the sum. */
+        void addRest(double v) {
+            double lo = min;
+            while (Double.compare(Math.min(lo, v), lo) != 0 && !MIN.weakCompareAndSet(this, lo, Math.min(lo, v))) {
+                lo = min;
+            }
+            double hi = max;
+            while (Double.compare(Math.max(hi, v), hi) != 0 && !MAX.weakCompareAndSet(this, hi, Math.max(hi, v))) {
+                hi = max;
+            }
+            double a = Math.abs(v);
+            if (a < MIN_MAGNITUDE) {
+                ZEROS.getAndAdd(this, 1L);
+            } else if (v > 0) {
+                positive.increment(bucketOf(a));
+            } else {
+                Chunks neg = negative;
+                if (neg == null) {
+                    NEGATIVE.compareAndSet(this, null, new Chunks());
+                    neg = negative;
+                }
+                neg.increment(bucketOf(a));
+            }
+        }
+    }
+
+    /** Buckets in one chunk of {@value #SUB_BUCKETS} per power of two, each allocated when first hit. */
+    private static final class Chunks {
+        private final AtomicReferenceArray<AtomicLongArray> chunks = new AtomicReferenceArray<>(BUCKETS / SUB_BUCKETS);
+
+        void increment(int bucket) {
+            int e = bucket >>> SUB_BITS;
+            AtomicLongArray chunk = chunks.get(e);
+            if (chunk == null) {
+                chunks.compareAndSet(e, null, new AtomicLongArray(SUB_BUCKETS));
+                chunk = chunks.get(e);
+            }
+            chunk.getAndIncrement(bucket & (SUB_BUCKETS - 1));
+        }
+
+        void addTo(long[] counts) {
+            for (int e = 0; e < chunks.length(); e++) {
+                AtomicLongArray chunk = chunks.get(e);
+                if (chunk != null) {
+                    for (int i = 0; i < SUB_BUCKETS; i++) {
+                        counts[e * SUB_BUCKETS + i] += chunk.get(i);
+                    }
+                }
+            }
         }
     }
 }
