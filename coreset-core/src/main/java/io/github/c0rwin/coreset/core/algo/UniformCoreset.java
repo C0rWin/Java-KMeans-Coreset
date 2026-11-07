@@ -9,6 +9,7 @@ import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.Span;
 import io.github.c0rwin.coreset.core.sampling.AliasSampler;
+import java.util.Arrays;
 import java.util.random.RandomGenerator;
 
 /**
@@ -16,7 +17,8 @@ import java.util.random.RandomGenerator;
  * gets weight {@code W * c_p / m}, so {@code E[cost(C, Q)] = cost(P, Q)} for every Q and the total weight is W (up to
  * rounding). Inputs with at most m points are returned unchanged. The offset passes through.
  *
- * <p>O(n + m) time, no distance evaluations. Stateless and thread-safe.
+ * <p>O(n + m log m) time, one pass over the points, no distance evaluations. Scratch is O(m) when all weights are
+ * equal (the draws are replayed without an alias table), otherwise 12 bytes per point. Stateless and thread-safe.
  */
 public final class UniformCoreset implements CoresetAlgorithm {
 
@@ -39,31 +41,49 @@ public final class UniformCoreset implements CoresetAlgorithm {
                 metrics.count(MetricNames.UNIFORM_PASSTHROUGH, 1);
                 return input;
             }
-            double[] weights = new double[n];
+            double[] weights = null; // allocated at the first weight that differs from the first one
+            final double first = points.weight(0);
             double total = 0.0;
             double moment = 0.0;
             for (int t = 0, g = 0; t < points.segmentCount(); t++) {
                 PointBlock p = points.segment(t);
                 for (int i = 0, size = p.size(); i < size; i++, g++) {
-                    weights[g] = p.weight(i);
-                    total += weights[g];
-                    moment += weights[g] * p.squaredNorm(i);
+                    double w = p.weight(i);
+                    total += w;
+                    moment += w * p.squaredNorm(i);
+                    if (weights != null) {
+                        weights[g] = w;
+                    } else if (w != first) {
+                        weights = new double[n];
+                        Arrays.fill(weights, 0, g, first);
+                        weights[g] = w;
+                    }
                 }
             }
             Guards.requireSummable(total, moment);
             if (total == 0.0) {
                 return new Coreset(PointBlock.EMPTY, input.offset());
             }
-            int[] counts = AliasSampler.drawCounts(weights, m, rng);
-            int[] rows = new int[Math.min(n, m)];
-            double[] outWeights = new double[rows.length];
+            // Equal positive weights make every alias probability exactly 1: the replay is bit-identical.
+            int[] draws = weights == null ? AliasSampler.sortedUniformDraws(n, m, rng)
+                    : AliasSampler.ofOwned(weights, new int[n]).sortedDraws(m, rng);
             int distinct = 0;
-            for (int i = 0; i < n; i++) {
-                if (counts[i] > 0) {
-                    rows[distinct] = i;
-                    outWeights[distinct++] = total * counts[i] / m;
-                }
+            for (int j = 0; j < m; j++) {
+                distinct += j == 0 || draws[j] != draws[j - 1] ? 1 : 0;
             }
+            int[] rows = new int[distinct];
+            double[] outWeights = new double[distinct];
+            for (int j = 0, d = 0; j < m; d++) {
+                int row = draws[j];
+                int end = j + 1;
+                while (end < m && draws[end] == row) {
+                    end++;
+                }
+                rows[d] = row;
+                outWeights[d] = total * (end - j) / m;
+                j = end;
+            }
+            metrics.count(MetricNames.UNIFORM_POINTS_SCANNED, (long) n + distinct);
             metrics.record(MetricNames.UNIFORM_OUTPUT_POINTS, distinct);
             return new Coreset(points.select(rows, outWeights, distinct), input.offset());
         }
