@@ -7,36 +7,50 @@ import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
 import java.util.random.RandomGenerator;
 
 /** One ingestion session: dedupe, routing to workers, failure state and snapshots. Lock-free throughout. */
 final class Session {
 
-    private static final int CAS_READ_ATTEMPTS = 1024;
+    static final int MAX_PRODUCER_ID_LENGTH = 128;
+    /** Power of two: the O(points) snapshot size estimate is recorded for one snapshot in this many. */
+    private static final int BYTES_SAMPLE_EVERY = 16;
 
     final String id;
     final SessionSpec spec;
     final CoresetAlgorithm algorithm;
     final MetricsSink metrics;
     final CasMergeReduceTree casTree;
+    private final NodeLimits limits;
     private final Worker[] workers;
-    private final SeqDeduplicator dedupe = new SeqDeduplicator();
+    private final Producer defaultProducer;
+    private final ConcurrentHashMap<String, Producer> producers = new ConcurrentHashMap<>();
+    private final AtomicInteger producerCount = new AtomicInteger();
+    private final AtomicInteger snapshots = new AtomicInteger();
     private final DoubleAdder acceptedWeight = new DoubleAdder();
     private final AtomicInteger dim = new AtomicInteger(-1);
     private final AtomicReference<Throwable> failure = new AtomicReference<>();
     private final ConcurrentLinkedQueue<Thread> waiters = new ConcurrentLinkedQueue<>();
     private volatile boolean closed;
+    /** Last read or observed ingest progress (nanoTime); written by readers and the reaper, never by ingest. */
+    private volatile long lastActiveNanos = System.nanoTime();
+    private long reaperProgress = -1; // reaper thread only
 
-    Session(String id, SessionSpec spec, CoresetAlgorithm algorithm, MetricsSink metrics) {
+    Session(String id, SessionSpec spec, CoresetAlgorithm algorithm, MetricsSink metrics, NodeLimits limits) {
         this.id = id;
         this.spec = spec;
         this.algorithm = algorithm;
         this.metrics = metrics;
+        this.limits = limits;
+        this.defaultProducer = new Producer(Producer.DEFAULT_ID, limits.maxSeqWindow());
         this.casTree = spec.treeMode() == TreeMode.CAS ? new CasMergeReduceTree(algorithm, metrics) : null;
         RandomGenerator[] rngs = Seeds.workers(spec.seed(), spec.workers());
         this.workers = new Worker[spec.workers()];
@@ -62,16 +76,24 @@ final class Session {
         return closed ? SessionState.CLOSED : SessionState.ACTIVE;
     }
 
-    IngestResult ingest(long seq, List<WeightedPoint> batch) {
+    /**
+     * One pass over the batch (dimension check fused with the weight sum); the caller's list is copied once unless
+     * it already is an immutable {@code List.of}/{@code List.copyOf} list, which is taken by reference.
+     */
+    IngestResult ingest(String producerId, long seq, List<WeightedPoint> batch) {
         Throwable f = failure.get();
         if (f != null) {
-            return IngestResult.failed("session failed: " + f);
+            return IngestResult.failed("session failed: " + Messages.bounded(f));
         }
         if (closed) {
             return IngestResult.failed("session closed");
         }
         if (seq < 0) {
             return IngestResult.failed("seq must be >= 0: " + seq);
+        }
+        if (batch.size() > limits.maxPointsPerBatch()) {
+            return IngestResult.failed(batch.size() + " points exceed the per-batch limit of "
+                    + limits.maxPointsPerBatch());
         }
         List<WeightedPoint> points;
         try {
@@ -82,6 +104,9 @@ final class Session {
         double weight = 0.0;
         if (!points.isEmpty()) {
             int d = points.get(0).vector().dim();
+            if (d > limits.maxDim()) {
+                return IngestResult.failed("dim " + d + " exceeds the node limit of " + limits.maxDim());
+            }
             for (WeightedPoint p : points) {
                 if (p.vector().dim() != d) {
                     return IngestResult.failed("batch mixes dimensions " + d + " and " + p.vector().dim());
@@ -96,28 +121,103 @@ final class Session {
                 return IngestResult.failed("batch dimension " + d + " differs from session dimension " + sessionDim);
             }
         }
+        Producer producer = producer(producerId);
+        if (producer == null) {
+            return IngestResult.failed(producerId.length() > MAX_PRODUCER_ID_LENGTH
+                    ? "producer id longer than " + MAX_PRODUCER_ID_LENGTH + " chars"
+                    : "session has the maximum of " + limits.maxProducersPerSession() + " producers");
+        }
+        SeqDeduplicator dedupe = producer.dedupe;
         switch (dedupe.claim(seq)) {
             case DUPLICATE:
                 return IngestResult.duplicate();
             case IN_FLIGHT:
                 return IngestResult.busy("seq " + seq + " is being enqueued by another call");
+            case OUT_OF_WINDOW:
+                return IngestResult.failed("seq " + seq + " is outside the dedupe window of " + dedupe.window()
+                        + " above the producer's lowest unacknowledged seq " + dedupe.floor()
+                        + "; number batches densely per producer");
             case CLAIMED:
                 break;
             default:
                 throw new AssertionError();
         }
-        Worker w = workers[(int) (seq % workers.length)];
-        if (!w.queue.offer(new Worker.PendingBatch(seq, points, weight))) {
-            dedupe.release(seq);
+        Worker w = workers[producer.worker(seq, workers.length)];
+        // Counted before the offer so a snapshot never sees the batch applied but not accepted.
+        acceptedWeight.add(weight);
+        boolean offered = false;
+        try {
+            offered = w.queue.offer(new Worker.PendingBatch(seq, producer.salt, points, weight));
+        } finally {
+            if (offered) {
+                dedupe.commit(seq);
+            } else {
+                // Also on an Error between claim and offer: an abandoned claim would answer BUSY forever.
+                dedupe.release(seq);
+                acceptedWeight.add(-weight);
+            }
+        }
+        if (!offered) {
             return IngestResult.busy("worker queue full");
         }
-        dedupe.commit(seq);
-        acceptedWeight.add(weight);
         w.wake();
+        if (stopping()) {
+            // close() or fail() began after the checks above: the worker may never take this batch.
+            return IngestResult.failed("session " + (closed ? "closed" : "failed") + " while the batch was enqueued");
+        }
         if (metrics != MetricsSink.NOOP) {
             metrics.record(NodeMetricNames.QUEUE_DEPTH, w.queue.size());
         }
         return IngestResult.accepted(points.size());
+    }
+
+    /**
+     * Read-only pre-check that answers without the payload when the outcome is already known: FAILED for a stopped
+     * session, DUPLICATE for a committed seq, BUSY for a full target queue. Null means "decode and ingest"; the
+     * ingest repeats every check, so a stale answer here costs at most a retry.
+     */
+    IngestResult admit(String producerId, long seq) {
+        Throwable f = failure.get();
+        if (f != null) {
+            return IngestResult.failed("session failed: " + Messages.bounded(f));
+        }
+        if (closed) {
+            return IngestResult.failed("session closed");
+        }
+        Producer producer = producerId.isEmpty() ? defaultProducer : producers.get(producerId);
+        if (seq < 0 || producer == null) {
+            return null;
+        }
+        if (producer.dedupe.committed(seq)) {
+            return IngestResult.duplicate();
+        }
+        Worker w = workers[producer.worker(seq, workers.length)];
+        return w.queue.size() >= spec.queueCapacity() ? IngestResult.busy("worker queue full") : null;
+    }
+
+    /** The producer's state, created on first use; null if the id is too long or the session has too many. */
+    private Producer producer(String id) {
+        if (id.isEmpty()) {
+            return defaultProducer;
+        }
+        Producer p = producers.get(id);
+        if (p != null) {
+            return p;
+        }
+        if (id.length() > MAX_PRODUCER_ID_LENGTH) {
+            return null;
+        }
+        if (producerCount.incrementAndGet() > limits.maxProducersPerSession()) {
+            producerCount.decrementAndGet();
+            return producers.get(id);
+        }
+        Producer fresh = new Producer(id, limits.maxSeqWindow());
+        Producer raced = producers.putIfAbsent(id, fresh);
+        if (raced != null) {
+            producerCount.decrementAndGet();
+            return raced;
+        }
+        return fresh;
     }
 
     NodeSnapshot snapshot() {
@@ -133,7 +233,8 @@ final class Session {
                 appliedWeight += v.inputWeight();
             }
         } else {
-            CasMergeReduceTree.Read read = casTree.read(CAS_READ_ATTEMPTS);
+            long waitNanos = stopping() ? 0L : limits.casSnapshotWait().toNanos();
+            CasMergeReduceTree.Read read = casTree.read(waitNanos, this::stopping);
             for (Summary s : read.summaries()) {
                 parts.add(s.coreset());
                 appliedBatches += s.batches();
@@ -154,42 +255,80 @@ final class Session {
             accepted += w.accepted();
         }
         double acceptedW = acceptedWeight.sum();
-        // The union is built here, on demand, rather than on every insertion.
-        int size = 0;
+        // The union is built here, on demand, rather than on every insertion: one reference copy into a pre-sized
+        // array, plus the one List.of makes (Coreset keeps an immutable list as is).
+        long size = 0;
         for (Coreset c : parts) {
             size += c.size();
         }
-        List<WeightedPoint> points = new ArrayList<>(size);
+        if (size > limits.maxSnapshotPoints()) {
+            throw new NodeLimitException("snapshot of session " + Messages.bounded(id) + " has " + size
+                    + " points, above the limit of " + limits.maxSnapshotPoints());
+        }
+        WeightedPoint[] points = new WeightedPoint[(int) size];
+        int at = 0;
         double offset = 0.0;
         for (Coreset c : parts) {
-            points.addAll(c.points());
+            for (WeightedPoint p : c.points()) {
+                points[at++] = p;
+            }
             offset += c.offset();
         }
-        Coreset coreset = new Coreset(points, offset);
+        Coreset coreset = new Coreset(List.of(points), offset);
         if (metrics != MetricsSink.NOOP) {
             metrics.record(NodeMetricNames.SNAPSHOT_POINTS, coreset.size());
-            metrics.record(NodeMetricNames.SNAPSHOT_BYTES, coreset.estimatedBytes());
+            if ((snapshots.getAndIncrement() & (BYTES_SAMPLE_EVERY - 1)) == 0) {
+                metrics.record(NodeMetricNames.SNAPSHOT_BYTES, coreset.estimatedBytes()); // O(points): sampled
+            }
         }
         Throwable f = failure.get();
-        return new NodeSnapshot(coreset, state(), f == null ? "" : f.toString(), accepted, appliedBatches, acceptedW,
-                appliedWeight, consistent);
+        return new NodeSnapshot(coreset, state(), f == null ? "" : Messages.bounded(f), accepted, appliedBatches,
+                acceptedW, appliedWeight, consistent);
+    }
+
+    /** Marks a read (snapshot, await, cost) as activity for the idle reaper. */
+    void touch() {
+        lastActiveNanos = System.nanoTime();
     }
 
     /**
-     * Waits until every batch accepted before this call is reflected in the trees. Per-worker FIFO order makes
-     * "worker i applied at least as many batches as had been enqueued to it" sufficient.
+     * Called by the single reaper thread. Ingest progress is detected from the workers' own counters, so producers
+     * pay nothing for idle tracking.
      */
+    boolean idleFor(long timeoutNanos, long now) {
+        long progress = 0;
+        for (Worker w : workers) {
+            progress += w.accepted() + w.applied();
+        }
+        if (progress != reaperProgress) {
+            reaperProgress = progress;
+            lastActiveNanos = now;
+            return false;
+        }
+        return now - lastActiveNanos > timeoutNanos;
+    }
+
     /** Worker {@code i}'s last published view (tests). */
     Worker.View workerView(int i) {
         return workers[i].view();
     }
 
-    boolean awaitApplied(Duration timeout) throws InterruptedException {
+    /**
+     * Waits until every batch accepted before this call is reflected in the trees. Per-worker FIFO order makes
+     * "worker i applied at least as many batches as had been enqueued to it" sufficient; in CAS mode new carries are
+     * then held off until the ones in flight are placed, so other producers cannot starve the wait.
+     *
+     * @param cancelled polled on every wake-up; whoever flips it must unpark the waiting thread
+     * @throws CancellationException once {@code cancelled} returns true
+     */
+    boolean awaitApplied(Duration timeout, BooleanSupplier cancelled) throws InterruptedException {
         long[] targets = new long[workers.length];
         for (int i = 0; i < workers.length; i++) {
             targets[i] = workers[i].accepted();
         }
-        long deadline = System.nanoTime() + timeout.toNanos();
+        Duration wait = timeout.compareTo(limits.maxAwait()) > 0 ? limits.maxAwait() : timeout;
+        long deadline = System.nanoTime() + wait.toNanos();
+        BooleanSupplier stop = () -> stopping() || cancelled.getAsBoolean();
         Thread me = Thread.currentThread();
         waiters.add(me);
         try {
@@ -199,9 +338,12 @@ final class Session {
                     throw new SessionFailedException(id, f);
                 }
                 if (closed) {
-                    throw new IllegalStateException("session " + id + " closed");
+                    throw new IllegalStateException("session " + Messages.bounded(id) + " closed");
                 }
-                if (reached(targets)) {
+                if (cancelled.getAsBoolean()) {
+                    throw new CancellationException("awaitApplied cancelled");
+                }
+                if (reached(targets, deadline, stop)) {
                     return true;
                 }
                 long remaining = deadline - System.nanoTime();
@@ -218,14 +360,14 @@ final class Session {
         }
     }
 
-    private boolean reached(long[] targets) {
+    private boolean reached(long[] targets, long deadline, BooleanSupplier stop) {
         for (int i = 0; i < workers.length; i++) {
             if (workers[i].applied() < targets[i]) {
                 return false;
             }
         }
         // A carry in progress holds applied batches outside every slot.
-        return casTree == null || casTree.inFlightBatches() == 0;
+        return casTree == null || casTree.awaitQuiescent(deadline, stop);
     }
 
     void onApplied() {
@@ -251,37 +393,56 @@ final class Session {
         wakeWaiters();
     }
 
-    /**
-     * Stops all workers (batches still queued are dropped) and joins them, interrupting any that is still busy after
-     * {@code grace}. Returns whether every worker thread terminated.
-     */
-    boolean close(Duration grace) {
+    /** Marks the session closed and wakes its workers and waiters without waiting for them. */
+    void signalStop() {
         closed = true;
         for (Worker w : workers) {
             w.wakeForStop();
         }
         wakeWaiters();
-        boolean interrupted = false;
+    }
+
+    /**
+     * Stops all workers (batches still queued are dropped) and joins them in parallel: every worker gets the same
+     * {@code grace} deadline, then all still busy are interrupted and get one more {@code grace}. So closing takes at
+     * most {@code 2 * grace} whatever the worker count. Returns whether every worker thread terminated.
+     */
+    boolean close(Duration grace) {
+        signalStop();
+        boolean interrupted = !joinAll(System.nanoTime() + grace.toNanos());
+        boolean anyAlive = false;
+        for (Worker w : workers) {
+            if (w.thread.isAlive()) {
+                w.thread.interrupt();
+                anyAlive = true;
+            }
+        }
+        if (anyAlive) {
+            interrupted |= !joinAll(System.nanoTime() + grace.toNanos());
+        }
         boolean allDone = true;
         for (Worker w : workers) {
-            try {
-                w.thread.join(grace.toMillis());
-                if (w.thread.isAlive()) {
-                    w.thread.interrupt();
-                    w.thread.join(grace.toMillis());
-                }
-            } catch (InterruptedException e) {
-                interrupted = true;
-            }
-            if (w.thread.isAlive()) {
-                allDone = false;
-            } else {
-                w.queue.clear(); // consumer-side op, safe once the consumer thread is gone
-            }
+            allDone &= !w.thread.isAlive();
         }
         if (interrupted) {
             Thread.currentThread().interrupt();
         }
         return allDone;
+    }
+
+    /** Joins every worker until {@code deadline} (nanoTime); false if the calling thread was interrupted. */
+    private boolean joinAll(long deadline) {
+        for (Worker w : workers) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                return true;
+            }
+            try {
+                w.thread.join(Math.max(1L, remaining / 1_000_000L));
+            } catch (InterruptedException e) {
+                return false;
+            }
+        }
+        return true;
     }
 }

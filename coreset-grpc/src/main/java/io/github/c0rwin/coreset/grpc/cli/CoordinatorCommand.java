@@ -5,6 +5,7 @@ import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
+import io.github.c0rwin.coreset.grpc.ClientSecurity;
 import io.github.c0rwin.coreset.grpc.CoordinatorOptions;
 import io.github.c0rwin.coreset.grpc.CoresetCoordinator;
 import io.github.c0rwin.coreset.grpc.GatheredSnapshot;
@@ -100,6 +101,18 @@ public final class CoordinatorCommand implements Callable<Integer> {
     @Option(names = "--keep-session", description = "Leave the session open on the nodes.")
     boolean keepSession;
 
+    @Option(names = "--tls-ca", description = "PEM CAs trusted for node certificates; enables TLS.")
+    Path tlsCa;
+
+    @Option(names = "--tls-cert", description = "PEM client certificate chain for mutual TLS (with --tls-key).")
+    Path tlsCert;
+
+    @Option(names = "--tls-key", description = "PEM PKCS#8 private key of --tls-cert.")
+    Path tlsKey;
+
+    @Option(names = "--auth-token-file", description = "File holding the nodes' shared auth token.")
+    Path authTokenFile;
+
     private final Supplier<AlgorithmResolver> resolver;
 
     public CoordinatorCommand() {
@@ -120,8 +133,10 @@ public final class CoordinatorCommand implements Callable<Integer> {
                 TreeMode.fromId(treeMode));
         Duration timeout = Duration.ofMillis(timeoutMs);
         CoordinatorOptions options = CoordinatorOptions.defaults().withMaxInFlightPerNode(maxInFlight);
-        try (CoresetCoordinator coordinator = CoresetCoordinator.connect(nodes, options, MetricsSink.NOOP)) {
-            coordinator.createSession(sessionId, sessionSpec);
+        String token = authTokenFile == null ? null : Files.readString(authTokenFile, StandardCharsets.UTF_8).strip();
+        ClientSecurity security = new ClientSecurity(tlsCa, tlsCert, tlsKey, token);
+        try (CoresetCoordinator coordinator = CoresetCoordinator.connect(nodes, options, security, MetricsSink.NOOP);
+             SessionLease ignored = SessionLease.create(coordinator, sessionId, sessionSpec, keepSession)) {
             long points = 0;
             try (IngestStream stream = coordinator.openIngest(sessionId);
                  BufferedReader reader = Files.newBufferedReader(input, StandardCharsets.UTF_8)) {
@@ -139,9 +154,6 @@ public final class CoordinatorCommand implements Callable<Integer> {
             }
             KMeansResult result = CoresetCoordinator.cluster(snapshot.coreset(), k, iterations, seed, finalCompress);
             double cost = coordinator.cost(sessionId, result.centers());
-            if (!keepSession) {
-                coordinator.closeSession(sessionId);
-            }
             out.printf("# session=%s points=%d batches=%d coreset_points=%d cost=%s%n", sessionId, points,
                     snapshot.acceptedBatches(), snapshot.coreset().size(), cost);
             for (SparseVector c : result.centers()) {
@@ -162,5 +174,34 @@ public final class CoordinatorCommand implements Callable<Integer> {
 
     public static void main(String[] args) {
         System.exit(new CommandLine(new CoordinatorCommand()).execute(args));
+    }
+
+    /** Creates the session and closes it again on every exit path, unless it is to be kept. */
+    private record SessionLease(CoresetCoordinator coordinator, String sessionId, boolean keep)
+            implements AutoCloseable {
+
+        static SessionLease create(CoresetCoordinator coordinator, String sessionId, SessionSpec spec, boolean keep)
+                throws InterruptedException {
+            try {
+                coordinator.createSession(sessionId, spec);
+            } catch (RuntimeException e) {
+                if (!keep) { // some nodes may have created it before another refused
+                    try {
+                        coordinator.closeSession(sessionId);
+                    } catch (RuntimeException suppressed) {
+                        e.addSuppressed(suppressed);
+                    }
+                }
+                throw e;
+            }
+            return new SessionLease(coordinator, sessionId, keep);
+        }
+
+        @Override
+        public void close() throws InterruptedException {
+            if (!keep) {
+                coordinator.closeSession(sessionId);
+            }
+        }
     }
 }

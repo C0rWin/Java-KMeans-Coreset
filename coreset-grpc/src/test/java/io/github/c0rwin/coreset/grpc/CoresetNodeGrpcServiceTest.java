@@ -3,7 +3,6 @@ package io.github.c0rwin.coreset.grpc;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -166,7 +165,43 @@ class CoresetNodeGrpcServiceTest {
         assertEquals(2, snap.getAcceptedBatches());
         assertEquals(2, snap.getAppliedBatches());
         assertTrue(snap.getComplete());
-        assertEquals(TestData.weight(b0) + TestData.weight(b1), ProtoCodec.fromProto(snap.getCoreset()).totalWeight());
+        assertEquals(TestData.weight(b0) + TestData.weight(b1), ProtoCodec.fromProto(snap.getCoreset(), DIM).totalWeight());
+    }
+
+    /** A batch whose vector has an index but no value: decoding it fails. */
+    private static Batch undecodable(String session, long seq) {
+        return Batch.newBuilder().setSessionId(session).setSeq(seq).addPoints(
+                io.github.c0rwin.coreset.grpc.proto.WeightedPoint.newBuilder().setWeight(1).setVector(
+                        io.github.c0rwin.coreset.grpc.proto.SparseVector.newBuilder().setDim(DIM).addIndices(1)))
+                .build();
+    }
+
+    @Test
+    void duplicateBusyAndUnknownSessionAreAnsweredBeforeDecoding() throws Exception {
+        TestAlgorithms.Gated gated = new TestAlgorithms.Gated(TestAlgorithms.IDENTITY);
+        start(Map.of("gated", gated), 8);
+        create("s", new SessionSpec("gated", Map.of(), 1L, 1, 2));
+        SplittableRandom rng = new SplittableRandom(3);
+        AckCollector acks = new AckCollector();
+        StreamObserver<Batch> requests = CoresetNodeServiceGrpc.newStub(cluster.channels.get(0)).ingest(acks);
+        requests.onNext(batch("s", 0, TestData.batch(rng, 1, DIM)));
+        assertEquals(AckStatus.ACK_STATUS_ACCEPTED, acks.next().getStatus());
+        gated.awaitEntered(); // the worker holds seq 0: two more fill the ring
+        requests.onNext(batch("s", 1, TestData.batch(rng, 1, DIM)));
+        requests.onNext(batch("s", 2, TestData.batch(rng, 1, DIM)));
+        assertEquals(AckStatus.ACK_STATUS_ACCEPTED, acks.next().getStatus());
+        assertEquals(AckStatus.ACK_STATUS_ACCEPTED, acks.next().getStatus());
+
+        requests.onNext(undecodable("s", 0)); // a retry is DUPLICATE whatever it carries
+        assertEquals(AckStatus.ACK_STATUS_DUPLICATE, acks.next().getStatus());
+        requests.onNext(undecodable("s", 3)); // full ring: BUSY before the payload is looked at
+        assertEquals(AckStatus.ACK_STATUS_BUSY, acks.next().getStatus());
+        requests.onNext(undecodable("missing", 0));
+        Ack missing = acks.next();
+        assertEquals(AckStatus.ACK_STATUS_FAILED, missing.getStatus());
+        assertTrue(missing.getMessage().contains("unknown session"), missing.getMessage());
+        gated.release();
+        requests.onCompleted();
     }
 
     @Test
@@ -176,10 +211,14 @@ class CoresetNodeGrpcServiceTest {
         List<WeightedPoint> b = TestData.batch(new SplittableRandom(9), 2, DIM);
         AckCollector acks = new AckCollector();
         StreamObserver<Batch> requests = CoresetNodeServiceGrpc.newStub(cluster.channels.get(0)).ingest(acks);
-        requests.onNext(batch("s", Long.MAX_VALUE, b)); // 2^63 - 1 is the largest valid seq
+        requests.onNext(batch("s", 0, b));
         assertEquals(AckStatus.ACK_STATUS_ACCEPTED, acks.next().getStatus());
+        requests.onNext(batch("s", Long.MAX_VALUE, b)); // 2^63 - 1 is valid on the wire; the node's window refuses it
+        Ack far = acks.next();
+        assertEquals(AckStatus.ACK_STATUS_FAILED, far.getStatus());
+        assertTrue(far.getMessage().contains("dedupe window"), far.getMessage());
         requests.onNext(batch("s", Long.MIN_VALUE, b)); // uint64 2^63 on the wire
-        requests.onNext(batch("s", 0, b)); // never read: the stream is already failed
+        requests.onNext(batch("s", 1, b)); // never read: the stream is already failed
         assertTrue(acks.done.await(30, TimeUnit.SECONDS));
         Status status = Status.fromThrowable(acks.error);
         assertEquals(Status.Code.INVALID_ARGUMENT, status.getCode());
@@ -188,7 +227,7 @@ class CoresetNodeGrpcServiceTest {
 
         var counters = cluster.metrics.get(0).snapshot().counters();
         assertEquals(1, counters.get(io.github.c0rwin.coreset.node.NodeMetricNames.INGEST_ACCEPTED));
-        assertNull(counters.get(io.github.c0rwin.coreset.node.NodeMetricNames.INGEST_FAILED)); // node never saw it
+        assertEquals(1, counters.get(io.github.c0rwin.coreset.node.NodeMetricNames.INGEST_FAILED)); // 2^63 never got there
         assertTrue(cluster.nodes.get(0).awaitApplied("s", Duration.ofSeconds(30)));
         assertEquals(1, cluster.nodes.get(0).snapshot("s").appliedBatches());
     }
@@ -285,7 +324,8 @@ class CoresetNodeGrpcServiceTest {
         create("b", new SessionSpec("identity", Map.of(), 1L, 1, 2));
         create("a", new SessionSpec("identity", Map.of(), 1L, 1, 2));
         StatsResponse stats = stub.stats(StatsRequest.getDefaultInstance());
-        assertEquals(List.of("a", "b"), stats.getSessionIdsList());
+        // Without authentication configured every caller is anonymous: session ids are not handed out.
+        assertEquals(List.of(), stats.getSessionIdsList());
         assertTrue(stats.getMetricsJson().contains("\"node.sessions.created\":2"), stats.getMetricsJson());
         assertTrue(stats.getMetricsJson().contains("grpc.server.CreateSession.bytes_in"), stats.getMetricsJson());
 

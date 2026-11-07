@@ -12,7 +12,7 @@ import java.util.Objects;
 public record IngestResult(Status status, String reason, int acceptedPoints) {
 
     public enum Status {
-        /** Enqueued for exactly-once application. */
+        /** Enqueued for exactly-once application; closing the session drops batches still queued. */
         ACCEPTED,
         /** This seq was already accepted; nothing was enqueued. Safe outcome of a retry. */
         DUPLICATE,

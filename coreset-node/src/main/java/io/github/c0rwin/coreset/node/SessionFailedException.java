@@ -6,6 +6,6 @@ public class SessionFailedException extends IllegalStateException {
     private static final long serialVersionUID = 1L;
 
     public SessionFailedException(String sessionId, Throwable cause) {
-        super("session " + sessionId + " failed: " + cause, cause);
+        super("session " + Messages.bounded(sessionId) + " failed: " + Messages.bounded(cause), cause);
     }
 }

@@ -1,12 +1,17 @@
 package io.github.c0rwin.coreset.grpc.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
+import io.github.c0rwin.coreset.grpc.proto.CloseSessionRequest;
+import io.github.c0rwin.coreset.grpc.proto.CoresetNodeServiceGrpc;
 import io.github.c0rwin.coreset.node.ServiceLoaderAlgorithmResolver;
+import io.grpc.ManagedChannel;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -17,6 +22,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import picocli.CommandLine;
@@ -78,6 +84,31 @@ class CliTest {
         } finally {
             for (NodeCommand.Running r : nodes) {
                 r.close();
+            }
+        }
+    }
+
+    @Test
+    void coordinatorClosesItsSessionWhenTheRunFails(@TempDir Path dir) throws Exception {
+        NodeCommand cmd = new NodeCommand();
+        new CommandLine(cmd).parseArgs("--port", "0", "--metrics-port", "-1");
+        try (NodeCommand.Running node = cmd.start(ServiceLoaderAlgorithmResolver.load())) {
+            Path input = dir.resolve("bad.csv");
+            Files.writeString(input, "1,2\n3,4\n5,6,7\n"); // the third line has the wrong width
+            StringWriter err = new StringWriter();
+            CommandLine cli = new CommandLine(new CoordinatorCommand());
+            cli.setOut(new PrintWriter(new StringWriter()));
+            cli.setErr(new PrintWriter(err));
+            int code = cli.execute("--nodes", "localhost:" + node.port(), "--input", input.toString(),
+                    "--algorithm", "identity", "--batch-size", "1", "--k", "1", "--session", "leak");
+            assertTrue(code != 0, err.toString());
+            ManagedChannel ch = NettyChannelBuilder.forTarget("localhost:" + node.port()).usePlaintext().build();
+            try {
+                boolean stillOpen = CoresetNodeServiceGrpc.newBlockingStub(ch).withDeadlineAfter(10, TimeUnit.SECONDS)
+                        .closeSession(CloseSessionRequest.newBuilder().setSessionId("leak").build()).getClosed();
+                assertFalse(stillOpen, "the failed run left its session open on the node");
+            } finally {
+                ch.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
             }
         }
     }

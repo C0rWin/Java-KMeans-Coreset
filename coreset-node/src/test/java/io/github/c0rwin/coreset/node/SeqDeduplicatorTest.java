@@ -15,7 +15,7 @@ class SeqDeduplicatorTest {
 
     @Test
     void compactsCommittedPrefixAndKeepsGaps() {
-        SeqDeduplicator d = new SeqDeduplicator();
+        SeqDeduplicator d = new SeqDeduplicator(Long.MAX_VALUE);
         for (long seq : new long[] {2, 0, 3}) {
             assertEquals(SeqDeduplicator.Claim.CLAIMED, d.claim(seq));
             d.commit(seq);
@@ -32,7 +32,7 @@ class SeqDeduplicatorTest {
 
     @Test
     void pendingClaimBlocksConcurrentRetryAndReleaseAllowsIt() {
-        SeqDeduplicator d = new SeqDeduplicator();
+        SeqDeduplicator d = new SeqDeduplicator(Long.MAX_VALUE);
         assertEquals(SeqDeduplicator.Claim.CLAIMED, d.claim(0));
         assertEquals(SeqDeduplicator.Claim.IN_FLIGHT, d.claim(0));
         d.release(0); // e.g. the queue was full
@@ -44,7 +44,7 @@ class SeqDeduplicatorTest {
 
     @Test
     void concurrentClaimsCommitEachSeqExactlyOnce() throws Exception {
-        SeqDeduplicator d = new SeqDeduplicator();
+        SeqDeduplicator d = new SeqDeduplicator(Long.MAX_VALUE);
         int threads = 8;
         int seqs = 20_000;
         CyclicBarrier start = new CyclicBarrier(threads);

@@ -58,12 +58,15 @@ message CloseSessionResponse {
   bool closed = 1;
 }
 
-// One batch of an ingest stream. seq is unique per batch within (session, node); retries reuse it.
+// One batch of an ingest stream. seq is unique per batch within (session, node, producer_id); retries reuse it.
 // seq must be below 2^63: larger values fail the stream with INVALID_ARGUMENT.
+// producer_id names an independent sender (a fresh random id per coordinator ingest run), so two runs into one
+// session never collide on seq. Empty is the default producer.
 message Batch {
   string session_id = 1;
   uint64 seq = 2;
   repeated WeightedPoint points = 3;
+  string producer_id = 4;
 }
 
 enum AckStatus {

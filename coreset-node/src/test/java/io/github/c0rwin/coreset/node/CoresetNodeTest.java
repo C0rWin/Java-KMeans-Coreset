@@ -61,6 +61,30 @@ class CoresetNodeTest {
     }
 
     @Test
+    void producersNumberSeqsIndependently() throws Exception {
+        CoresetNode n = node(Map.of());
+        n.createSession("multi", spec("identity", 2, 16, TreeMode.SINGLE_WRITER));
+        SplittableRandom rng = new SplittableRandom(21);
+        double total = 0;
+        for (String producer : List.of("", "run-a", "run-b")) {
+            for (int seq = 0; seq < 4; seq++) {
+                List<WeightedPoint> b = TestData.batch(rng, 3, DIM);
+                total += TestData.weight(b);
+                assertEquals(ACCEPTED, n.ingest("multi", producer, seq, b).status(), producer + "/" + seq);
+                assertEquals(DUPLICATE, n.ingest("multi", producer, seq, b).status(), producer + "/" + seq);
+            }
+        }
+        assertTrue(n.awaitApplied("multi", WAIT));
+        NodeSnapshot s = n.snapshot("multi");
+        assertEquals(12, s.appliedBatches());
+        assertEquals(total, s.coreset().totalWeight(), 1e-9 * total);
+        IngestResult tooLong = n.ingest("multi", "p".repeat(Session.MAX_PRODUCER_ID_LENGTH + 1), 0,
+                TestData.batch(rng, 1, DIM));
+        assertEquals(FAILED, tooLong.status());
+        assertTrue(tooLong.reason().contains("producer id longer than"), tooLong.reason());
+    }
+
+    @Test
     void retriedSeqIsAcknowledgedWithoutDoubleCounting() throws Exception {
         CoresetNode n = node(Map.of());
         n.createSession("retry", spec("identity", 2, 16, TreeMode.SINGLE_WRITER));
@@ -406,12 +430,12 @@ class CoresetNodeTest {
         SparseVector b = SparseVector.dense(new double[] {3, 4});
         List<WeightedPoint> pts = List.of(new WeightedPoint(a, 2), new WeightedPoint(b, 3));
         List<SparseVector> center = List.of(SparseVector.dense(new double[] {0, 0}));
-        assertEquals(3 * 25.0, n.partialCost(center, pts));
+        assertEquals(new PartialCost(3 * 25.0, 5.0, 2), n.partialCost(center, pts));
 
         n.createSession("cost", spec("identity", 2, 2, TreeMode.SINGLE_WRITER));
         n.ingest("cost", 0, pts);
         assertTrue(n.awaitApplied("cost", WAIT));
-        assertEquals(75.0, n.partialCost("cost", center));
+        assertEquals(75.0, n.partialCost("cost", center).cost());
     }
 
     @Test
@@ -436,9 +460,9 @@ class CoresetNodeTest {
         assertTrue(m.distributions().get(NodeMetricNames.INGEST_LATENCY).count() >= 9);
         assertEquals(8, m.distributions().get(NodeMetricNames.QUEUE_DEPTH).count());
         assertEquals(8, m.distributions().get(NodeMetricNames.BATCH_COMPRESS + ".wall_ns").count());
-        // Seqs alternate between the two workers: 4 insertions each, tree height 3 after the 4th.
-        assertEquals(4, m.distributions().get(NodeMetricNames.workerTreeDepth(0)).count());
-        assertEquals(3.0, m.distributions().get(NodeMetricNames.workerTreeDepth(1)).max());
+        // One distribution for all workers: 8 insertions, 4 per worker, tree height 3 after a worker's 4th.
+        assertEquals(8, m.distributions().get("node.worker.tree_depth").count());
+        assertEquals(3.0, m.distributions().get("node.worker.tree_depth").max());
         assertEquals(1, m.distributions().get(NodeMetricNames.SNAPSHOT_POINTS).count());
         assertNull(m.distributions().get(MetricNames.MRTREE_SNAPSHOT_POINTS)); // no per-insertion tree union
         assertTrue(m.distributions().get(NodeMetricNames.SNAPSHOT_BYTES).max() > 0);

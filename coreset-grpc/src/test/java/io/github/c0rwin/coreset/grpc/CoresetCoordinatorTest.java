@@ -41,7 +41,7 @@ class CoresetCoordinatorTest {
 
     private static CoordinatorOptions options(int inFlight) {
         return new CoordinatorOptions(inFlight, WAIT, Duration.ofMinutes(5), Duration.ofMillis(1),
-                Duration.ofMillis(20), 5, CoresetNodeServer.DEFAULT_MAX_MESSAGE_BYTES);
+                Duration.ofMillis(20), 5, CoordinatorOptions.DEFAULT_MAX_MESSAGE_BYTES, WAIT, WAIT, 1 << 24, 2);
     }
 
     private static double ingestAll(IngestStream stream, SplittableRandom rng, int batches, List<WeightedPoint> all)
@@ -96,6 +96,45 @@ class CoresetCoordinatorTest {
     }
 
     @Test
+    void consecutiveIngestRunsIntoOneKeptSessionBothLand() throws Exception {
+        try (InProcessCluster cluster = new InProcessCluster(2, Map.of(), 16);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels, options(8))) {
+            coordinator.createSession("kept", new SessionSpec("merge-equal", Map.of(), 3L, 2, 8));
+            double weight = 0;
+            for (int run = 0; run < 2; run++) {
+                try (IngestStream stream = coordinator.openIngest("kept")) {
+                    weight += ingestAll(stream, new SplittableRandom(10 + run), 20, new ArrayList<>());
+                    stream.flush(WAIT);
+                    assertEquals(20, stream.acceptedBatches(), "run " + run);
+                    assertEquals(0, stream.duplicateAcks(), "run " + run);
+                }
+            }
+            GatheredSnapshot snap = coordinator.gather("kept", WAIT);
+            assertTrue(snap.complete());
+            assertEquals(40, snap.appliedBatches());
+            assertEquals(weight, snap.coreset().totalWeight(), 1e-9 * weight);
+        }
+    }
+
+    @Test
+    void duplicateAckForABatchSentOnceFailsTheStream() throws Exception {
+        try (InProcessCluster cluster = new InProcessCluster(1, Map.of(), 16);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels, options(4))) {
+            coordinator.createSession("s", new SessionSpec("identity", Map.of(), 1L, 1, 4));
+            try (IngestStream stream = coordinator.openIngest("s")) {
+                List<WeightedPoint> b = TestData.batch(new SplittableRandom(7), 2, DIM);
+                // Some other sender already used this producer id and seq 0 with different content.
+                assertEquals(io.github.c0rwin.coreset.node.IngestResult.Status.ACCEPTED, cluster.nodes.get(0)
+                        .ingest("s", stream.producerId(), 0, TestData.batch(new SplittableRandom(8), 3, DIM)).status());
+                stream.submit(b);
+                IngestFailedException e = assertThrows(IngestFailedException.class, () -> stream.flush(WAIT));
+                assertTrue(e.getMessage().contains("as DUPLICATE although it was sent once"), e.getMessage());
+                assertEquals(0, stream.duplicateAcks());
+            }
+        }
+    }
+
+    @Test
     void busyNodesAreRetriedWithTheSameSeqUntilAccepted() throws Exception {
         TestAlgorithms.Gated gated = new TestAlgorithms.Gated(TestAlgorithms.IDENTITY);
         try (InProcessCluster cluster = new InProcessCluster(1, Map.of("gated", gated), 16);
@@ -118,6 +157,48 @@ class CoresetCoordinatorTest {
                 assertEquals(8, s.appliedBatches());
                 assertEquals(weight, s.coreset().totalWeight());
             }
+        }
+    }
+
+    @Test
+    void persistentBusyFailsTheIngestInsteadOfRetryingForever() throws Exception {
+        TestAlgorithms.Gated gated = new TestAlgorithms.Gated(TestAlgorithms.IDENTITY);
+        try (InProcessCluster cluster = new InProcessCluster(1, Map.of("gated", gated), 16);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels,
+                     options(8).withBusyAndSubmitLimits(Duration.ofMillis(300), WAIT))) {
+            coordinator.createSession("s", new SessionSpec("gated", Map.of(), 1L, 1, 2));
+            try (IngestStream stream = coordinator.openIngest("s")) {
+                ingestAll(stream, new SplittableRandom(2), 8, new ArrayList<>());
+                IngestFailedException e = assertThrows(IngestFailedException.class, () -> stream.flush(WAIT));
+                assertTrue(e.getMessage().contains("answered BUSY"), e.getMessage());
+            } finally {
+                gated.release();
+            }
+        }
+    }
+
+    @Test
+    void submitGivesUpWhenANodeStopsAcknowledging() throws Exception {
+        ServerInterceptor silent = new ServerInterceptor() {
+            @Override
+            public <Q, R> ServerCall.Listener<Q> interceptCall(ServerCall<Q, R> call, Metadata headers,
+                                                               ServerCallHandler<Q, R> next) {
+                if (!call.getMethodDescriptor().getBareMethodName().equals("Ingest")) {
+                    return next.startCall(call, headers);
+                }
+                call.request(Integer.MAX_VALUE);
+                return new ServerCall.Listener<>() { // reads everything, answers nothing
+                };
+            }
+        };
+        try (InProcessCluster cluster = new InProcessCluster(1, Map.of(), 16, silent);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels,
+                     options(1).withBusyAndSubmitLimits(WAIT, Duration.ofMillis(300)));
+             IngestStream stream = coordinator.openIngest("s")) {
+            stream.submit(TestData.batch(new SplittableRandom(9), 1, DIM));
+            IngestFailedException e = assertThrows(IngestFailedException.class,
+                    () -> stream.submit(TestData.batch(new SplittableRandom(10), 1, DIM)));
+            assertTrue(e.getMessage().contains("acknowledged nothing"), e.getMessage());
         }
     }
 

@@ -8,8 +8,11 @@ import java.util.Objects;
  *
  * @param algorithmId   id passed to the node's {@link AlgorithmResolver}
  * @param params        algorithm parameters (copied)
- * @param seed          root of every random choice in the session: batch {@code seq} is compressed with a generator
- *                      derived from {@code (seed, seq)}, worker {@code i} merges with one derived from {@code (seed, i)}
+ * @param seed          root of every random choice in the session: batch {@code seq} of a producer is compressed with a
+ *                      generator derived from {@code (seed, producer, seq)}, worker {@code i} merges with one derived
+ *                      from {@code (seed, i)}. Batch coresets are therefore reproducible; the snapshot is reproducible
+ *                      only in {@link TreeMode#SINGLE_WRITER} with a fixed per-worker arrival order (in
+ *                      {@link TreeMode#CAS} the merging worker depends on timing)
  * @param workers       worker threads, {@code >= 1}; batch {@code seq} goes to worker {@code seq % workers}
  * @param queueCapacity bound of each worker queue; a power of two {@code >= 2} so it is exact for the ring buffer
  * @param treeMode      merge-reduce organisation

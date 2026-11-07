@@ -26,7 +26,7 @@ class CasMergeReduceTreeTest {
         SplittableRandom rng = new SplittableRandom(1);
         for (int i = 1; i <= 11; i++) {
             tree.add(new Summary(Coreset.of(TestData.batch(rng, 1, 4)), 1, 1.0), rng);
-            CasMergeReduceTree.Read read = tree.read(1);
+            CasMergeReduceTree.Read read = tree.read(0L, () -> false);
             assertTrue(read.consistent());
             assertEquals(Integer.bitCount(i), read.summaries().size());
             assertEquals(32 - Integer.numberOfLeadingZeros(i), tree.height());
@@ -61,7 +61,7 @@ class CasMergeReduceTreeTest {
             for (Future<Double> f : weights) {
                 expected += f.get(60, TimeUnit.SECONDS);
             }
-            CasMergeReduceTree.Read read = tree.read(1);
+            CasMergeReduceTree.Read read = tree.read(0L, () -> false);
             assertTrue(read.consistent());
             assertEquals(0, tree.inFlightBatches());
             long batches = read.summaries().stream().mapToLong(Summary::batches).sum();
