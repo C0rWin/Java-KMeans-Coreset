@@ -20,9 +20,13 @@ import java.util.random.RandomGenerator;
  * <p>Time: Lloyd, O(n m nnz (iterations + 1)), plus {@link WeightedLloyd#meansOf} for the means and phi (two passes
  * and a sort of each part's stored entries); the adaptive variant runs Lloyd for m = 1, k, k^2, ... up to maxM.
  * Memory follows the stored entries, never m * dim for high-dimensional sparse input. The only randomness is the
- * Lloyd seeding. Stateless and thread-safe.
+ * Lloyd seeding. The m-means partitions use plain D^2 seeding: Lemma 1 holds for any partition, so greedy seeding's
+ * (L + 1)x cost buys nothing there; only the adaptive opt estimate (m = k) seeds greedily.
+ * Stateless and thread-safe.
  */
 public final class MeanCoreset implements CoresetAlgorithm {
+
+    private static final int PLAIN_SEEDING = 1; // k-means++ local trials
 
     private final int m; // the fixed m, or maxM when adaptive
     private final int lloydIterations;
@@ -78,7 +82,7 @@ public final class MeanCoreset implements CoresetAlgorithm {
             }
             KMeansResult partition = isAdaptive()
                     ? adaptivePartition(points, rng, metrics)
-                    : WeightedLloyd.cluster(points, m, lloydIterations, rng, metrics);
+                    : WeightedLloyd.cluster(points, m, lloydIterations, PLAIN_SEEDING, rng, metrics);
             if (partition.centers().size() >= points.size()) {
                 metrics.count(MetricNames.MEAN_PASSTHROUGH, 1);
                 return input;
@@ -97,9 +101,10 @@ public final class MeanCoreset implements CoresetAlgorithm {
 
     private KMeansResult adaptivePartition(PointSet points, RandomGenerator rng, MetricsSink metrics) {
         final int maxM = m;
+        // Greedy here: optK stands in for opt, and an overestimate would loosen the stopping threshold.
         KMeansResult optK = WeightedLloyd.cluster(points, Math.min(k, maxM), lloydIterations, rng, metrics);
         final double threshold = eps * eps * optK.cost();
-        KMeansResult current = WeightedLloyd.cluster(points, 1, lloydIterations, rng, metrics);
+        KMeansResult current = WeightedLloyd.cluster(points, 1, lloydIterations, PLAIN_SEEDING, rng, metrics);
         long t = 1;
         while (t < maxM) {
             long next = Math.min(t * k, maxM);
@@ -108,7 +113,7 @@ public final class MeanCoreset implements CoresetAlgorithm {
             }
             KMeansResult candidate = next == Math.min(k, maxM)
                     ? optK
-                    : WeightedLloyd.cluster(points, (int) next, lloydIterations, rng, metrics);
+                    : WeightedLloyd.cluster(points, (int) next, lloydIterations, PLAIN_SEEDING, rng, metrics);
             if (current.cost() - candidate.cost() <= threshold) {
                 break;
             }

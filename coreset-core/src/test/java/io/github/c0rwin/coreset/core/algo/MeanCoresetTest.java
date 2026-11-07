@@ -108,6 +108,15 @@ class MeanCoresetTest {
         assertEquals(100.0, c.totalWeight(), 1e-9);
     }
 
+    /** The partition seeds with plain D^2: n (m - 1) seeding distances, not greedy's (L + 1) n per step. */
+    @Test
+    void partitionSeedsWithPlainKMeansPlusPlus() {
+        Coreset p = TestData.mixture(500, 4, 3, true, 14);
+        RecordingMetrics metrics = new RecordingMetrics();
+        new MeanCoreset(20, 2).compress(p, new SplittableRandom(15), metrics);
+        assertEquals(500L * (20 - 1), metrics.snapshot().counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS));
+    }
+
     @Test
     void adaptiveChoosesPowerOfKWithinMaxMAndStaysOneSided() {
         Coreset p = TestData.mixture(1000, 3, 2, false, 13);

@@ -45,19 +45,29 @@ public final class WeightedLloyd {
     }
 
     /**
-     * Seeds with {@link KMeansPlusPlus} and runs Lloyd. Lloyd itself performs {@code n * c * (iterations + 1)} distance
-     * evaluations for {@code n} points and {@code c} seeds. If no point has positive weight the result has no centers,
-     * every assignment is -1 and the cost is 0.
+     * Seeds with {@link KMeansPlusPlus} (greedy, {@link KMeansPlusPlus#defaultLocalTrials} candidates per step) and
+     * runs Lloyd. If no point has positive weight the result has no centers, every assignment is -1 and the cost is 0.
      *
      * @throws IllegalArgumentException if {@code k < 1} or {@code maxIterations < 0}
      */
     public static KMeansResult cluster(PointSet points, int k, int maxIterations, RandomGenerator rng,
                                        MetricsSink metrics) {
+        return cluster(points, k, maxIterations, KMeansPlusPlus.defaultLocalTrials(k), rng, metrics);
+    }
+
+    /**
+     * {@link #cluster(PointSet, int, int, RandomGenerator, MetricsSink)} with {@code localTrials} k-means++ candidates
+     * per seeding step; 1 is plain D^2 seeding, about {@code localTrials + 1} times cheaper than greedy.
+     *
+     * @throws IllegalArgumentException if {@code k < 1}, {@code localTrials < 1} or {@code maxIterations < 0}
+     */
+    public static KMeansResult cluster(PointSet points, int k, int maxIterations, int localTrials, RandomGenerator rng,
+                                       MetricsSink metrics) {
         if (maxIterations < 0) {
             throw new IllegalArgumentException("maxIterations must be >= 0: " + maxIterations);
         }
         try (Span ignored = metrics.span(MetricNames.LLOYD_CLUSTER)) {
-            List<SparseVector> seeds = KMeansPlusPlus.seed(points, k, rng, metrics);
+            List<SparseVector> seeds = KMeansPlusPlus.seed(points, k, localTrials, rng, metrics);
             return run(points, seeds, maxIterations, metrics, null, null);
         }
     }
