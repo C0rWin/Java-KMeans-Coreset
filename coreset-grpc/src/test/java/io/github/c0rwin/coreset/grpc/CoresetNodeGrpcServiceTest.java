@@ -288,7 +288,8 @@ class CoresetNodeGrpcServiceTest {
         create("b", new SessionSpec("identity", Map.of(), 1L, 1, 2));
         create("a", new SessionSpec("identity", Map.of(), 1L, 1, 2));
         StatsResponse stats = stub.stats(StatsRequest.getDefaultInstance());
-        assertEquals(List.of("a", "b"), stats.getSessionIdsList());
+        // Without authentication configured every caller is anonymous: session ids are not handed out.
+        assertEquals(List.of(), stats.getSessionIdsList());
         assertTrue(stats.getMetricsJson().contains("\"node.sessions.created\":2"), stats.getMetricsJson());
         assertTrue(stats.getMetricsJson().contains("grpc.server.CreateSession.bytes_in"), stats.getMetricsJson());
 
