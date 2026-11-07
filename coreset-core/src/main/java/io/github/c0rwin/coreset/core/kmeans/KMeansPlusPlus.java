@@ -73,6 +73,7 @@ public final class KMeansPlusPlus {
             double[] score = new double[n];
             long evaluations = 0;
             while (centers.size() < k) {
+                Guards.checkInterrupted("k-means++ seeding");
                 double total = 0.0;
                 for (int i = 0; i < n; i++) {
                     double d = vectors[i].squaredDistance(last);

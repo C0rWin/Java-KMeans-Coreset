@@ -234,7 +234,9 @@ public abstract class Seeding {
             mass = new double[n];
         }
 
+        /** Adds {@code vectors[index]} as a center: one pass over the points, preceded by a cancellation check. */
         void add(int index) {
+            Guards.checkInterrupted("seeding");
             SparseVector c = vectors[index];
             int id = centers.size();
             centers.add(c);

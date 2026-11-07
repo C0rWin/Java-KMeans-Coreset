@@ -1,5 +1,7 @@
 package io.github.c0rwin.coreset.core;
 
+import java.util.concurrent.CancellationException;
+
 /** Checks shared by the algorithms, meant to be fused into a pass they already make over their input. */
 public final class Guards {
 
@@ -18,6 +20,18 @@ public final class Guards {
         if (!Double.isFinite(totalWeight) || !Double.isFinite(secondMoment)) {
             throw new IllegalArgumentException("input overflows double: total weight " + totalWeight
                     + ", sum of w * ||p||^2 " + secondMoment + "; rescale the weights or coordinates");
+        }
+    }
+
+    /**
+     * Cooperative cancellation point for long loops (seeding, Lloyd, sampling): throws if the current thread is
+     * interrupted. The interrupt flag stays set, so the caller's own handling still sees it.
+     *
+     * @throws CancellationException naming {@code operation} if the thread is interrupted
+     */
+    public static void checkInterrupted(String operation) {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new CancellationException("interrupted during " + operation);
         }
     }
 }

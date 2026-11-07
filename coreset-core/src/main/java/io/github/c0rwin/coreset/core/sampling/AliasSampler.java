@@ -1,5 +1,6 @@
 package io.github.c0rwin.coreset.core.sampling;
 
+import io.github.c0rwin.coreset.core.Guards;
 import java.util.random.RandomGenerator;
 
 /**
@@ -111,6 +112,7 @@ public final class AliasSampler {
      * index was drawn (the counts sum to {@code m}). O(n + m).
      *
      * @throws IllegalArgumentException if {@code m < 0} or {@code probabilities} is invalid (see {@link #of})
+     * @throws java.util.concurrent.CancellationException if the thread is interrupted (checked every 4096 draws)
      */
     public static int[] drawCounts(double[] probabilities, int m, RandomGenerator rng) {
         if (m < 0) {
@@ -119,6 +121,9 @@ public final class AliasSampler {
         AliasSampler sampler = of(probabilities);
         int[] counts = new int[probabilities.length];
         for (int j = 0; j < m; j++) {
+            if ((j & 4095) == 0) {
+                Guards.checkInterrupted("sampling");
+            }
             counts[sampler.next(rng)]++;
         }
         return counts;

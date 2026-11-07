@@ -144,6 +144,7 @@ public final class WeightedLloyd {
         int iterations = 0;
         long reseeds = 0;
         while (iterations < maxIterations) {
+            Guards.checkInterrupted("Lloyd iterations");
             centers.moveToMeans(vectors, weights, assignment, clusterWeight);
             reseeds += reseedEmpty(centers, vectors, weights, clusterWeight, dist);
             iterations++;

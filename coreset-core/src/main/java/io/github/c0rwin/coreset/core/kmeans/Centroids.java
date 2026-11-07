@@ -1,5 +1,6 @@
 package io.github.c0rwin.coreset.core.kmeans;
 
+import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.SparseVector;
 import java.util.Arrays;
 import java.util.List;
@@ -98,6 +99,9 @@ abstract class Centroids {
         @Override
         void findNearest(SparseVector[] vectors, int[] best, double[] dist) {
             for (int i = 0; i < vectors.length; i++) {
+                if ((i & 1023) == 0) {
+                    Guards.checkInterrupted("Lloyd assignment");
+                }
                 SparseVector x = vectors[i];
                 int b = 0;
                 double bestD = x.squaredDistance(centers[0], norms[0]);
@@ -184,11 +188,13 @@ abstract class Centroids {
          */
         @Override
         void findNearest(SparseVector[] vectors, int[] best, double[] dist) {
+            Guards.checkInterrupted("Lloyd assignment");
             for (int i = 0; i < vectors.length; i++) {
                 dist[i] = squaredDistance(0, vectors[i]);
                 best[i] = 0;
             }
             for (int j = 1; j < norms.length; j++) {
+                Guards.checkInterrupted("Lloyd assignment");
                 for (int i = 0; i < vectors.length; i++) {
                     double d = squaredDistance(j, vectors[i]);
                     if (d < dist[i]) {

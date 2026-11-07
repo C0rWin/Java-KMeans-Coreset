@@ -19,6 +19,10 @@ import java.util.TreeSet;
  *   <li>{@code mean}: either {@code m} (fixed number of means) or {@code k}, {@code eps}, {@code maxM} (adaptive
  *       search, {@link MeanCoreset#adaptive}); {@code lloydIterations} (default 20) — {@link MeanCoreset}.</li>
  * </ul>
+ *
+ * <p>Parameters also have upper bounds ({@link Limits}, {@link Limits#DEFAULT} unless given), since they arrive from
+ * remote callers and set how much work and memory a compression takes. The algorithms themselves stop with a
+ * {@link java.util.concurrent.CancellationException} when their thread is interrupted.
  */
 public final class Algorithms {
 
@@ -35,30 +39,63 @@ public final class Algorithms {
     /** Lloyd steps for {@code mean} when {@code lloydIterations} is absent; Lloyd stops earlier on convergence. */
     public static final int DEFAULT_MEAN_LLOYD_ITERATIONS = 20;
 
+    /** Default upper bound on {@code m} (draws or means) and {@code maxM}. */
+    public static final int DEFAULT_MAX_M = 1_000_000;
+    /** Default upper bound on {@code k}. */
+    public static final int DEFAULT_MAX_K = 100_000;
+    /** Default upper bound on {@code lloydIterations}. */
+    public static final int DEFAULT_MAX_LLOYD_ITERATIONS = 1_000;
+
+    /**
+     * Largest accepted parameter values.
+     *
+     * @param maxM               bound on {@code m} and {@code maxM}
+     * @param maxK               bound on {@code k}
+     * @param maxLloydIterations bound on {@code lloydIterations}
+     */
+    public record Limits(int maxM, int maxK, int maxLloydIterations) {
+
+        public static final Limits DEFAULT = new Limits(DEFAULT_MAX_M, DEFAULT_MAX_K, DEFAULT_MAX_LLOYD_ITERATIONS);
+
+        /** @throws IllegalArgumentException if {@code maxM < 1}, {@code maxK < 1} or {@code maxLloydIterations < 0} */
+        public Limits {
+            if (maxM < 1 || maxK < 1 || maxLloydIterations < 0) {
+                throw new IllegalArgumentException("limits must be maxM >= 1, maxK >= 1, maxLloydIterations >= 0: "
+                        + maxM + ", " + maxK + ", " + maxLloydIterations);
+            }
+        }
+    }
+
     private Algorithms() {
     }
 
-    /**
-     * @throws IllegalArgumentException for an unknown id, an unknown or missing parameter, an unparsable value or a
-     *     value the algorithm rejects
-     */
+    /** {@link #create(String, Map, Limits)} with {@link Limits#DEFAULT}. */
     public static CoresetAlgorithm create(String id, Map<String, String> params) {
+        return create(id, params, Limits.DEFAULT);
+    }
+
+    /**
+     * @throws IllegalArgumentException for an unknown id, an unknown or missing parameter, an unparsable value, a value
+     *     above {@code limits} or a value the algorithm rejects
+     */
+    public static CoresetAlgorithm create(String id, Map<String, String> params, Limits limits) {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(params, "params");
+        Objects.requireNonNull(limits, "limits");
         switch (id) {
             case UNIFORM:
                 allow(id, params, "m");
-                return new UniformCoreset(intParam(id, params, "m"));
+                return new UniformCoreset(bounded(id, "m", intParam(id, params, "m"), limits.maxM()));
             case SENSITIVITY: {
                 allow(id, params, "k", "m", "seeding", "lloydIterations", "bound", "alpha");
-                int k = intParam(id, params, "k");
-                int m = intParam(id, params, "m");
+                int k = bounded(id, "k", intParam(id, params, "k"), limits.maxK());
+                int m = bounded(id, "m", intParam(id, params, "m"), limits.maxM());
                 SensitivityBound bound = sensitivityBound(id, params, k);
                 String seeding = params.getOrDefault("seeding", SEEDING_KMEANS_PLUS_PLUS);
                 switch (seeding) {
                     case SEEDING_KMEANS_PLUS_PLUS:
-                        return new SensitivityCoreset(k, m,
-                                Seeding.kMeansPlusPlus(intParam(id, params, "lloydIterations", 0)), bound);
+                        return new SensitivityCoreset(k, m, Seeding.kMeansPlusPlus(bounded(id, "lloydIterations",
+                                intParam(id, params, "lloydIterations", 0), limits.maxLloydIterations())), bound);
                     case SEEDING_BICRITERIA:
                         if (params.containsKey("lloydIterations")) {
                             throw new IllegalArgumentException(
@@ -72,16 +109,19 @@ public final class Algorithms {
             }
             case MEAN: {
                 allow(id, params, "m", "k", "eps", "maxM", "lloydIterations");
-                int iterations = intParam(id, params, "lloydIterations", DEFAULT_MEAN_LLOYD_ITERATIONS);
+                int iterations = bounded(id, "lloydIterations",
+                        intParam(id, params, "lloydIterations", DEFAULT_MEAN_LLOYD_ITERATIONS),
+                        limits.maxLloydIterations());
                 boolean adaptive = params.containsKey("eps") || params.containsKey("k") || params.containsKey("maxM");
                 if (adaptive == params.containsKey("m")) {
                     throw new IllegalArgumentException(
                             id + ": give either m, or k, eps and maxM (adaptive), got " + new TreeSet<>(params.keySet()));
                 }
                 return adaptive
-                        ? MeanCoreset.adaptive(intParam(id, params, "k"), doubleParam(id, params, "eps"),
-                                intParam(id, params, "maxM"), iterations)
-                        : new MeanCoreset(intParam(id, params, "m"), iterations);
+                        ? MeanCoreset.adaptive(bounded(id, "k", intParam(id, params, "k"), limits.maxK()),
+                                doubleParam(id, params, "eps"),
+                                bounded(id, "maxM", intParam(id, params, "maxM"), limits.maxM()), iterations)
+                        : new MeanCoreset(bounded(id, "m", intParam(id, params, "m"), limits.maxM()), iterations);
             }
             default:
                 throw new IllegalArgumentException(
@@ -97,6 +137,13 @@ public final class Algorithms {
             throw new IllegalArgumentException(
                     id + ": unknown parameter(s) " + unknown + ", allowed " + new TreeSet<>(Set.of(names)));
         }
+    }
+
+    private static int bounded(String id, String name, int value, int max) {
+        if (value > max) {
+            throw new IllegalArgumentException(id + ": " + name + " must be <= " + max + ", got " + value);
+        }
+        return value;
     }
 
     private static SensitivityBound sensitivityBound(String id, Map<String, String> params, int k) {

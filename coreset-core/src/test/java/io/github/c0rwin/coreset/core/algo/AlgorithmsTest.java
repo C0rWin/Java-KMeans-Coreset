@@ -71,6 +71,17 @@ class AlgorithmsTest {
         Algorithms.create("sensitivity", Map.of("k", "100000", "m", "1000000", "lloydIterations", "1000"));
     }
 
+    @Test
+    void limitsAreConfigurable() {
+        Algorithms.Limits tight = new Algorithms.Limits(100, 5, 3);
+        assertMessage("m must be <= 100", () -> Algorithms.create("uniform", Map.of("m", "101"), tight));
+        assertMessage("k must be <= 5", () -> Algorithms.create("sensitivity", Map.of("k", "6", "m", "5"), tight));
+        assertMessage("lloydIterations must be <= 3", () -> Algorithms.create("mean", Map.of("m", "5"), tight));
+        Algorithms.Limits wide = new Algorithms.Limits(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
+        assertEquals("uniform(m=2000000)", Algorithms.create("uniform", Map.of("m", "2000000"), wide).toString());
+        assertThrows(IllegalArgumentException.class, () -> new Algorithms.Limits(0, 1, 1));
+    }
+
     private static void assertMessage(String expected, org.junit.jupiter.api.function.Executable call) {
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, call);
         assertTrue(e.getMessage().contains(expected), e.getMessage());
