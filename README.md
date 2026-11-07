@@ -397,8 +397,13 @@ How to run
    close or a failure is answered FAILED.
 
    **Reproducibility.** Every batch coreset is a function of the session seed,
-   the producer id and the batch seq only, so it is identical across workers,
-   retries and arrival order. The merged tree is reproducible only in the
+   the node's partition, the producer id and the batch seq only, so it is
+   identical across workers, retries and arrival order. The coordinator gives
+   node `i` partition `i`, so nodes never sample equal seqs with the same
+   random stream, and each run gets a random producer id unless
+   `--producer-id` (or `openIngest(session, producerId)`) fixes one; with a
+   fixed id and the same node list a run is repeatable. The merged tree is
+   reproducible only in the
    `single-writer` tree mode with a fixed per-worker arrival order (BUSY
    retries can reorder it). In `cas` mode, which worker performs a merge, and
    with which generator, depends on timing, so snapshots differ between runs.

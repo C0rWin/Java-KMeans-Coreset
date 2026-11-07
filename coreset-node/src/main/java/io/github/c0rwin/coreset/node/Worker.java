@@ -90,7 +90,7 @@ final class Worker implements Runnable {
         } else {
             try (Span ignored = metrics.span(NodeMetricNames.BATCH_COMPRESS)) {
                 compressed = session.algorithm.compress(input,
-                        Seeds.batch(session.spec.seed(), batch.producerSalt(), batch.seq()), metrics);
+                        Seeds.batch(session.partitionSeed, batch.producerSalt(), batch.seq()), metrics);
             }
             if (compressed == null) {
                 throw new IllegalStateException(session.algorithm.getClass().getName() + " returned null");

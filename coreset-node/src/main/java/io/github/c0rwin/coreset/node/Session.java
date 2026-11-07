@@ -26,6 +26,9 @@ final class Session {
 
     final String id;
     final SessionSpec spec;
+    final long partition;
+    /** Root of every generator of this session on this node; see {@link Seeds#partitionSeed}. */
+    final long partitionSeed;
     final CoresetAlgorithm algorithm;
     final MetricsSink metrics;
     final CasMergeReduceTree casTree;
@@ -44,15 +47,18 @@ final class Session {
     private volatile long lastActiveNanos = System.nanoTime();
     private long reaperProgress = -1; // reaper thread only
 
-    Session(String id, SessionSpec spec, CoresetAlgorithm algorithm, MetricsSink metrics, NodeLimits limits) {
+    Session(String id, SessionSpec spec, long partition, CoresetAlgorithm algorithm, MetricsSink metrics,
+            NodeLimits limits) {
         this.id = id;
         this.spec = spec;
+        this.partition = partition;
+        this.partitionSeed = Seeds.partitionSeed(spec.seed(), partition);
         this.algorithm = algorithm;
         this.metrics = metrics;
         this.limits = limits;
         this.defaultProducer = new Producer(Producer.DEFAULT_ID, limits.maxSeqWindow());
         this.casTree = spec.treeMode() == TreeMode.CAS ? new CasMergeReduceTree(algorithm, metrics) : null;
-        RandomGenerator[] rngs = Seeds.workers(spec.seed(), spec.workers());
+        RandomGenerator[] rngs = Seeds.workers(partitionSeed, spec.workers());
         this.workers = new Worker[spec.workers()];
         for (int i = 0; i < workers.length; i++) {
             workers[i] = new Worker(this, i, rngs[i]);

@@ -135,6 +135,29 @@ class CoresetCoordinatorTest {
         }
     }
 
+    private static Coreset gatherOneRun(String producer) throws Exception {
+        try (InProcessCluster cluster = new InProcessCluster(2, Map.of("sample8", TestAlgorithms.sample(8)), 16);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels, options(4))) {
+            coordinator.createSession("s", new SessionSpec("sample8", Map.of(), 5L, 2, 8));
+            try (IngestStream stream = producer == null ? coordinator.openIngest("s")
+                    : coordinator.openIngest("s", producer)) {
+                SplittableRandom rng = new SplittableRandom(13);
+                for (int i = 0; i < 12; i++) {
+                    stream.submit(TestData.batch(rng, 32, DIM));
+                }
+                stream.flush(WAIT);
+            }
+            return coordinator.gather("s", WAIT).coreset();
+        }
+    }
+
+    @Test
+    void aFixedProducerIdMakesTheGatheredCoresetReproducible() throws Exception {
+        Coreset first = gatherOneRun("run-1");
+        assertEquals(first, gatherOneRun("run-1"));
+        assertNotEquals(first, gatherOneRun(null)); // the default id is random
+    }
+
     @Test
     void duplicateAckForABatchSentOnceFailsTheStream() throws Exception {
         try (InProcessCluster cluster = new InProcessCluster(1, Map.of(), 16);

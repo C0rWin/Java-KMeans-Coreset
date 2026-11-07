@@ -43,6 +43,9 @@ message SessionSpec {
 message CreateSessionRequest {
   string session_id = 1;
   SessionSpec spec = 2;
+  // Distinct per node of one session (the coordinator sends the node's index), so nodes draw independent random
+  // streams from the shared seed. Fixed by the first create; 0 keeps the plain seed derivation.
+  uint32 partition = 3;
 }
 
 message CreateSessionResponse {
