@@ -68,9 +68,10 @@ class SensitivityCoresetTest {
         SensitivityCoreset algo = new SensitivityCoreset(4, 50, Seeding.kMeansPlusPlus(0));
         SampledCoreset s = algo.compressWithProvenance(p, new SplittableRandom(4), MetricsSink.NOOP);
         assertEquals(s.coreset(), algo.compress(p, new SplittableRandom(4)));
-        // D^2 centers are input points, so all 4 clusters are non-empty and S = 6 alpha + 4 * 4 (Lemma 2.2).
-        assertEquals(TheoryBounds.kMeansTotalSensitivity(4, SensitivityBound.kMeansPlusPlusAlpha(4)),
-                s.totalSensitivity(), 1e-9);
+        // D^2 centers are input points, so all 4 clusters are non-empty and S = 6 alpha + 4 * 4 (Lemma 2.2), with the
+        // default alpha = 2 chosen empirically (see SensitivityBound.DEFAULT_ALPHA).
+        assertEquals("standard(alpha=2.0)", algo.bound().toString());
+        assertEquals(TheoryBounds.kMeansTotalSensitivity(4, 2.0), s.totalSensitivity(), 1e-9);
         assertEquals(50, s.draws());
         Map<SparseVector, Double> inputWeight = new HashMap<>();
         for (WeightedPoint x : p.points()) {
@@ -103,7 +104,9 @@ class SensitivityCoresetTest {
         Coreset p = Coreset.of(pts);
         SparseVector outlier = SparseVector.dense(new double[] {1.0});
         double trueSensitivityLowerBound = 1.0 / Cost.cost(p, List.of(SparseVector.dense(new double[] {0.0})));
-        SensitivityCoreset algo = new SensitivityCoreset(1, 100, Seeding.kMeansPlusPlus(0));
+        // The guarantee needs a theory-valid alpha, so pin it rather than rely on the (empirical) default.
+        SensitivityCoreset algo = new SensitivityCoreset(1, 100, Seeding.kMeansPlusPlus(0),
+                SensitivityBound.standard(SensitivityBound.kMeansPlusPlusAlpha(1)));
         for (long seed = 0; seed < 100_000; seed++) {
             Clustering b = Seeding.kMeansPlusPlus(0).cluster(pts, 1, new SplittableRandom(seed), MetricsSink.NOOP);
             if (!b.centers().get(0).equals(outlier)) {
