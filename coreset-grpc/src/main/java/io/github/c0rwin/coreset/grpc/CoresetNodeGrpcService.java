@@ -97,8 +97,19 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
         call.disableAutoRequest();
         call.request(ingestWindow);
         return new StreamObserver<>() {
+            private boolean rejected; // inbound callbacks are serialised by gRPC
+
             @Override
             public void onNext(Batch batch) {
+                if (rejected) {
+                    return;
+                }
+                if (batch.getSeq() < 0) { // uint64 seq >= 2^63 wraps negative in Java; the node only takes longs >= 0
+                    rejected = true;
+                    call.onError(Status.INVALID_ARGUMENT.withDescription("seq " + Long.toUnsignedString(batch.getSeq())
+                            + " exceeds 2^63-1").asRuntimeException());
+                    return;
+                }
                 IngestResult r;
                 try {
                     List<WeightedPoint> points = ProtoCodec.pointsFromProto(batch.getPointsList());
@@ -125,7 +136,9 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
 
             @Override
             public void onCompleted() {
-                call.onCompleted();
+                if (!rejected) {
+                    call.onCompleted();
+                }
             }
         };
     }

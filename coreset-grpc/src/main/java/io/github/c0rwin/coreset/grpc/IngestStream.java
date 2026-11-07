@@ -276,6 +276,10 @@ public final class IngestStream implements AutoCloseable {
                 requests = null;
                 attempt = ++consecutiveFailures;
             }
+            if (Status.fromThrowable(t).getCode() == Status.Code.INVALID_ARGUMENT) {
+                fail("node " + index + " rejected the stream: " + Status.fromThrowable(t).getDescription(), t);
+                return; // resending the same bytes cannot succeed
+            }
             if (attempt > options.maxTransportFailures()) {
                 fail("node " + index + " unreachable after " + (attempt - 1) + " reconnects", t);
                 return;

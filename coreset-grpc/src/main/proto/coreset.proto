@@ -59,6 +59,7 @@ message CloseSessionResponse {
 }
 
 // One batch of an ingest stream. seq is unique per batch within (session, node); retries reuse it.
+// seq must be below 2^63: larger values fail the stream with INVALID_ARGUMENT.
 message Batch {
   string session_id = 1;
   uint64 seq = 2;

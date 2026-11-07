@@ -3,6 +3,7 @@ package io.github.c0rwin.coreset.grpc;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.SplittableRandom;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
@@ -71,6 +73,7 @@ class CoresetNodeGrpcServiceTest {
     /** Raw bidi stream whose acks land in a queue. */
     private static final class AckCollector implements StreamObserver<Ack> {
         final BlockingQueue<Ack> acks = new LinkedBlockingQueue<>();
+        final CountDownLatch done = new CountDownLatch(1);
         volatile Throwable error;
 
         @Override
@@ -81,10 +84,12 @@ class CoresetNodeGrpcServiceTest {
         @Override
         public void onError(Throwable t) {
             error = t;
+            done.countDown();
         }
 
         @Override
         public void onCompleted() {
+            done.countDown();
         }
 
         Ack next() throws InterruptedException {
@@ -162,6 +167,30 @@ class CoresetNodeGrpcServiceTest {
         assertEquals(2, snap.getAppliedBatches());
         assertTrue(snap.getComplete());
         assertEquals(TestData.weight(b0) + TestData.weight(b1), ProtoCodec.fromProto(snap.getCoreset()).totalWeight());
+    }
+
+    @Test
+    void seqAtOrAbove2To63IsRejectedBeforeReachingTheNode() throws Exception {
+        start(Map.of(), 4);
+        create("s", new SessionSpec("identity", Map.of(), 1L, 1, 2));
+        List<WeightedPoint> b = TestData.batch(new SplittableRandom(9), 2, DIM);
+        AckCollector acks = new AckCollector();
+        StreamObserver<Batch> requests = CoresetNodeServiceGrpc.newStub(cluster.channels.get(0)).ingest(acks);
+        requests.onNext(batch("s", Long.MAX_VALUE, b)); // 2^63 - 1 is the largest valid seq
+        assertEquals(AckStatus.ACK_STATUS_ACCEPTED, acks.next().getStatus());
+        requests.onNext(batch("s", Long.MIN_VALUE, b)); // uint64 2^63 on the wire
+        requests.onNext(batch("s", 0, b)); // never read: the stream is already failed
+        assertTrue(acks.done.await(30, TimeUnit.SECONDS));
+        Status status = Status.fromThrowable(acks.error);
+        assertEquals(Status.Code.INVALID_ARGUMENT, status.getCode());
+        assertEquals("seq 9223372036854775808 exceeds 2^63-1", status.getDescription());
+        assertTrue(acks.acks.isEmpty());
+
+        var counters = cluster.metrics.get(0).snapshot().counters();
+        assertEquals(1, counters.get(io.github.c0rwin.coreset.node.NodeMetricNames.INGEST_ACCEPTED));
+        assertNull(counters.get(io.github.c0rwin.coreset.node.NodeMetricNames.INGEST_FAILED)); // node never saw it
+        assertTrue(cluster.nodes.get(0).awaitApplied("s", Duration.ofSeconds(30)));
+        assertEquals(1, cluster.nodes.get(0).snapshot("s").appliedBatches());
     }
 
     @Test

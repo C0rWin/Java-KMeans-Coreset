@@ -23,9 +23,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p><b>Determinism.</b> Batch {@code seq} is compressed with a generator derived only from {@code (seed, seq)}, so a
  * replayed or retried batch yields the identical batch coreset regardless of worker or timing.
  *
- * <p><b>Tree modes.</b> {@link TreeMode#SINGLE_WRITER}: each worker owns its merge-reduce tree and publishes an
- * immutable summary after every insertion, so {@link #snapshot} is a wait-free union of W volatile reads and always
- * consistent; the price is W partial trees (W times the levels of a single tree in the union).
+ * <p><b>Tree modes.</b> {@link TreeMode#SINGLE_WRITER}: each worker owns its merge-reduce tree and after every
+ * insertion publishes the references of its occupied levels (O(log batches), no points copied), so {@link #snapshot}
+ * reads W volatile fields wait-free, unions lazily and is always consistent; the price is W partial trees (W times the levels of a single tree in the union).
  * {@link TreeMode#CAS}: all workers share one tree of CAS slots, giving a single tree of {@code log2(batches)} levels
  * and letting any idle worker perform carries; the price is that a carry holds summaries outside the slots, so a
  * snapshot is validated optimistically and may be returned flagged inconsistent under sustained load, and
@@ -182,7 +182,7 @@ public final class CoresetNode implements AutoCloseable {
         }
     }
 
-    private Session session(String sessionId) {
+    Session session(String sessionId) {
         Session s = sessions.get(sessionId);
         if (s == null) {
             throw new UnknownSessionException(sessionId);

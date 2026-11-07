@@ -121,16 +121,24 @@ final class Session {
     }
 
     NodeSnapshot snapshot() {
-        List<Summary> parts;
+        List<Coreset> parts = new ArrayList<>();
+        long appliedBatches = 0;
+        double appliedWeight = 0.0;
         boolean consistent = true;
         if (casTree == null) {
-            parts = new ArrayList<>(workers.length);
             for (Worker w : workers) {
-                parts.add(w.view());
+                Worker.View v = w.view();
+                parts.addAll(v.levels());
+                appliedBatches += v.batches();
+                appliedWeight += v.inputWeight();
             }
         } else {
             CasMergeReduceTree.Read read = casTree.read(CAS_READ_ATTEMPTS);
-            parts = read.summaries();
+            for (Summary s : read.summaries()) {
+                parts.add(s.coreset());
+                appliedBatches += s.batches();
+                appliedWeight += s.inputWeight();
+            }
             consistent = read.consistent();
             if (metrics != MetricsSink.NOOP) {
                 metrics.record(NodeMetricNames.SNAPSHOT_CAS_ATTEMPTS, read.attempts());
@@ -146,19 +154,16 @@ final class Session {
             accepted += w.accepted();
         }
         double acceptedW = acceptedWeight.sum();
+        // The union is built here, on demand, rather than on every insertion.
         int size = 0;
-        for (Summary s : parts) {
-            size += s.coreset().size();
+        for (Coreset c : parts) {
+            size += c.size();
         }
         List<WeightedPoint> points = new ArrayList<>(size);
         double offset = 0.0;
-        long appliedBatches = 0;
-        double appliedWeight = 0.0;
-        for (Summary s : parts) {
-            points.addAll(s.coreset().points());
-            offset += s.coreset().offset();
-            appliedBatches += s.batches();
-            appliedWeight += s.inputWeight();
+        for (Coreset c : parts) {
+            points.addAll(c.points());
+            offset += c.offset();
         }
         Coreset coreset = new Coreset(points, offset);
         if (metrics != MetricsSink.NOOP) {
@@ -174,6 +179,11 @@ final class Session {
      * Waits until every batch accepted before this call is reflected in the trees. Per-worker FIFO order makes
      * "worker i applied at least as many batches as had been enqueued to it" sufficient.
      */
+    /** Worker {@code i}'s last published view (tests). */
+    Worker.View workerView(int i) {
+        return workers[i].view();
+    }
+
     boolean awaitApplied(Duration timeout) throws InterruptedException {
         long[] targets = new long[workers.length];
         for (int i = 0; i < workers.length; i++) {

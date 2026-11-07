@@ -3,6 +3,7 @@ package io.github.c0rwin.coreset.core.stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.c0rwin.coreset.core.Coreset;
@@ -151,5 +152,31 @@ class MergeReduceTreeTest {
         tree.add(c);
         assertEquals(c, tree.snapshot());
         assertSame(c.points().get(0), tree.snapshot().points().get(0));
+    }
+
+    @Test
+    void levelsViewSharesLevelCoresetsAndIsImmutable() {
+        MergeReduceTree tree = new MergeReduceTree(IDENTITY, new SplittableRandom(10));
+        SplittableRandom rnd = new SplittableRandom(11);
+        Coreset first = batch(rnd, 3);
+        tree.add(first);
+        List<Coreset> one = tree.levelsView();
+        assertEquals(1, one.size());
+        assertSame(first, one.get(0)); // a reference, not a copy of the points
+
+        tree.add(batch(rnd, 3)); // carries into level 1
+        List<Coreset> two = tree.levelsView();
+        Coreset third = batch(rnd, 3);
+        tree.add(third);
+        List<Coreset> three = tree.levelsView();
+        assertEquals(2, three.size());
+        assertSame(third, three.get(0));
+        assertSame(two.get(0), three.get(1)); // the untouched level is the same instance, not re-copied
+        assertEquals(6, three.get(1).size());
+
+        assertEquals(List.of(first), one); // later adds do not change an earlier view
+        assertThrows(UnsupportedOperationException.class, () -> three.add(first));
+        assertThrows(UnsupportedOperationException.class, () -> three.remove(0));
+        assertEquals(List.of(), new MergeReduceTree(IDENTITY, new SplittableRandom(12)).levelsView());
     }
 }

@@ -7,6 +7,7 @@ import static io.github.c0rwin.coreset.node.IngestResult.Status.FAILED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -14,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
+import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSnapshot;
 import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import io.github.c0rwin.coreset.node.testing.TestAlgorithms;
@@ -200,6 +202,30 @@ class CoresetNodeTest {
         assertEquals(3, expected.size());
         assertEquals(expected, retried.outputFor(x));
         assertNotEquals(expected, shifted.outputFor(x)); // the seq, not just the seed, drives the draw
+    }
+
+    @Test
+    void publishingAfterEachInsertReusesLevelsInsteadOfCopyingPoints() throws Exception {
+        CoresetNode n = node(Map.of());
+        n.createSession("publish", spec("identity", 1, 2, TreeMode.SINGLE_WRITER));
+        Session session = n.session("publish");
+        SplittableRandom rng = new SplittableRandom(8);
+        Worker.View prev = session.workerView(0);
+        for (int seq = 0; seq < 64; seq++) {
+            assertEquals(ACCEPTED, n.ingest("publish", seq, TestData.batch(rng, 50, DIM)).status());
+            assertTrue(n.awaitApplied("publish", WAIT));
+            Worker.View view = session.workerView(0);
+            assertEquals(seq + 1, view.batches());
+            assertEquals(Long.bitCount(seq + 1), view.levels().size());
+            // Only the level where the carry landed is a new object; every other level is the previous instance.
+            Worker.View before = prev;
+            long fresh = view.levels().stream()
+                    .filter(c -> before.levels().stream().noneMatch(p -> p == c))
+                    .count();
+            assertEquals(1, fresh, "after batch " + seq);
+            prev = view;
+        }
+        assertEquals(64 * 50, n.snapshot("publish").coreset().size());
     }
 
     @ParameterizedTest
@@ -414,6 +440,7 @@ class CoresetNodeTest {
         assertEquals(4, m.distributions().get(NodeMetricNames.workerTreeDepth(0)).count());
         assertEquals(3.0, m.distributions().get(NodeMetricNames.workerTreeDepth(1)).max());
         assertEquals(1, m.distributions().get(NodeMetricNames.SNAPSHOT_POINTS).count());
+        assertNull(m.distributions().get(MetricNames.MRTREE_SNAPSHOT_POINTS)); // no per-insertion tree union
         assertTrue(m.distributions().get(NodeMetricNames.SNAPSHOT_BYTES).max() > 0);
     }
 }

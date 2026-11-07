@@ -229,6 +229,33 @@ class CoresetCoordinatorTest {
     }
 
     @Test
+    void invalidArgumentFailsTheStreamWithoutReconnecting() throws Exception {
+        AtomicInteger ingestCalls = new AtomicInteger();
+        ServerInterceptor rejectIngest = new ServerInterceptor() {
+            @Override
+            public <Q, R> ServerCall.Listener<Q> interceptCall(ServerCall<Q, R> call, Metadata headers,
+                                                               ServerCallHandler<Q, R> next) {
+                if (!call.getMethodDescriptor().getBareMethodName().equals("Ingest")) {
+                    return next.startCall(call, headers);
+                }
+                ingestCalls.incrementAndGet();
+                call.close(Status.INVALID_ARGUMENT.withDescription("bad seq"), new Metadata());
+                return new ServerCall.Listener<>() {
+                };
+            }
+        };
+        try (InProcessCluster cluster = new InProcessCluster(1, Map.of(), 16, rejectIngest);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels, options(4));
+             IngestStream stream = coordinator.openIngest("s")) {
+            stream.submit(TestData.batch(new SplittableRandom(6), 2, DIM));
+            IngestFailedException e = assertThrows(IngestFailedException.class, () -> stream.flush(WAIT));
+            assertTrue(e.getMessage().contains("rejected the stream: bad seq"), e.getMessage());
+            assertEquals(0, stream.reconnects());
+            assertEquals(1, ingestCalls.get());
+        }
+    }
+
+    @Test
     void unreachableNodeFailsAfterBoundedReconnects() throws Exception {
         try (InProcessCluster cluster = new InProcessCluster(1, Map.of(), 16)) {
             cluster.channels.get(0).shutdownNow();

@@ -13,7 +13,7 @@ import org.jctools.queues.MpscArrayQueue;
 /**
  * Single consumer of one bounded MPSC queue. In {@link TreeMode#SINGLE_WRITER} it exclusively owns a
  * {@link MergeReduceTree} and its generator, so the tree needs no synchronisation; after each insertion it publishes
- * an immutable {@link Summary} through a volatile field. In {@link TreeMode#CAS} it inserts into the session's shared
+ * an immutable {@link View} of the tree's level references through a volatile field (O(levels), no point copies). In {@link TreeMode#CAS} it inserts into the session's shared
  * {@link CasMergeReduceTree} instead.
  */
 final class Worker implements Runnable {
@@ -24,13 +24,18 @@ final class Worker implements Runnable {
     record PendingBatch(long seq, List<WeightedPoint> points, double weight) {
     }
 
+    /** Published tree state: occupied levels (shared immutable coresets) and the input they summarise. */
+    record View(List<Coreset> levels, long batches, double inputWeight) {
+        static final View EMPTY = new View(List.of(), 0, 0.0);
+    }
+
     final MpscArrayQueue<PendingBatch> queue;
     final Thread thread;
     private final Session session;
     private final RandomGenerator treeRng;
     private final MergeReduceTree tree;
     private final String depthMetric;
-    private volatile Summary view = Summary.EMPTY;
+    private volatile View view = View.EMPTY;
     private volatile long applied;
     private volatile boolean parked;
 
@@ -92,8 +97,8 @@ final class Worker implements Runnable {
         int height;
         if (tree != null) {
             tree.add(compressed);
-            Summary prev = view;
-            view = new Summary(tree.snapshot(), prev.batches() + 1, prev.inputWeight() + batch.weight());
+            View prev = view;
+            view = new View(tree.levelsView(), prev.batches() + 1, prev.inputWeight() + batch.weight());
             height = 64 - Long.numberOfLeadingZeros(tree.batchesAdded());
         } else {
             session.casTree.add(new Summary(compressed, 1, batch.weight()), treeRng);
@@ -117,8 +122,8 @@ final class Worker implements Runnable {
         LockSupport.unpark(thread);
     }
 
-    /** Last published per-worker summary ({@link TreeMode#SINGLE_WRITER} only). */
-    Summary view() {
+    /** Last published tree view ({@link TreeMode#SINGLE_WRITER} only). */
+    View view() {
         return view;
     }
 
