@@ -6,14 +6,15 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.SplittableRandom;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.ArrayList;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class RecordingMetricsTest {
@@ -34,6 +35,7 @@ class RecordingMetricsTest {
                         m.count("c", 1);
                         m.count("c2", 2);
                         m.record("d", 1.0);
+                        m.record("v", i % 1000);
                     }
                     return null;
                 }));
@@ -54,10 +56,31 @@ class RecordingMetricsTest {
         assertEquals(1.0, d.min());
         assertEquals(1.0, d.max());
         assertEquals(1.0, d.p99());
+        Distribution v = s.distributions().get("v");
+        assertEquals((long) threads * perThread, v.count());
+        assertEquals(threads * (perThread / 1000) * (999.0 * 1000 / 2), v.sum());
+        assertEquals(0.0, v.min());
+        assertEquals(999.0, v.max());
+        assertRelative(499, v.p50()); // each of 0..999 appears n/1000 times; rank n/2 is the last 499
+    }
+
+    private static void assertRelative(double expected, double actual) {
+        assertTrue(Math.abs(actual - expected) <= RecordingMetrics.QUANTILE_RELATIVE_ERROR * Math.abs(expected),
+                () -> "expected " + expected + " within relative error, got " + actual);
     }
 
     @Test
-    void quantilesAreExactWithinReservoir() {
+    void everyBucketMidpointIsWithinRelativeErrorOfItsMembers() {
+        SplittableRandom rnd = new SplittableRandom(1);
+        for (int i = 0; i < 100_000; i++) {
+            double x = Math.scalb(1.0 + rnd.nextDouble(), rnd.nextInt(RecordingMetrics.MIN_EXPONENT,
+                    RecordingMetrics.MAX_EXPONENT + 1));
+            assertRelative(x, RecordingMetrics.midpointOf(RecordingMetrics.bucketOf(x)));
+        }
+    }
+
+    @Test
+    void quantilesAreWithinDocumentedRelativeError() {
         RecordingMetrics m = new RecordingMetrics();
         for (int i = 100; i >= 1; i--) {
             m.record("x", i);
@@ -68,9 +91,10 @@ class RecordingMetricsTest {
         assertEquals(1.0, d.min());
         assertEquals(100.0, d.max());
         assertEquals(50.5, d.mean());
-        assertEquals(50.5, d.p50(), 1e-12);
-        assertEquals(95.05, d.p95(), 1e-12);
-        assertEquals(99.01, d.p99(), 1e-12);
+        // Nearest rank over 1..100: p-quantile is the value 100p.
+        assertRelative(50, d.p50());
+        assertRelative(95, d.p95());
+        assertRelative(99, d.p99());
     }
 
     @Test
@@ -82,9 +106,41 @@ class RecordingMetricsTest {
     }
 
     @Test
+    void wideRangeOfMagnitudesAndSigns() {
+        RecordingMetrics m = new RecordingMetrics();
+        for (int i = 0; i < 60; i++) {
+            m.record("w", -3.7e4);
+        }
+        for (int i = 0; i < 20; i++) {
+            m.record("w", 0.0);
+        }
+        for (int i = 0; i < 14; i++) {
+            m.record("w", 1e-300); // below the tracked range: counted as 0
+        }
+        for (int i = 0; i < 5; i++) {
+            m.record("w", 1.234e15);
+        }
+        m.timeNanos("w", Long.MAX_VALUE);
+        Distribution d = m.snapshot().distributions().get("w");
+        assertEquals(100, d.count());
+        assertEquals(-3.7e4, d.min());
+        assertEquals((double) Long.MAX_VALUE, d.max());
+        assertRelative(-3.7e4, d.p50());
+        assertRelative(1.234e15, d.p95()); // ranks 61..94 are zeros, 95..99 are 1.234e15
+        assertRelative(1.234e15, d.p99());
+
+        for (double x = 1e-9; x < 1e18; x *= 3.3) {
+            RecordingMetrics single = new RecordingMetrics();
+            single.record("a", x);
+            single.record("a", x * 1.0001);
+            assertRelative(x, single.snapshot().distributions().get("a").p50());
+        }
+    }
+
+    @Test
     void largeDistributionKeepsExactAggregatesAndBoundedQuantiles() {
         RecordingMetrics m = new RecordingMetrics();
-        int n = 10 * RecordingMetrics.RESERVOIR_SIZE;
+        int n = 40_960;
         for (int i = 0; i < n; i++) {
             m.record("u", i);
         }
@@ -93,8 +149,8 @@ class RecordingMetricsTest {
         assertEquals((double) n * (n - 1) / 2, d.sum());
         assertEquals(0.0, d.min());
         assertEquals(n - 1.0, d.max());
-        // Uniform reservoir of 4096: median estimate lies well within 5% of the range.
-        assertEquals(n / 2.0, d.p50(), 0.05 * n);
+        assertRelative(n / 2 - 1, d.p50());
+        assertRelative(Math.ceil(0.99 * n) - 1, d.p99());
     }
 
     @Test

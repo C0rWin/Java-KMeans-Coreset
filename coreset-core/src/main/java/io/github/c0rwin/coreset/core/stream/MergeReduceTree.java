@@ -18,7 +18,9 @@ import java.util.random.RandomGenerator;
  * {@code b} batches the occupied levels are exactly the set bits of {@code b}, and each batch has been compressed at
  * most {@code floor(log2 b)} times.
  *
- * <p>Not thread-safe: callers must serialise access. Inputs are immutable {@link Coreset}s and are never modified.
+ * <p>Not thread-safe and holds no locks: use it from a single writer thread (or serialise all
+ * calls externally); the {@link RandomGenerator} is used unsynchronised. Inputs are immutable {@link Coreset}s and
+ * are never modified.
  */
 public final class MergeReduceTree {
 
