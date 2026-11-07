@@ -1,0 +1,72 @@
+---
+# The committed benchmark (docs/benchmarks): dense data up to 1e6 points,
+# high-dimensional sparse data at 1e5, k in {10, 50}, m in {200, 1000, 4000},
+# four algorithms, offline and stream, 5 seeds. The exclusions keep the suite
+# near 30 minutes on a 12-core laptop; docs/benchmarks/README.md explains them.
+name: standard
+problem: kmeans
+seed: 42
+replicates: 5
+datasets:
+  - id: gauss-unbalanced-1m
+    type: gaussian-mixture
+    params:
+      n: 1000000
+      d: 10
+      clusters: 20
+      sigma: 3
+      imbalance: 1.5
+      seed: 1
+  - id: gauss-balanced-200k
+    type: gaussian-mixture
+    params:
+      n: 200000
+      d: 20
+      clusters: 50
+      sigma: 5
+      imbalance: 0
+      seed: 2
+  - id: esa22-k10-a5
+    type: esa22
+    params: {k: 10, alpha: 5}
+  - id: sparse-bow-100k
+    type: sparse-bow
+    params:
+      n: 100000
+      d: 20000
+      topics: 20
+      docLength: 50
+      imbalance: 1.0
+      seed: 3
+ks: [10, 50]
+sizes: [200, 1000, 4000]
+algorithms:
+  - id: uniform
+  - id: sensitivity
+    label: sensitivity-kmeans++
+    params: {seeding: kmeans++}
+  - id: sensitivity
+    label: sensitivity-bicriteria
+    params: {seeding: bicriteria}
+  - id: mean
+    label: mean
+    params: {lloydIterations: 3}
+modes:
+  - type: offline
+  - type: stream
+    blockCount: 64
+evaluation:
+  candidatesPerGenerator: 5
+  lloydOnCoreset: 3
+  lloydIterations: 30
+  downstreamRestarts: 10
+  fullRestarts: 3
+  distortionThreshold: 1.2
+exclude:
+  # The mean coreset runs Lloyd with m centers over the input: O(n m) per
+  # iteration.
+  - {algorithm: mean, size: 4000}
+  - {algorithm: mean, size: 1000, minN: 150000}
+  - {algorithm: mean, size: 1000, dataset: sparse-bow-100k}
+  # Bicriteria seeding costs 10-20 s per build at n = 1e6, k = 50.
+  - {algorithm: sensitivity-bicriteria, k: 50, dataset: gauss-unbalanced-1m}

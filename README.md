@@ -42,6 +42,9 @@ The project consists of the following modules:
    idempotent (seq-deduplicated) ingest, backpressure and snapshots.
 6. **coreset-grpc** - gRPC service, coordinator client library, Prometheus
    metrics and the `coreset-node` / `coreset-coordinator` command-line tools.
+7. **coreset-testbed** - evaluation testbed: datasets, offline/stream/distributed
+   runs, per-run validity reports (distortion, integrity, cost, memory) and
+   aggregated tables; see [docs/benchmarks/README.md](docs/benchmarks/README.md).
 
 
 APIs
@@ -343,6 +346,10 @@ How to run
    java -jar coreset-coordinator.jar --nodes host1:7070,host2:7070 \
      --input points.csv --algorithm <id> --param key=value --k 32 --batch-size 1000
    ```
+
+   The coordinator keeps the cheapest of `--restarts` (default 10) k-means++ and
+   Lloyd runs on the gathered coreset, since a single run often ends in a poor
+   local optimum.
 
    Each node serves the standard `grpc.health.v1.Health` service and Prometheus
    metrics at `http://<node>:9464/metrics`.
