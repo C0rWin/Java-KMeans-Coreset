@@ -131,7 +131,7 @@ public final class WeightedLloyd {
         }
         Guards.requireSummable(totalWeight, moment);
         Centroids centers = Centroids.create(layout != null ? layout : Centroids.layoutFor(m, dim, totalNnz),
-                initial, dim, vectors, weights);
+                initial, dim, vectors, weights, totalNnz);
         double[] clusterWeight = new double[m];
         int[] assignment = new int[n];
         Arrays.fill(assignment, -1);

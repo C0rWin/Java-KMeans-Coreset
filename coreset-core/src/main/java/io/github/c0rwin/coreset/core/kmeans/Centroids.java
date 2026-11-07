@@ -39,10 +39,10 @@ abstract class Centroids {
     }
 
     static Centroids create(Layout layout, List<SparseVector> initial, int dim, SparseVector[] vectors,
-                            double[] weights) {
+                            double[] weights, long totalNnz) {
         Centroids c = layout == Layout.DENSE
                 ? new Dense(initial.size(), dim, vectors.length)
-                : new Sparse(initial.size(), dim, new ClusterSums(vectors, weights));
+                : new Sparse(initial.size(), dim, new ClusterSums(vectors, weights), vectors, totalNnz);
         for (int j = 0; j < initial.size(); j++) {
             c.set(j, initial.get(j));
         }
@@ -175,38 +175,59 @@ abstract class Centroids {
     /**
      * Per center: sorted stored coordinates and values, and an open-addressing table (load at most 1/2) from
      * coordinate to value for O(1) lookups during assignment. A table slot keeps key and value next to each other, so a
-     * lookup usually touches one cache line. About 44-76 bytes per stored center coordinate.
+     * lookup usually touches one cache line. About 44-76 bytes per stored center coordinate, plus one flat copy of the
+     * points' entries (12 bytes each) that the center-major assignment streams.
      */
     static final class Sparse extends Centroids {
         private final ClusterSums sums;
         private final int[][] indices;
         private final double[][] values;
         private final double[][] tables; // slot s: [2s] = coordinate + 1 (0 = empty), [2s + 1] = value
+        // Points in compressed-row form: entries of point i are [start[i], start[i + 1]).
+        private final int[] start;
+        private final int[] pointIndices;
+        private final double[] pointValues;
 
-        Sparse(int m, int dim, ClusterSums sums) {
-            super(m, dim, sums.size());
+        Sparse(int m, int dim, ClusterSums sums, SparseVector[] vectors, long totalNnz) {
+            super(m, dim, vectors.length);
+            if (totalNnz > Integer.MAX_VALUE - 8) {
+                throw new IllegalArgumentException("more than 2^31 stored entries: " + totalNnz);
+            }
             this.sums = sums;
             indices = new int[m][];
             values = new double[m][];
             tables = new double[m][];
+            start = new int[vectors.length + 1];
+            pointIndices = new int[(int) totalNnz];
+            pointValues = new double[(int) totalNnz];
+            int e = 0;
+            for (int i = 0; i < vectors.length; i++) {
+                SparseVector x = vectors[i];
+                for (int k = 0, nnz = x.nnz(); k < nnz; k++, e++) {
+                    pointIndices[e] = x.indexAt(k);
+                    pointValues[e] = x.valueAt(k);
+                }
+                start[i + 1] = e;
+            }
         }
 
         /**
-         * Center-major: each center's table stays cached while the points stream past it, instead of every lookup
-         * missing into a different table. Visiting centers in index order with a strict comparison keeps the lowest
-         * index on ties, as the point-major order does.
+         * Center-major over the flat point arrays: each center's table stays cached while the points stream past it
+         * sequentially. Visiting centers in index order with a strict comparison keeps the lowest index on ties, as
+         * the point-major order does.
          */
         @Override
         void findNearest(SparseVector[] vectors, int[] best, double[] dist) {
+            final int n = start.length - 1;
             Guards.checkInterrupted("Lloyd assignment");
-            for (int i = 0; i < vectors.length; i++) {
-                dist[i] = squaredDistance(0, vectors[i]);
+            for (int i = 0; i < n; i++) {
+                dist[i] = squaredDistance(0, start[i], start[i + 1]);
                 best[i] = 0;
             }
             for (int j = 1; j < norms.length; j++) {
                 Guards.checkInterrupted("Lloyd assignment");
-                for (int i = 0; i < vectors.length; i++) {
-                    double d = squaredDistance(j, vectors[i]);
+                for (int i = 0; i < n; i++) {
+                    double d = squaredDistance(j, start[i], start[i + 1]);
                     if (d < dist[i]) {
                         dist[i] = d;
                         best[i] = j;
@@ -215,14 +236,14 @@ abstract class Centroids {
             }
         }
 
-        /** Same arithmetic as {@link SparseVector#squaredDistance(double[], double)}, with table lookups. */
-        private double squaredDistance(int j, SparseVector x) {
+        /** Same arithmetic as {@link SparseVector#squaredDistance(double[], double)} for the point in [from, to). */
+        private double squaredDistance(int j, int from, int to) {
             final double[] table = tables[j];
             final int mask = (table.length >> 1) - 1;
             double onSupport = 0.0;
             double centerOnSupport = 0.0;
-            for (int k = 0, nnz = x.nnz(); k < nnz; k++) {
-                int index = x.indexAt(k);
+            for (int e = from; e < to; e++) {
+                int index = pointIndices[e];
                 double key = index + 1.0;
                 double c = 0.0;
                 for (int s = slot(index, mask); ; s = (s + 1) & mask) {
@@ -235,7 +256,7 @@ abstract class Centroids {
                         break;
                     }
                 }
-                double d = x.valueAt(k) - c;
+                double d = pointValues[e] - c;
                 onSupport += d * d;
                 centerOnSupport += c * c;
             }
@@ -244,22 +265,21 @@ abstract class Centroids {
             if (offSupport > SparseVector.CANCELLATION_GUARD * norm) {
                 return onSupport + offSupport;
             }
-            return onSupport + offSupportSquaredNorm(j, x);
+            return onSupport + offSupportSquaredNorm(j, from, to);
         }
 
-        /** Exact {@code sum of c_i^2} over the center's coordinates outside x's support, in index order. */
-        private double offSupportSquaredNorm(int j, SparseVector x) {
+        /** Exact {@code sum of c_i^2} over the center's coordinates outside the point's support, in index order. */
+        private double offSupportSquaredNorm(int j, int from, int to) {
             final int[] idx = indices[j];
             final double[] val = values[j];
-            final int nnz = x.nnz();
             double s = 0.0;
-            int k = 0;
+            int e = from;
             for (int t = 0; t < idx.length; t++) {
                 int i = idx[t];
-                while (k < nnz && x.indexAt(k) < i) {
-                    k++;
+                while (e < to && pointIndices[e] < i) {
+                    e++;
                 }
-                if (k == nnz || x.indexAt(k) != i) {
+                if (e == to || pointIndices[e] != i) {
                     s += val[t] * val[t];
                 }
             }
