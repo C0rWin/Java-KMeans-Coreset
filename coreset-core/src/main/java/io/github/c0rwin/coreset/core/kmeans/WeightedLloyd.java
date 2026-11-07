@@ -25,10 +25,13 @@ import java.util.random.RandomGenerator;
  * the origin, so assignments and the reported cost do not depend on where the data sits.
  *
  * <p>Centers are dense m x dim arrays while {@code m * dim <= max(2^20, 2 * total stored entries)}, and otherwise
- * sparse (sorted coordinates plus a hash index), so memory and update time follow the input's stored entries rather
- * than m * dim. Both layouts give bit-identical results. The points are streamed from their {@link PointSet} segments;
- * per iteration one assignment pass and one update pass (two with sparse centers); allocation O(n + stored center
- * entries). The {@code List} overloads first copy the points into one block.
+ * sparse (sorted non-zero coordinates, scattered into one O(dim) scratch per center while it is in use), so memory and
+ * update time follow the input's stored entries rather than m * dim. Both layouts give bit-identical results.
+ * Assignment keeps Hamerly's per-point upper and lower bounds and skips every point whose bounds prove its center
+ * unchanged, with a rounding margin that keeps the results bit-identical to full scans; once the centers settle most
+ * points cost no distance at all. The points are streamed from their {@link PointSet} segments; allocation
+ * O(n + stored center entries) per run and none per iteration once the center buffers have grown, except for sparse
+ * centers too high-dimensional for the scratch. The {@code List} overloads first copy the points into one block.
  */
 public final class WeightedLloyd {
 
@@ -151,12 +154,18 @@ public final class WeightedLloyd {
         }
     }
 
-    /**
-     * {@code layout == null} lets {@link Centroids#layoutFor} choose (tests force one to compare the two);
-     * {@code dist}, if not null, receives the final squared distances and serves as the working array.
-     */
     static KMeansResult run(PointSet points, List<SparseVector> initial, int maxIterations, MetricsSink metrics,
                             Centroids.Layout layout, double[] dist) {
+        return run(points, initial, maxIterations, metrics, layout, dist, true);
+    }
+
+    /**
+     * {@code layout == null} lets {@link Centroids#layoutFor} choose (tests force one to compare the two);
+     * {@code dist}, if not null, receives the final squared distances and serves as the working array;
+     * {@code bounds == false} scans every point in full each step (tests compare it with the bounded run).
+     */
+    static KMeansResult run(PointSet points, List<SparseVector> initial, int maxIterations, MetricsSink metrics,
+                            Centroids.Layout layout, double[] dist, boolean bounds) {
         final int n = points.size();
         final int m = initial.size();
         if (m == 0) {
@@ -188,7 +197,7 @@ public final class WeightedLloyd {
         Guards.requireSummable(totalWeight, moment);
         final long totalNnz = points.storedEntries();
         Centroids centers = Centroids.create(layout != null ? layout : Centroids.layoutFor(m, dim, totalNnz),
-                initial, dim, points);
+                initial, dim, points, bounds);
         double[] clusterWeight = new double[m];
         int[] assignment = new int[n];
         Arrays.fill(assignment, -1);
@@ -197,24 +206,31 @@ public final class WeightedLloyd {
         }
 
         centers.assign(points, assignment, dist);
-        metrics.record(MetricNames.LLOYD_ITERATION_COST, centers.cost);
+        double cost = Centroids.cost(points, dist);
+        metrics.record(MetricNames.LLOYD_ITERATION_COST, cost);
         int iterations = 0;
         long reseeds = 0;
         while (iterations < maxIterations) {
             Guards.checkInterrupted("Lloyd iterations");
+            if (centers.hasEmptyCluster()) {
+                centers.refresh(points, assignment, dist); // re-seeding picks by the exact distances
+            }
             centers.moveToMeans(points, assignment, clusterWeight);
             reseeds += reseedEmpty(centers, points, clusterWeight, dist);
             iterations++;
-            boolean changed = centers.assign(points, assignment, dist);
-            metrics.record(MetricNames.LLOYD_ITERATION_COST, centers.cost);
-            if (!changed) {
+            if (!centers.assign(points, assignment, dist)) {
                 break;
             }
         }
-        metrics.count(MetricNames.LLOYD_DISTANCE_EVALUATIONS, (long) n * m * (iterations + 1));
+        if (iterations > 0) {
+            centers.refresh(points, assignment, dist);
+            cost = Centroids.cost(points, dist);
+            metrics.record(MetricNames.LLOYD_ITERATION_COST, cost);
+        }
+        metrics.count(MetricNames.LLOYD_DISTANCE_EVALUATIONS, centers.evaluations);
+        metrics.count(MetricNames.LLOYD_BOUND_SKIPS, centers.skipped);
         metrics.count(MetricNames.LLOYD_EMPTY_CLUSTER_RESEEDS, reseeds);
-        metrics.count(MetricNames.LLOYD_POINTS_SCANNED, (long) n * (1 + (iterations + 1L) * centers.assignPasses()
-                + (long) iterations * centers.updatePasses()));
+        metrics.count(MetricNames.LLOYD_POINTS_SCANNED, n + centers.pointsScanned); // n: the validation pass above
         if (centers instanceof Centroids.Sparse) {
             metrics.count(MetricNames.LLOYD_SPARSE_CENTERS, 1);
         }
@@ -224,7 +240,7 @@ public final class WeightedLloyd {
         for (int j = 0; j < m; j++) {
             out.add(centers.center(j));
         }
-        return new KMeansResult(out, assignment, centers.cost, iterations);
+        return new KMeansResult(out, assignment, cost, iterations);
     }
 
     /**
@@ -242,7 +258,7 @@ public final class WeightedLloyd {
                 continue;
             }
             centers.set(j, points.vector(far));
-            dist[far] = 0.0; // a second empty cluster must pick a different point
+            dist[far] = Double.NaN; // a second empty cluster must pick a different point; stale until re-assigned
             reseeds++;
         }
         return reseeds;

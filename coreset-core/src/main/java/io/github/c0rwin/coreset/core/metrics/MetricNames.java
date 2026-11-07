@@ -29,13 +29,15 @@ public final class MetricNames {
     public static final String LLOYD_CLUSTER = "lloyd.cluster";
     /** Distribution: Lloyd update steps per call. */
     public static final String LLOYD_ITERATIONS = "lloyd.iterations";
-    /** Counter: squared-distance evaluations performed by Lloyd assignment steps (excludes seeding). */
+    /** Counter: point-center squared distances Lloyd assignment steps computed (excludes seeding). */
     public static final String LLOYD_DISTANCE_EVALUATIONS = "lloyd.distance_evaluations";
+    /** Counter: point-steps whose full scan of the centers Lloyd's bounds proved unnecessary. */
+    public static final String LLOYD_BOUND_SKIPS = "lloyd.bound_skips";
     /** Counter: Lloyd calls that kept sparse centers because m * dim was large next to the stored entries. */
     public static final String LLOYD_SPARSE_CENTERS = "lloyd.sparse_centers";
     /** Counter: points read by Lloyd passes (input read, assignment and update steps; excludes seeding). */
     public static final String LLOYD_POINTS_SCANNED = "lloyd.points_scanned";
-    /** Distribution: weighted cost after each assignment step, in squared input units. */
+    /** Distribution: weighted cost after the first and after the last assignment step, in squared input units. */
     public static final String LLOYD_ITERATION_COST = "lloyd.iteration_cost";
     /** Counter: centers re-seeded because their cluster had no positive weight. */
     public static final String LLOYD_EMPTY_CLUSTER_RESEEDS = "lloyd.empty_cluster_reseeds";

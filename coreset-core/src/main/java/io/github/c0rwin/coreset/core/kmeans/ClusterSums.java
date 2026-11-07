@@ -34,6 +34,21 @@ final class ClusterSums {
         return points.size();
     }
 
+    /** After {@link #group}: the positive-weight points' global rows, cluster by cluster, ascending within each. */
+    int[] members() {
+        return members;
+    }
+
+    /** After {@link #group}: cluster {@code j}'s members are {@code members()[start(j), start(j + 1))}. */
+    int start(int j) {
+        return start[j];
+    }
+
+    /** After {@link #group}: stored entries of cluster {@code j}'s members. */
+    long entries(int j) {
+        return entries[j];
+    }
+
     /**
      * Buckets the positive-weight points by {@code assignment} into {@code clusters} groups and sums their weights in
      * point order; returns the per-cluster weights (owned by this object, overwritten by the next call).

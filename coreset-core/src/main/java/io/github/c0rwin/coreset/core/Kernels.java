@@ -113,6 +113,58 @@ final class Kernels {
         return hits == cTo - cFrom ? onSupport : onSupport + offSupportSparse(ai, from, to, ci, cv, cFrom, cTo);
     }
 
+    /**
+     * {@link #scattered} with the center's values found by a forward galloping search of its sorted coordinates instead
+     * of a scratch: the same operations in the same order, so the same result, in O(nnz log(nnz(c) / nnz)) without an
+     * O(dim) buffer. Center values must be non-zero.
+     */
+    static double lookup(int[] ai, double[] av, int from, int to, int[] ci, double[] cv, int cFrom, int cTo,
+                         double cNorm) {
+        double onSupport = 0.0;
+        double centerOnSupport = 0.0;
+        int hits = 0;
+        int t = cFrom;
+        for (int k = from; k < to; k++) {
+            int i = ai[k];
+            t = seek(ci, t, cTo, i);
+            double x = t < cTo && ci[t] == i ? cv[t] : 0.0;
+            double d = av[k] - x;
+            onSupport += d * d;
+            centerOnSupport += x * x;
+            hits += x != 0.0 ? 1 : 0;
+        }
+        double offSupport = cNorm - centerOnSupport;
+        if (offSupport > SparseVector.CANCELLATION_GUARD * cNorm) {
+            return onSupport + offSupport;
+        }
+        return hits == cTo - cFrom ? onSupport : onSupport + offSupportSparse(ai, from, to, ci, cv, cFrom, cTo);
+    }
+
+    /** First position in the sorted {@code a[from, to)} holding a value {@code >= key}, or {@code to}. */
+    static int seek(int[] a, int from, int to, int key) {
+        if (from >= to || a[from] >= key) {
+            return from;
+        }
+        int lo = from; // a[lo] < key throughout
+        int step = 1;
+        int hi = from + 1;
+        while (hi < to && a[hi] < key) {
+            lo = hi;
+            step <<= 1;
+            hi = step >= to - lo ? to : lo + step;
+        }
+        int l = lo + 1;
+        while (l < hi) {
+            int mid = (l + hi) >>> 1;
+            if (a[mid] < key) {
+                l = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return l;
+    }
+
     /** {@code sum of c_i^2} over the center's stored coordinates outside the support {@code ai[from, to)}. */
     static double offSupportSparse(int[] ai, int from, int to, int[] ci, double[] cv, int cFrom, int cTo) {
         double s = 0.0;

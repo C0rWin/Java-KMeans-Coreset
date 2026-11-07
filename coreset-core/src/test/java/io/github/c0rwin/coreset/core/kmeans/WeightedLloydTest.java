@@ -16,8 +16,10 @@ import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.MetricsSnapshot;
 import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.SplittableRandom;
+import java.util.TreeMap;
 import org.junit.jupiter.api.Test;
 
 class WeightedLloydTest {
@@ -171,15 +173,141 @@ class WeightedLloydTest {
         int n = pts.size();
         List<SparseVector> seeds = List.of(v(1, 1), v(49, 49), v(25, 25));
         RecordingMetrics dense = new RecordingMetrics();
-        KMeansResult d = WeightedLloyd.run(block(pts), seeds, 10, dense, Centroids.Layout.DENSE, null);
+        KMeansResult d = WeightedLloyd.run(block(pts), seeds, 10, dense, Centroids.Layout.DENSE, null, false);
         long it = d.iterations();
         assertEquals(n * (1 + (it + 1) + it), dense.snapshot().counters().get(MetricNames.LLOYD_POINTS_SCANNED));
         assertEquals(null, dense.snapshot().counters().get(MetricNames.LLOYD_SPARSE_CENTERS));
 
         RecordingMetrics sparse = new RecordingMetrics();
-        WeightedLloyd.run(block(pts), seeds, 10, sparse, Centroids.Layout.SPARSE, null);
+        WeightedLloyd.run(block(pts), seeds, 10, sparse, Centroids.Layout.SPARSE, null, false);
         assertEquals(n * (1 + (it + 1) * 3 + it * 3), sparse.snapshot().counters().get(MetricNames.LLOYD_POINTS_SCANNED));
         assertEquals(1L, sparse.snapshot().counters().get(MetricNames.LLOYD_SPARSE_CENTERS));
+    }
+
+    /** Full scans evaluate n m distances per assignment step; the bounds skip most of them once centers settle. */
+    @Test
+    void boundsSkipMostDistanceEvaluations() {
+        double[][] means = new double[10][];
+        SplittableRandom rnd = new SplittableRandom(36);
+        for (int j = 0; j < means.length; j++) {
+            means[j] = new double[] {100 * rnd.nextDouble(), 100 * rnd.nextDouble(), 100 * rnd.nextDouble()};
+        }
+        List<WeightedPoint> pts = blobs(means, 300, 2.0, 37);
+        long n = pts.size();
+        List<SparseVector> seeds = KMeansPlusPlus.seed(block(pts), 10, 1, new SplittableRandom(38), MetricsSink.NOOP);
+        for (Centroids.Layout layout : Centroids.Layout.values()) {
+            RecordingMetrics full = new RecordingMetrics();
+            RecordingMetrics bounded = new RecordingMetrics();
+            KMeansResult f = WeightedLloyd.run(block(pts), seeds, 50, full, layout, null, false);
+            KMeansResult b = WeightedLloyd.run(block(pts), seeds, 50, bounded, layout, null, true);
+            assertEquals(f, b, layout.toString());
+            long fullEvals = full.snapshot().counters().get(MetricNames.LLOYD_DISTANCE_EVALUATIONS);
+            long boundedEvals = bounded.snapshot().counters().get(MetricNames.LLOYD_DISTANCE_EVALUATIONS);
+            assertEquals(n * 10 * (f.iterations() + 1), fullEvals);
+            assertEquals(0L, full.snapshot().counters().get(MetricNames.LLOYD_BOUND_SKIPS));
+            assertTrue(f.iterations() >= 3, "fixture should take a few iterations: " + f.iterations());
+            assertTrue(4 * boundedEvals < fullEvals, layout + ": " + boundedEvals + " vs " + fullEvals);
+            assertTrue(bounded.snapshot().counters().get(MetricNames.LLOYD_POINTS_SCANNED)
+                    < full.snapshot().counters().get(MetricNames.LLOYD_POINTS_SCANNED));
+        }
+    }
+
+    /**
+     * The bounds only skip scans that could not change an assignment: bounded and full-scan runs agree bit for bit
+     * (centers, assignments, cost, iterations, final distances) on dense, far-translated, sparse, re-seeding,
+     * multi-segment and scratch-free high-dimensional input, in both layouts.
+     */
+    @Test
+    void boundedAssignmentEqualsFullScans() {
+        List<PointSet> inputs = new ArrayList<>();
+        inputs.add(block(blobs(new double[][] {{0, 0, 0}, {20, 0, 0}, {0, 20, 0}, {0, 0, 20}}, 50, 3.0, 41)));
+        inputs.add(block(blobs(new double[][] {{0, 0}, {4, 0}, {0, 4}, {4, 4}, {2, 2}}, 80, 1.5, 42))); // overlapping
+        inputs.add(block(twoClusters(1e9, 400)));
+        SplittableRandom rnd = new SplittableRandom(43);
+        List<WeightedPoint> sparse = new ArrayList<>();
+        for (int i = 0; i < 600; i++) {
+            int[] idx = {i % 7, 7 + rnd.nextInt(40), 7 + rnd.nextInt(40)};
+            double[] val = {1.0 + rnd.nextDouble(), rnd.nextGaussian(), rnd.nextGaussian()};
+            sparse.add(new WeightedPoint(SparseVector.of(50, idx, val), i % 11 == 0 ? 0.0 : 0.5 + rnd.nextDouble()));
+        }
+        PointBlock sb = PointBlock.of(sparse);
+        inputs.add(PointSet.concat(List.of(PointSet.of(sb.slice(0, 250)), PointSet.of(sb.slice(250, 600)))));
+        for (int t = 0; t < inputs.size(); t++) {
+            PointSet pts = inputs.get(t);
+            for (int k : new int[] {1, 2, 5, 25}) {
+                List<SparseVector> seeds = KMeansPlusPlus.seed(pts, k, 1, new SplittableRandom(44 + k),
+                        MetricsSink.NOOP);
+                for (Centroids.Layout layout : Centroids.Layout.values()) {
+                    assertBoundedEqualsFull(pts, seeds, layout, "input " + t + ", k=" + k + ", " + layout);
+                }
+            }
+        }
+        // Far-away initial centers own nothing and are re-seeded mid-run.
+        PointSet pts = block(List.of(wp(1, 0, 0), wp(1, 1, 0), wp(1, 10, 0), wp(1, 11, 0), wp(1, 30, 1)));
+        List<SparseVector> seeds = List.of(v(5, 0), v(1e6, 1e6), v(-1e6, 1e6));
+        for (Centroids.Layout layout : Centroids.Layout.values()) {
+            assertBoundedEqualsFull(pts, seeds, layout, "reseed " + layout);
+        }
+        // dim far above the stored entries: sparse centers without a scratch (sorted lookups, sorted means).
+        int dim = 1 << 22;
+        List<WeightedPoint> wide = new ArrayList<>();
+        for (int i = 0; i < 300; i++) {
+            int base = (i % 3) * 1000;
+            int[] idx = {base + rnd.nextInt(50), base + 100 + rnd.nextInt(50), dim - 1 - rnd.nextInt(3)};
+            Arrays.sort(idx);
+            double[] val = {1.0 + rnd.nextDouble(), 1.0 + rnd.nextDouble(), rnd.nextGaussian()};
+            wide.add(new WeightedPoint(SparseVector.of(dim, idx, val), 1.0));
+        }
+        assertEquals(Centroids.Layout.SPARSE, Centroids.layoutFor(3, dim, 900));
+        assertFalse(SparseVector.scatterPays(dim, 300, 900));
+        assertBoundedEqualsFull(block(wide), KMeansPlusPlus.seed(block(wide), 3, 1, new SplittableRandom(45),
+                MetricsSink.NOOP), Centroids.Layout.SPARSE, "wide");
+    }
+
+    private static void assertBoundedEqualsFull(PointSet pts, List<SparseVector> seeds, Centroids.Layout layout,
+                                                String what) {
+        double[] fullDist = new double[pts.size()];
+        double[] boundedDist = new double[pts.size()];
+        KMeansResult full = WeightedLloyd.run(pts, seeds, 40, MetricsSink.NOOP, layout, fullDist, false);
+        KMeansResult bounded = WeightedLloyd.run(pts, seeds, 40, MetricsSink.NOOP, layout, boundedDist, true);
+        assertEquals(full, bounded, what);
+        assertEquals(Double.doubleToLongBits(full.cost()), Double.doubleToLongBits(bounded.cost()), what);
+        assertArrayEquals(fullDist, boundedDist, what);
+    }
+
+    /** The scratch-free sorted lookup is bit-identical to the scattered kernel. */
+    @Test
+    void sortedLookupEqualsScatteredKernel() {
+        SplittableRandom rnd = new SplittableRandom(46);
+        List<WeightedPoint> rows = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            int nnz = rnd.nextInt(8);
+            TreeMap<Integer, Double> e = new TreeMap<>();
+            for (int k = 0; k < nnz; k++) {
+                e.put(rnd.nextInt(64), (i % 5 == 0 ? 1e8 : 1.0) * rnd.nextGaussian());
+            }
+            int[] idx = e.keySet().stream().mapToInt(Integer::intValue).toArray();
+            double[] val = e.values().stream().mapToDouble(Double::doubleValue).toArray();
+            rows.add(new WeightedPoint(SparseVector.of(64, idx, val), 1.0));
+        }
+        PointBlock b = PointBlock.of(rows);
+        double[] scratch = new double[64];
+        for (int j = 0; j < b.size(); j += 7) {
+            SparseVector c = b.vector(j);
+            int[] ci = new int[c.nnz()];
+            double[] cv = new double[c.nnz()];
+            for (int t = 0; t < ci.length; t++) {
+                ci[t] = c.indexAt(t);
+                cv[t] = c.valueAt(t);
+            }
+            b.scatterRow(j, scratch);
+            for (int i = 0; i < b.size(); i++) {
+                double expected = b.squaredDistanceScattered(i, scratch, ci, cv, 0, ci.length, c.squaredNorm());
+                double actual = b.squaredDistanceSorted(i, ci, cv, 0, ci.length, c.squaredNorm());
+                assertEquals(Double.doubleToLongBits(expected), Double.doubleToLongBits(actual), i + " to " + j);
+            }
+            b.clearRow(j, scratch);
+        }
     }
 
     /** meansOf against a dense reference: means, part weights, and phi from exact distances. */
@@ -299,8 +427,12 @@ class WeightedLloydTest {
         assertEquals((long) n + (long) n * (k - 1) * (trials + 1),
                 s.counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS)
                         + s.counters().get(MetricNames.KMEANSPP_PRUNED_DISTANCES));
-        assertEquals((long) n * k * (r.iterations() + 1), s.counters().get(MetricNames.LLOYD_DISTANCE_EVALUATIONS));
-        assertEquals(r.iterations() + 1, s.distributions().get(MetricNames.LLOYD_ITERATION_COST).count());
+        long fullScans = (long) n * k * (r.iterations() + 1);
+        long lloyd = s.counters().get(MetricNames.LLOYD_DISTANCE_EVALUATIONS);
+        assertTrue(lloyd > 0 && lloyd < fullScans, lloyd + " vs " + fullScans);
+        assertTrue(s.counters().get(MetricNames.LLOYD_BOUND_SKIPS) > 0);
+        assertTrue(r.iterations() > 0);
+        assertEquals(2, s.distributions().get(MetricNames.LLOYD_ITERATION_COST).count()); // first and last
         assertEquals(r.iterations(), s.distributions().get(MetricNames.LLOYD_ITERATIONS).max());
         assertEquals(r.cost(), s.distributions().get(MetricNames.LLOYD_ITERATION_COST).min(), 1e-9);
         assertEquals(1, s.distributions().get(MetricNames.LLOYD_CLUSTER + MetricNames.WALL_NS_SUFFIX).count());

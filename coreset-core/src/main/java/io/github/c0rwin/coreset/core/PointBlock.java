@@ -321,6 +321,14 @@ public final class PointBlock implements Serializable {
                 cTo, cNorm);
     }
 
+    /**
+     * {@link #squaredDistanceScattered(int, double[], int[], double[], int, int, double)} without a scratch: the
+     * center's non-zero values are looked up in its sorted coordinates, bit-identically, in O(nnz(row) log nnz(c)).
+     */
+    public double squaredDistanceSorted(int i, int[] cIdx, double[] cVal, int cFrom, int cTo, double cNorm) {
+        return Kernels.lookup(indices, values, offsets[base + i], offsets[base + i + 1], cIdx, cVal, cFrom, cTo, cNorm);
+    }
+
     /** {@link #squaredDistanceScattered(int, double[], int[], double[], int, int, double)} to a scattered vector. */
     public double squaredDistanceScattered(int i, double[] scratch, SparseVector c) {
         checkDim(c.dim);
