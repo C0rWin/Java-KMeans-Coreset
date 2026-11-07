@@ -2,6 +2,7 @@ package io.github.c0rwin.coreset.core.kmeans;
 
 import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import java.util.Arrays;
 import java.util.List;
@@ -10,8 +11,8 @@ import java.util.List;
  * The centers of one Lloyd run. {@link Dense} keeps m x dim arrays; {@link Sparse} keeps every center as its sorted
  * stored coordinates plus an open-addressing index, so memory and update time follow the clusters' stored entries
  * instead of m * dim. Both perform the same floating-point operations in the same order and return bit-identical
- * results; {@link #layoutFor} picks one. Points are read from their {@link PointBlock}. Not thread-safe: one instance
- * per run.
+ * results; {@link #layoutFor} picks one. Points are streamed from their {@link PointSet} segments. Not thread-safe:
+ * one instance per run.
  */
 abstract class Centroids {
 
@@ -40,7 +41,7 @@ abstract class Centroids {
         return (long) m * dim <= Math.max(DENSE_CELLS, 2 * totalNnz) ? Layout.DENSE : Layout.SPARSE;
     }
 
-    static Centroids create(Layout layout, List<SparseVector> initial, int dim, PointBlock points) {
+    static Centroids create(Layout layout, List<SparseVector> initial, int dim, PointSet points) {
         Centroids c = layout == Layout.DENSE
                 ? new Dense(initial.size(), dim, points.size())
                 : new Sparse(initial.size(), dim, new ClusterSums(points), points.size());
@@ -54,18 +55,21 @@ abstract class Centroids {
      * Assigns every point to its nearest center (ties: lowest index), stores the squared distances in {@code dist} and
      * the weighted cost in {@link #cost}; returns whether any assignment changed.
      */
-    final boolean assign(PointBlock points, int[] assignment, double[] dist) {
+    final boolean assign(PointSet points, int[] assignment, double[] dist) {
         findNearest(points, nearest, dist);
         boolean changed = false;
         double total = 0.0;
-        for (int i = 0, n = points.size(); i < n; i++) {
-            if (assignment[i] != nearest[i]) {
-                assignment[i] = nearest[i];
-                changed = true;
-            }
-            double w = points.weight(i);
-            if (w > 0.0) { // a zero weight times an overflowed distance would be NaN
-                total += w * dist[i];
+        for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+            PointBlock b = points.segment(t);
+            for (int i = 0, n = b.size(); i < n; i++, g++) {
+                if (assignment[g] != nearest[g]) {
+                    assignment[g] = nearest[g];
+                    changed = true;
+                }
+                double w = b.weight(i);
+                if (w > 0.0) { // a zero weight times an overflowed distance would be NaN
+                    total += w * dist[g];
+                }
             }
         }
         cost = total;
@@ -73,13 +77,13 @@ abstract class Centroids {
     }
 
     /** For every point, the index of its nearest center (ties: lowest index) and the squared distance to it. */
-    abstract void findNearest(PointBlock points, int[] best, double[] dist);
+    abstract void findNearest(PointSet points, int[] best, double[] dist);
 
     /**
      * Moves every center whose cluster has positive weight to the cluster's weighted mean and leaves the others in
      * place; fills {@code clusterWeight}, summed in point order. Passes over the points: {@link #updatePasses()}.
      */
-    abstract void moveToMeans(PointBlock points, int[] assignment, double[] clusterWeight);
+    abstract void moveToMeans(PointSet points, int[] assignment, double[] clusterWeight);
 
     /** Places center {@code j} at {@code v}. */
     abstract void set(int j, SparseVector v);
@@ -109,37 +113,43 @@ abstract class Centroids {
 
         /** Point-major: a point is read once while all centers, small by {@link #layoutFor}, stay cached. */
         @Override
-        void findNearest(PointBlock points, int[] best, double[] dist) {
-            for (int i = 0, n = points.size(); i < n; i++) {
-                if ((i & 1023) == 0) {
-                    Guards.checkInterrupted("Lloyd assignment");
-                }
-                int b = 0;
-                double bestD = points.squaredDistance(i, centers[0], norms[0]);
-                for (int j = 1; j < centers.length; j++) {
-                    double d = points.squaredDistance(i, centers[j], norms[j]);
-                    if (d < bestD) {
-                        bestD = d;
-                        b = j;
+        void findNearest(PointSet points, int[] best, double[] dist) {
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock p = points.segment(t);
+                for (int i = 0, n = p.size(); i < n; i++, g++) {
+                    if ((g & 1023) == 0) {
+                        Guards.checkInterrupted("Lloyd assignment");
                     }
+                    int b = 0;
+                    double bestD = p.squaredDistance(i, centers[0], norms[0]);
+                    for (int j = 1; j < centers.length; j++) {
+                        double d = p.squaredDistance(i, centers[j], norms[j]);
+                        if (d < bestD) {
+                            bestD = d;
+                            b = j;
+                        }
+                    }
+                    best[g] = b;
+                    dist[g] = bestD;
                 }
-                best[i] = b;
-                dist[i] = bestD;
             }
         }
 
         @Override
-        void moveToMeans(PointBlock points, int[] assignment, double[] clusterWeight) {
+        void moveToMeans(PointSet points, int[] assignment, double[] clusterWeight) {
             for (double[] row : spare) {
                 Arrays.fill(row, 0.0);
             }
             Arrays.fill(clusterWeight, 0.0);
-            for (int i = 0, n = points.size(); i < n; i++) {
-                double w = points.weight(i);
-                if (w > 0.0) {
-                    int j = assignment[i];
-                    points.addTo(i, spare[j], w);
-                    clusterWeight[j] += w;
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock p = points.segment(t);
+                for (int i = 0, n = p.size(); i < n; i++, g++) {
+                    double w = p.weight(i);
+                    if (w > 0.0) {
+                        int j = assignment[g];
+                        p.addTo(i, spare[j], w);
+                        clusterWeight[j] += w;
+                    }
                 }
             }
             for (int j = 0; j < centers.length; j++) {
@@ -199,20 +209,17 @@ abstract class Centroids {
          * the point-major order does.
          */
         @Override
-        void findNearest(PointBlock points, int[] best, double[] dist) {
-            final int n = points.size();
-            Guards.checkInterrupted("Lloyd assignment");
-            for (int i = 0; i < n; i++) {
-                dist[i] = squaredDistance(points, 0, i);
-                best[i] = 0;
-            }
-            for (int j = 1; j < norms.length; j++) {
+        void findNearest(PointSet points, int[] best, double[] dist) {
+            for (int j = 0; j < norms.length; j++) {
                 Guards.checkInterrupted("Lloyd assignment");
-                for (int i = 0; i < n; i++) {
-                    double d = squaredDistance(points, j, i);
-                    if (d < dist[i]) {
-                        dist[i] = d;
-                        best[i] = j;
+                for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                    PointBlock p = points.segment(t);
+                    for (int i = 0, n = p.size(); i < n; i++, g++) {
+                        double d = squaredDistance(p, j, i);
+                        if (j == 0 || d < dist[g]) {
+                            dist[g] = d;
+                            best[g] = j;
+                        }
                     }
                 }
             }
@@ -271,7 +278,7 @@ abstract class Centroids {
         }
 
         @Override
-        void moveToMeans(PointBlock points, int[] assignment, double[] clusterWeight) {
+        void moveToMeans(PointSet points, int[] assignment, double[] clusterWeight) {
             double[] w = sums.group(assignment, norms.length);
             System.arraycopy(w, 0, clusterWeight, 0, w.length);
             for (int j = 0; j < norms.length; j++) {

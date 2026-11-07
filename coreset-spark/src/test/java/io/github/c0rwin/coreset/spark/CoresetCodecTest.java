@@ -115,7 +115,7 @@ class CoresetCodecTest {
     }
 
     @Test
-    void decodesFromOffsetsAndIntoListsWithExactSizing() {
+    void decodesFromOffsetsWithExactSizing() {
         Coreset a = sparseCoreset(30, 1 << 20, 40, 5);
         Coreset b = sparseCoreset(10, 1 << 20, 3, 6);
         byte[] ea = CoresetCodec.encode(a);
@@ -126,8 +126,12 @@ class CoresetCodecTest {
         assertThrows(IllegalArgumentException.class, () -> CoresetCodec.decode(framed, 3, ea.length - 1));
         assertThrows(IndexOutOfBoundsException.class, () -> CoresetCodec.decode(framed, 8, ea.length));
 
-        List<WeightedPoint> union = new ArrayList<>();
-        double offset = CoresetCodec.decodeInto(ea, union) + CoresetCodec.decodeInto(CoresetCodec.encode(b), union);
-        assertEquals(Coreset.union(a, b), new Coreset(union, offset));
+        // Encoding a union reads every segment; decoding gives one block with the same rows.
+        Coreset u = Coreset.union(a, b);
+        byte[] eu = CoresetCodec.encode(u);
+        assertEquals(eu.length, CoresetCodec.encodedLength(u));
+        Coreset back = CoresetCodec.decode(eu);
+        assertEquals(u, back);
+        assertEquals(1, back.pointSet().segmentCount());
     }
 }

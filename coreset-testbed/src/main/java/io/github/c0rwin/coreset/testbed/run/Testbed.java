@@ -188,7 +188,7 @@ public final class Testbed implements AutoCloseable {
         List<Candidate> runCands = new ArrayList<>(
                 CandidateSolutions.lloydOnCoreset(c, k, ev.lloydIterations(), ev.lloydOnCoreset(), rng));
         long s0 = System.nanoTime();
-        KMeansResult solved = WeightedLloyd.bestOf(c.points(), k, ev.lloydIterations(), ev.downstreamRestarts(), rng,
+        KMeansResult solved = WeightedLloyd.bestOf(c.pointSet(), k, ev.lloydIterations(), ev.downstreamRestarts(), rng,
                 MetricsSink.NOOP);
         double solveMs = (System.nanoTime() - s0) / 1e6;
         runCands.add(new Candidate("bestOf@C", solved.centers()));

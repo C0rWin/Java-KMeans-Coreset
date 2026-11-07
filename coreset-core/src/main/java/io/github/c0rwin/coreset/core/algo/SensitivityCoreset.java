@@ -3,6 +3,7 @@ package io.github.c0rwin.coreset.core.algo;
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.Span;
@@ -61,7 +62,7 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
     /** Same coreset as {@link #compress} for the same generator state, plus the sampling provenance. */
     public SampledCoreset compressWithProvenance(Coreset input, RandomGenerator rng, MetricsSink metrics) {
         try (Span ignored = metrics.span(MetricNames.SENSITIVITY_COMPRESS)) {
-            PointBlock points = input.block();
+            PointSet points = input.pointSet();
             final int n = points.size();
             if (n <= m) {
                 metrics.count(MetricNames.SENSITIVITY_PASSTHROUGH, 1);
@@ -90,15 +91,18 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
             double[] outWeights = new double[distinct];
             int[] outCounts = new int[distinct];
             double[] outProb = new double[distinct];
-            for (int i = 0, j = 0; i < n; i++) {
-                int c = counts[i];
-                if (c > 0) {
-                    double q = s[i] / total;
-                    rows[j] = i;
-                    outWeights[j] = points.weight(i) * c / (m * q);
-                    outCounts[j] = c;
-                    outProb[j] = q;
-                    j++;
+            for (int t = 0, g = 0, j = 0; t < points.segmentCount(); t++) {
+                PointBlock p = points.segment(t);
+                for (int i = 0, size = p.size(); i < size; i++, g++) {
+                    int c = counts[g];
+                    if (c > 0) {
+                        double q = s[g] / total;
+                        rows[j] = g;
+                        outWeights[j] = p.weight(i) * c / (m * q);
+                        outCounts[j] = c;
+                        outProb[j] = q;
+                        j++;
+                    }
                 }
             }
             metrics.record(MetricNames.SENSITIVITY_OUTPUT_POINTS, distinct);

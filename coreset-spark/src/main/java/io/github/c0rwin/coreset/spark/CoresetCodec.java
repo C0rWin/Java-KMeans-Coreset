@@ -2,14 +2,14 @@ package io.github.c0rwin.coreset.spark;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
-import java.util.List;
+import java.util.Arrays;
 import java.util.Objects;
-import java.util.function.Consumer;
 
 /**
  * Compact, bit-exact binary form of coresets, used for partial coresets shipped between Spark stages, for Kryo and
@@ -26,9 +26,9 @@ import java.util.function.Consumer;
  * </pre>
  *
  * <p>Encoding sizes the output exactly (one read of the index arrays), then writes it in one pass into a single
- * allocation. Decoding validates lengths against the remaining input before allocating and hands the freshly decoded
- * arrays to {@link SparseVector#ofOwned} (no further copy), so malformed input fails with
- * {@link IllegalArgumentException}.
+ * allocation, reading the rows straight from the coreset's segments. Decoding validates lengths against the remaining
+ * input before allocating and decodes a coreset in one pass straight into a {@link PointBlock}
+ * ({@link PointBlock#wrap}, no further copy), so malformed input fails with {@link IllegalArgumentException}.
  */
 public final class CoresetCodec {
 
@@ -39,30 +39,36 @@ public final class CoresetCodec {
 
     /** Exact size of {@link #encode(Coreset)}'s output, from one read of the index arrays. */
     static long encodedLength(Coreset coreset) {
-        PointBlock points = coreset.block();
+        PointSet points = coreset.pointSet();
         int n = points.size();
         long size = 8L + varintLength(n);
         if (n > 0) {
             size += varintLength(points.dim());
-            for (int i = 0; i < n; i++) {
-                size += 8 + bodyLength(points.vector(i));
+            for (int t = 0; t < points.segmentCount(); t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++) {
+                    size += 8 + rowLength(b, i);
+                }
             }
         }
         return size;
     }
 
-    /** Encodes from the block's rows (one vector view per point, no entry copy). */
+    /** Encodes straight from the segments' arrays: no per-point objects. */
     public static byte[] encode(Coreset coreset) {
-        PointBlock points = coreset.block();
+        PointSet points = coreset.pointSet();
         int n = points.size();
         Writer w = new Writer(encodedLength(coreset));
         w.f64(coreset.offset());
         w.varint(n);
         if (n > 0) {
             w.varint(points.dim());
-            for (int i = 0; i < n; i++) {
-                w.f64(points.weight(i));
-                w.body(points.vector(i));
+            for (int t = 0; t < points.segmentCount(); t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++) {
+                    w.f64(b.weight(i));
+                    w.row(b, i);
+                }
             }
         }
         return w.done();
@@ -82,18 +88,6 @@ public final class CoresetCodec {
         PointBlock points = r.block(n);
         r.end();
         return new Coreset(points, off);
-    }
-
-    /**
-     * Appends the points of one encoded coreset to {@code out} (no intermediate {@link Coreset}) and returns its
-     * offset; the caller checks dimensions when it builds its own coreset.
-     */
-    static double decodeInto(byte[] bytes, List<WeightedPoint> out) {
-        Reader r = new Reader(bytes, 0, bytes.length);
-        double offset = r.f64();
-        r.points(out::add, r.length(9));
-        r.end();
-        return offset;
     }
 
     public static byte[] encode(SparseVector v) {
@@ -144,6 +138,20 @@ public final class CoresetCodec {
         return size;
     }
 
+    /** {@link #bodyLength} of row {@code i}. */
+    private static long rowLength(PointBlock b, int i) {
+        int from = b.rowStart(i);
+        int to = b.rowEnd(i);
+        long size = varintLength(to - from) + 8L * (to - from);
+        int prev = 0;
+        for (int e = from; e < to; e++) {
+            int idx = b.index(e);
+            size += varintLength(idx - prev);
+            prev = idx;
+        }
+        return size;
+    }
+
     private static final class Writer {
         private final byte[] buf;
         private int pos;
@@ -179,6 +187,22 @@ public final class CoresetCodec {
             }
             for (int k = 0; k < nnz; k++) {
                 LONGS.set(buf, pos, Double.doubleToRawLongBits(v.valueAt(k)));
+                pos += 8;
+            }
+        }
+
+        void row(PointBlock b, int i) {
+            int from = b.rowStart(i);
+            int to = b.rowEnd(i);
+            varint(to - from);
+            int prev = 0;
+            for (int e = from; e < to; e++) {
+                int idx = b.index(e);
+                varint(idx - prev);
+                prev = idx;
+            }
+            for (int e = from; e < to; e++) {
+                LONGS.set(buf, pos, Double.doubleToRawLongBits(b.value(e)));
                 pos += 8;
             }
         }
@@ -239,37 +263,29 @@ public final class CoresetCodec {
         }
 
         /**
-         * The dim header (when {@code n > 0}) and {@code n} points as one block: a skimming pass counts the entries
-         * (bounds-checked, nothing allocated), so the five arrays are allocated once at their exact sizes and filled
-         * by the second pass; {@link PointBlock#wrap} then validates the rows.
+         * The dim header (when {@code n > 0}) and {@code n} points as one block, in one pass: every point takes at
+         * least 9 bytes (weight, nnz) and every entry 9 more (index delta, value), so the remaining input bounds the
+         * entries and the entry arrays are allocated once at that bound. They are trimmed (one copy) only when the
+         * bound overshoots by more than a quarter, which takes index deltas of 3+ bytes on average.
+         * {@link PointBlock#wrap} then validates the rows.
          */
         PointBlock block(int n) {
             if (n == 0) {
                 return PointBlock.EMPTY;
             }
             int dim = varint();
-            int start = pos;
-            long entries = 0;
-            for (int i = 0; i < n; i++) {
-                need(8);
-                pos += 8;
-                int nnz = length(9);
-                for (int k = 0; k < nnz; k++) {
-                    varint();
-                }
-                need(8L * nnz);
-                pos += 8 * nnz;
-                entries += nnz;
-            }
-            pos = start;
+            int cap = (int) Math.max(0L, ((long) (end - pos) - 9L * n) / 9);
             int[] offsets = new int[n + 1];
-            int[] idx = new int[(int) entries]; // entries fit: each takes at least 9 of the buffer's bytes
-            double[] val = new double[idx.length];
+            int[] idx = new int[cap];
+            double[] val = new double[cap];
             double[] weights = new double[n];
             int e = 0;
             for (int i = 0; i < n; i++) {
                 weights[i] = f64();
-                int nnz = varint();
+                int nnz = length(9);
+                if (nnz > cap - e) {
+                    throw new IllegalArgumentException("truncated coreset encoding at byte " + pos);
+                }
                 int prev = 0;
                 for (int k = 0; k < nnz; k++, e++) {
                     int index = prev + varint();
@@ -279,25 +295,18 @@ public final class CoresetCodec {
                     idx[e] = index;
                     prev = index;
                 }
+                need(8L * nnz);
                 for (int k = e - nnz; k < e; k++) {
                     val[k] = Double.longBitsToDouble((long) LONGS.get(buf, pos));
                     pos += 8;
                 }
                 offsets[i + 1] = e;
             }
+            if (cap - e > e / 4) {
+                idx = Arrays.copyOf(idx, e);
+                val = Arrays.copyOf(val, e);
+            }
             return PointBlock.wrap(dim, offsets, idx, val, weights);
-        }
-
-        /** The dim header (when {@code n > 0}) and {@code n} points, passed to {@code out} in order. */
-        void points(Consumer<WeightedPoint> out, int n) {
-            if (n == 0) {
-                return;
-            }
-            int dim = varint();
-            for (int i = 0; i < n; i++) {
-                double weight = f64();
-                out.accept(new WeightedPoint(body(dim), weight));
-            }
         }
 
         SparseVector body(int dim) {

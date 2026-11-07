@@ -115,7 +115,7 @@ final class Session {
         }
         double weight = points.totalWeight();
         if (!points.isEmpty()) {
-            int d = points.block().dim();
+            int d = points.pointSet().dim();
             if (d > limits.maxDim()) {
                 return IngestResult.failed("dim " + d + " exceeds the node limit of " + limits.maxDim());
             }

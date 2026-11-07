@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.core.algo;
 
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.util.List;
 
@@ -67,7 +68,7 @@ public abstract class SensitivityBound {
         return Legacy.INSTANCE;
     }
 
-    /** {@link #sensitivities(PointBlock, Clustering)} reading the weights from a list. */
+    /** {@link #sensitivities(PointSet, Clustering)} reading the weights from a list. */
     public final double[] sensitivities(List<WeightedPoint> points, Clustering b) {
         double[] weights = new double[points.size()];
         for (int i = 0; i < weights.length; i++) {
@@ -80,10 +81,13 @@ public abstract class SensitivityBound {
      * Per-point bounds for {@code points} under the clustering {@code b} of the same points (zero for zero-weight
      * points). Two passes: cluster weights and costs, then the bounds.
      */
-    public final double[] sensitivities(PointBlock points, Clustering b) {
+    public final double[] sensitivities(PointSet points, Clustering b) {
         double[] weights = new double[points.size()];
-        for (int i = 0; i < weights.length; i++) {
-            weights[i] = points.weight(i);
+        for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+            PointBlock p = points.segment(t);
+            for (int i = 0, n = p.size(); i < n; i++, g++) {
+                weights[g] = p.weight(i);
+            }
         }
         return sensitivities(weights, b);
     }

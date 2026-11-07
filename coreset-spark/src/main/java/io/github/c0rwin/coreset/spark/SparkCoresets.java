@@ -8,6 +8,7 @@ import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.algo.Algorithms;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
 import io.github.c0rwin.coreset.core.kmeans.WeightedLloyd;
+import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.stream.MergeRandomness;
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -191,8 +192,8 @@ public final class SparkCoresets {
         double bestCost = Double.POSITIVE_INFINITY;
         int bestRestart = -1;
         for (int i = 0; i < restarts; i++) {
-            KMeansResult r = WeightedLloyd.cluster(coreset.points(), k, maxIterations,
-                    new SplittableRandom(MergeRandomness.derive(seed, SOLVER_STREAM, 0, i)));
+            KMeansResult r = WeightedLloyd.cluster(coreset.pointSet(), k, maxIterations,
+                    new SplittableRandom(MergeRandomness.derive(seed, SOLVER_STREAM, 0, i)), MetricsSink.NOOP);
             if (r.centers().isEmpty()) {
                 throw new IllegalArgumentException("input has no positive-weight point");
             }

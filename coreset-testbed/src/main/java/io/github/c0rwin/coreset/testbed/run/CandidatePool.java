@@ -54,7 +54,7 @@ final class CandidatePool {
         cands.addAll(CandidateSolutions.kMeansPlusPlusOnFull(ds.coreset(), k, count, rng));
         cands.addAll(CandidateSolutions.convexCombinationsOfBicriteria(ds.coreset(), k, count, rng));
         long s0 = System.nanoTime();
-        KMeansResult full = WeightedLloyd.bestOf(ds.points(), k, eval.lloydIterations(), eval.fullRestarts(), rng,
+        KMeansResult full = WeightedLloyd.bestOf(ds.coreset().pointSet(), k, eval.lloydIterations(), eval.fullRestarts(), rng,
                 MetricsSink.NOOP);
         double solveMs = (System.nanoTime() - s0) / 1e6;
         cands.add(new Candidate(FULL_SOLUTION, full.centers()));

@@ -202,7 +202,7 @@ class MergeReduceTreeTest {
         Coreset c = batch(new SplittableRandom(9), 4);
         tree.add(c);
         assertEquals(c, tree.snapshot());
-        assertSame(c.block(), tree.snapshot().block()); // a single level is shared, not copied
+        assertSame(c.pointSet(), tree.snapshot().pointSet()); // a single level is shared, not copied
     }
 
     @Test

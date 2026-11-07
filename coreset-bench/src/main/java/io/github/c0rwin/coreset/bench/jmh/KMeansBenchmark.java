@@ -1,8 +1,9 @@
 package io.github.c0rwin.coreset.bench.jmh;
 
 import io.github.c0rwin.coreset.bench.Workloads;
+import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
-import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.kmeans.KMeansPlusPlus;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
 import io.github.c0rwin.coreset.core.kmeans.WeightedLloyd;
@@ -25,7 +26,7 @@ import org.openjdk.jmh.annotations.Warmup;
 /**
  * Weighted k-means++ seeding ({@code n * (k - 1)} sparse-sparse distances) and one Lloyd iteration from fixed seeds
  * ({@code refine(.., 1)}: initial assignment, one centroid update, re-assignment, i.e. {@code 2 n k} sparse-dense
- * distances) over a Gaussian mixture stored as sparse vectors with {@code nnz = d}.
+ * distances) over a Gaussian mixture stored as sparse vectors with {@code nnz = d}, read from one block.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
@@ -44,20 +45,20 @@ public class KMeansBenchmark {
     @Param({"16", "128"})
     public int d;
 
-    private List<WeightedPoint> points;
+    private PointSet points;
     private List<SparseVector> seeds;
     private SplittableRandom rng;
 
     @Setup
     public void setup() {
-        points = Workloads.gaussianMixture(n, d, k, 1L);
-        seeds = KMeansPlusPlus.seed(points, k, new SplittableRandom(2));
+        points = PointSet.of(PointBlock.of(Workloads.gaussianMixture(n, d, k, 1L)));
+        seeds = KMeansPlusPlus.seed(points, k, new SplittableRandom(2), MetricsSink.NOOP);
         rng = new SplittableRandom(3);
     }
 
     @Benchmark
     public List<SparseVector> seed() {
-        return KMeansPlusPlus.seed(points, k, rng);
+        return KMeansPlusPlus.seed(points, k, rng, MetricsSink.NOOP);
     }
 
     @Benchmark

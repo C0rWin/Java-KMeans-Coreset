@@ -60,7 +60,7 @@ public class SparseBenchmark {
     @Setup
     public void setup() {
         input = Coreset.of(Workloads.sparseMixture(n, DIM, NNZ, k, 11L));
-        seeds = KMeansPlusPlus.seed(input.points(), k, new SplittableRandom(12));
+        seeds = KMeansPlusPlus.seed(input.pointSet(), k, new SplittableRandom(12), MetricsSink.NOOP);
         sensitivity = new SensitivityCoreset(k, 1000, Seeding.kMeansPlusPlus(0));
         uniform = new UniformCoreset(1000);
         mean = new MeanCoreset(100, 3);
@@ -69,18 +69,18 @@ public class SparseBenchmark {
 
     @Benchmark
     public List<SparseVector> kmeansppSeed() {
-        return KMeansPlusPlus.seed(input.points(), k, rng);
+        return KMeansPlusPlus.seed(input.pointSet(), k, rng, MetricsSink.NOOP);
     }
 
     @Benchmark
     public Clustering bicriteria() {
-        return Seeding.bicriteria().cluster(input.points(), k, rng, MetricsSink.NOOP);
+        return Seeding.bicriteria().cluster(input.pointSet(), k, rng, MetricsSink.NOOP);
     }
 
     /** Twenty Lloyd iterations from fixed seeds (stops early on convergence, deterministic). */
     @Benchmark
     public KMeansResult lloyd20() {
-        return WeightedLloyd.refine(input.points(), seeds, 20, MetricsSink.NOOP);
+        return WeightedLloyd.refine(input.pointSet(), seeds, 20, MetricsSink.NOOP);
     }
 
     @Benchmark

@@ -2,6 +2,7 @@ package io.github.c0rwin.coreset.core.kmeans;
 
 import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
@@ -25,13 +26,13 @@ public final class KMeansPlusPlus {
         return seed(points, k, rng, MetricsSink.NOOP);
     }
 
-    /** {@link #seed(PointBlock, int, RandomGenerator, MetricsSink)} on a copy of {@code points} in one block. */
+    /** {@link #seed(PointSet, int, RandomGenerator, MetricsSink)} on a copy of {@code points} in one block. */
     public static List<SparseVector> seed(List<WeightedPoint> points, int k, RandomGenerator rng,
                                           MetricsSink metrics) {
         if (k < 1) {
             throw new IllegalArgumentException("k must be >= 1: " + k);
         }
-        return seed(PointBlock.of(points), k, rng, metrics);
+        return seed(PointSet.of(PointBlock.of(points)), k, rng, metrics);
     }
 
     /**
@@ -40,25 +41,30 @@ public final class KMeansPlusPlus {
      * evaluations when {@code c = k} centers are returned and {@code n * c} when the input runs out of distinct points
      * first, where {@code n} is the number of positive-weight points. On sparse input each new center is scattered
      * into one O(dim) buffer, so a distance costs O(nnz(point)) ({@link SparseVector#scatterPays},
-     * {@link SparseVector#squaredDistanceScattered}).
+     * {@link SparseVector#squaredDistanceScattered}). The segments are streamed in order, so the result does not
+     * depend on how the rows are segmented.
      *
      * @throws IllegalArgumentException if {@code k < 1} or the input overflows ({@link Guards#requireSummable})
      */
-    public static List<SparseVector> seed(PointBlock points, int k, RandomGenerator rng, MetricsSink metrics) {
+    public static List<SparseVector> seed(PointSet points, int k, RandomGenerator rng, MetricsSink metrics) {
         if (k < 1) {
             throw new IllegalArgumentException("k must be >= 1: " + k);
         }
         try (Span ignored = metrics.span(MetricNames.KMEANSPP_SEED)) {
             final int size = points.size();
+            final int segments = points.segmentCount();
             int n = 0;
             double totalWeight = 0.0;
             double moment = 0.0;
-            for (int i = 0; i < size; i++) {
-                double w = points.weight(i);
-                moment += w * points.squaredNorm(i);
-                if (w > 0.0) {
-                    n++;
-                    totalWeight += w;
+            for (int t = 0; t < segments; t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++) {
+                    double w = b.weight(i);
+                    moment += w * b.squaredNorm(i);
+                    if (w > 0.0) {
+                        n++;
+                        totalWeight += w;
+                    }
                 }
             }
             Guards.requireSummable(totalWeight, moment);
@@ -66,13 +72,16 @@ public final class KMeansPlusPlus {
             if (n == 0) {
                 return centers;
             }
-            int[] rows = new int[n];
+            int[] rows = new int[n]; // positive-weight point -> global row, only to locate drawn centers
             double[] weights = new double[n];
-            for (int i = 0, w = 0; i < size; i++) {
-                if (points.weight(i) > 0.0) {
-                    rows[w] = i;
-                    weights[w] = points.weight(i);
-                    w++;
+            for (int t = 0, w = 0; t < segments; t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, r = b.size(); i < r; i++) {
+                    if (b.weight(i) > 0.0) {
+                        rows[w] = points.start(t) + i;
+                        weights[w] = b.weight(i);
+                        w++;
+                    }
                 }
             }
 
@@ -88,21 +97,30 @@ public final class KMeansPlusPlus {
             long evaluations = 0;
             while (centers.size() < k) {
                 Guards.checkInterrupted("k-means++ seeding");
+                int cs = points.segmentOf(last);
+                PointBlock cb = points.segment(cs);
+                int ci = last - points.start(cs);
                 if (scratch != null) {
-                    points.scatterRow(last, scratch);
+                    cb.scatterRow(ci, scratch);
                 }
                 double total = 0.0;
-                for (int i = 0; i < n; i++) {
-                    double d = scratch != null ? points.squaredDistanceScatteredToRow(rows[i], scratch, last)
-                            : points.squaredDistance(rows[i], last);
-                    if (d < minD2[i]) {
-                        minD2[i] = d;
+                for (int t = 0, p = 0; t < segments; t++) {
+                    PointBlock b = points.segment(t);
+                    for (int i = 0, r = b.size(); i < r; i++) {
+                        if (b.weight(i) > 0.0) {
+                            double d = scratch != null ? b.squaredDistanceScatteredToRow(i, scratch, cb, ci)
+                                    : b.squaredDistance(i, cb, ci);
+                            if (d < minD2[p]) {
+                                minD2[p] = d;
+                            }
+                            score[p] = weights[p] * minD2[p];
+                            total += score[p];
+                            p++;
+                        }
                     }
-                    score[i] = weights[i] * minD2[i];
-                    total += score[i];
                 }
                 if (scratch != null) {
-                    points.clearRow(last, scratch);
+                    cb.clearRow(ci, scratch);
                 }
                 evaluations += n;
                 if (total == 0.0) {

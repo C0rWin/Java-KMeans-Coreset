@@ -3,6 +3,7 @@ package io.github.c0rwin.coreset.core.kmeans;
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
@@ -25,7 +26,7 @@ import java.util.random.RandomGenerator;
  *
  * <p>Centers are dense m x dim arrays while {@code m * dim <= max(2^20, 2 * total stored entries)}, and otherwise
  * sparse (sorted coordinates plus a hash index), so memory and update time follow the input's stored entries rather
- * than m * dim. Both layouts give bit-identical results. The points are read straight from their {@link PointBlock};
+ * than m * dim. Both layouts give bit-identical results. The points are streamed from their {@link PointSet} segments;
  * per iteration one assignment pass and one update pass (two with sparse centers); allocation O(n + stored center
  * entries). The {@code List} overloads first copy the points into one block.
  */
@@ -40,7 +41,7 @@ public final class WeightedLloyd {
 
     public static KMeansResult cluster(List<WeightedPoint> points, int k, int maxIterations, RandomGenerator rng,
                                        MetricsSink metrics) {
-        return cluster(PointBlock.of(points), k, maxIterations, rng, metrics);
+        return cluster(PointSet.of(PointBlock.of(points)), k, maxIterations, rng, metrics);
     }
 
     /**
@@ -50,7 +51,7 @@ public final class WeightedLloyd {
      *
      * @throws IllegalArgumentException if {@code k < 1} or {@code maxIterations < 0}
      */
-    public static KMeansResult cluster(PointBlock points, int k, int maxIterations, RandomGenerator rng,
+    public static KMeansResult cluster(PointSet points, int k, int maxIterations, RandomGenerator rng,
                                        MetricsSink metrics) {
         if (maxIterations < 0) {
             throw new IllegalArgumentException("maxIterations must be >= 0: " + maxIterations);
@@ -63,32 +64,32 @@ public final class WeightedLloyd {
 
     public static KMeansResult refine(List<WeightedPoint> points, List<SparseVector> initialCenters, int maxIterations,
                                       MetricsSink metrics) {
-        return refine(PointBlock.of(points), initialCenters, maxIterations, metrics, null);
+        return refine(PointSet.of(PointBlock.of(points)), initialCenters, maxIterations, metrics, null);
     }
 
     public static KMeansResult refine(List<WeightedPoint> points, List<SparseVector> initialCenters, int maxIterations,
                                       MetricsSink metrics, double[] squaredDistances) {
-        return refine(PointBlock.of(points), initialCenters, maxIterations, metrics, squaredDistances);
+        return refine(PointSet.of(PointBlock.of(points)), initialCenters, maxIterations, metrics, squaredDistances);
     }
 
     /**
      * Runs Lloyd from the given initial centers (which need not be data points). Same contract as
-     * {@link #cluster(PointBlock, int, int, RandomGenerator, MetricsSink)} minus seeding.
+     * {@link #cluster(PointSet, int, int, RandomGenerator, MetricsSink)} minus seeding.
      *
      * @throws IllegalArgumentException if {@code initialCenters} is empty, {@code maxIterations < 0} or dimensions differ
      */
-    public static KMeansResult refine(PointBlock points, List<SparseVector> initialCenters, int maxIterations,
+    public static KMeansResult refine(PointSet points, List<SparseVector> initialCenters, int maxIterations,
                                       MetricsSink metrics) {
         return refine(points, initialCenters, maxIterations, metrics, null);
     }
 
     /**
-     * {@link #refine(PointBlock, List, int, MetricsSink)} that also writes every point's squared distance to its
+     * {@link #refine(PointSet, List, int, MetricsSink)} that also writes every point's squared distance to its
      * assigned final center into {@code squaredDistances} (when not null), so callers need not recompute them.
      *
      * @throws IllegalArgumentException as the four-argument form, or if {@code squaredDistances.length != n}
      */
-    public static KMeansResult refine(PointBlock points, List<SparseVector> initialCenters, int maxIterations,
+    public static KMeansResult refine(PointSet points, List<SparseVector> initialCenters, int maxIterations,
                                       MetricsSink metrics, double[] squaredDistances) {
         if (initialCenters.isEmpty()) {
             throw new IllegalArgumentException("initialCenters must not be empty");
@@ -107,18 +108,18 @@ public final class WeightedLloyd {
 
     public static KMeansResult bestOf(List<WeightedPoint> points, int k, int maxIterations, int restarts,
                                       RandomGenerator rng, MetricsSink metrics) {
-        return bestOf(PointBlock.of(points), k, maxIterations, restarts, rng, metrics);
+        return bestOf(PointSet.of(PointBlock.of(points)), k, maxIterations, restarts, rng, metrics);
     }
 
     /**
-     * Runs {@link #cluster(PointBlock, int, int, RandomGenerator, MetricsSink)} {@code restarts} times and returns the
+     * Runs {@link #cluster(PointSet, int, int, RandomGenerator, MetricsSink)} {@code restarts} times and returns the
      * cheapest result (ties: earliest restart). Restart {@code i} uses {@code new SplittableRandom(s_i)}, where
      * {@code s_i} is the {@code i}-th {@code rng.nextLong()}, so one restart can be replayed on its own. Lloyd only
      * finds a local optimum; independent k-means++ restarts are the standard guard against a bad one.
      *
      * @throws IllegalArgumentException if {@code restarts < 1}, or as {@code cluster}
      */
-    public static KMeansResult bestOf(PointBlock points, int k, int maxIterations, int restarts, RandomGenerator rng,
+    public static KMeansResult bestOf(PointSet points, int k, int maxIterations, int restarts, RandomGenerator rng,
                                       MetricsSink metrics) {
         if (restarts < 1) {
             throw new IllegalArgumentException("restarts must be >= 1: " + restarts);
@@ -144,7 +145,7 @@ public final class WeightedLloyd {
      * {@code layout == null} lets {@link Centroids#layoutFor} choose (tests force one to compare the two);
      * {@code dist}, if not null, receives the final squared distances and serves as the working array.
      */
-    static KMeansResult run(PointBlock points, List<SparseVector> initial, int maxIterations, MetricsSink metrics,
+    static KMeansResult run(PointSet points, List<SparseVector> initial, int maxIterations, MetricsSink metrics,
                             Centroids.Layout layout, double[] dist) {
         final int n = points.size();
         final int m = initial.size();
@@ -166,10 +167,13 @@ public final class WeightedLloyd {
         }
         double totalWeight = 0.0;
         double moment = 0.0;
-        for (int i = 0; i < n; i++) {
-            double w = points.weight(i);
-            totalWeight += w;
-            moment += w * points.squaredNorm(i);
+        for (int t = 0; t < points.segmentCount(); t++) {
+            PointBlock b = points.segment(t);
+            for (int i = 0, rows = b.size(); i < rows; i++) {
+                double w = b.weight(i);
+                totalWeight += w;
+                moment += w * b.squaredNorm(i);
+            }
         }
         Guards.requireSummable(totalWeight, moment);
         final long totalNnz = points.storedEntries();
@@ -217,7 +221,7 @@ public final class WeightedLloyd {
      * Moves each center whose cluster has no positive weight to the farthest positive-weight point not yet used for
      * this, or leaves it if every such point already sits on a center; returns the number of moved centers.
      */
-    private static int reseedEmpty(Centroids centers, PointBlock points, double[] clusterWeight, double[] dist) {
+    private static int reseedEmpty(Centroids centers, PointSet points, double[] clusterWeight, double[] dist) {
         int reseeds = 0;
         for (int j = 0; j < clusterWeight.length; j++) {
             if (clusterWeight[j] > 0.0) {
@@ -234,20 +238,23 @@ public final class WeightedLloyd {
         return reseeds;
     }
 
-    private static int farthestUnused(PointBlock points, double[] dist) {
+    private static int farthestUnused(PointSet points, double[] dist) {
         int best = -1;
         double bestD = 0.0;
-        for (int i = 0; i < dist.length; i++) {
-            if (points.weight(i) > 0.0 && dist[i] > bestD) {
-                bestD = dist[i];
-                best = i;
+        for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+            PointBlock b = points.segment(t);
+            for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                if (b.weight(i) > 0.0 && dist[g] > bestD) {
+                    bestD = dist[g];
+                    best = g;
+                }
             }
         }
         return best;
     }
 
     public static Coreset meansOf(List<WeightedPoint> points, int[] assignment, int parts) {
-        return meansOf(PointBlock.of(points), assignment, parts);
+        return meansOf(PointSet.of(PointBlock.of(points)), assignment, parts);
     }
 
     /**
@@ -260,7 +267,7 @@ public final class WeightedLloyd {
      * @throws IllegalArgumentException if a positive-weight point is assigned outside {@code [0, parts)} or the input
      *     overflows ({@link Guards#requireSummable})
      */
-    public static Coreset meansOf(PointBlock points, int[] assignment, int parts) {
+    public static Coreset meansOf(PointSet points, int[] assignment, int parts) {
         final int n = points.size();
         if (assignment.length != n) {
             throw new IllegalArgumentException("assignment has " + assignment.length + " entries for " + n + " points");
@@ -270,13 +277,17 @@ public final class WeightedLloyd {
         }
         double totalWeight = 0.0;
         double moment = 0.0;
-        for (int i = 0; i < n; i++) {
-            double w = points.weight(i);
-            if (w > 0.0 && (assignment[i] < 0 || assignment[i] >= parts)) {
-                throw new IllegalArgumentException("point " + i + " assigned to " + assignment[i] + ", parts " + parts);
+        for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+            PointBlock b = points.segment(t);
+            for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                double w = b.weight(i);
+                if (w > 0.0 && (assignment[g] < 0 || assignment[g] >= parts)) {
+                    throw new IllegalArgumentException("point " + g + " assigned to " + assignment[g] + ", parts "
+                            + parts);
+                }
+                totalWeight += w;
+                moment += w * b.squaredNorm(i);
             }
-            totalWeight += w;
-            moment += w * points.squaredNorm(i);
         }
         Guards.requireSummable(totalWeight, moment);
         ClusterSums sums = new ClusterSums(points);

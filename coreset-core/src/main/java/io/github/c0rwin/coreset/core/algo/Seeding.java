@@ -2,6 +2,7 @@ package io.github.c0rwin.coreset.core.algo;
 
 import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
@@ -59,12 +60,12 @@ public abstract class Seeding {
         return new BicriteriaSeeding(removeFraction);
     }
 
-    /** {@link #cluster(PointBlock, int, RandomGenerator, MetricsSink)} on a copy of {@code points} in one block. */
+    /** {@link #cluster(PointSet, int, RandomGenerator, MetricsSink)} on a copy of {@code points} in one block. */
     public final Clustering cluster(List<WeightedPoint> points, int k, RandomGenerator rng, MetricsSink metrics) {
         if (k < 1) {
             throw new IllegalArgumentException("k must be >= 1: " + k);
         }
-        return cluster(PointBlock.of(points), k, rng, metrics);
+        return cluster(PointSet.of(PointBlock.of(points)), k, rng, metrics);
     }
 
     /**
@@ -72,7 +73,7 @@ public abstract class Seeding {
      *
      * @throws IllegalArgumentException if {@code k < 1} or the input overflows ({@link Guards#requireSummable})
      */
-    public final Clustering cluster(PointBlock points, int k, RandomGenerator rng, MetricsSink metrics) {
+    public final Clustering cluster(PointSet points, int k, RandomGenerator rng, MetricsSink metrics) {
         if (k < 1) {
             throw new IllegalArgumentException("k must be >= 1: " + k);
         }
@@ -109,7 +110,7 @@ public abstract class Seeding {
                 return s.toClustering();
             }
             double[] sq = new double[s.n];
-            KMeansResult r = WeightedLloyd.refine(s.block, s.centers, lloydIterations, metrics, sq);
+            KMeansResult r = WeightedLloyd.refine(s.points, s.centers, lloydIterations, metrics, sq);
             return new Clustering(r.centers(), r.assignment(), sq, r.cost());
         }
 
@@ -260,7 +261,7 @@ public abstract class Seeding {
     /** D^2 seeding state: every point's distance to, and index of, its nearest chosen center. */
     static final class D2 {
         final int n;
-        final PointBlock block;
+        final PointSet points;
         final double[] weights;
         final double[] minD2;
         final int[] nearest;
@@ -273,23 +274,26 @@ public abstract class Seeding {
         private double[] scratch; // O(dim), zero outside the center being added
 
         D2(List<WeightedPoint> points) {
-            this(PointBlock.of(points));
+            this(PointSet.of(PointBlock.of(points)));
         }
 
-        D2(PointBlock points) {
+        D2(PointSet points) {
             n = points.size();
-            block = points;
+            this.points = points;
             weights = new double[n];
             int pos = 0;
             double total = 0.0;
             double moment = 0.0;
-            for (int i = 0; i < n; i++) {
-                double w = points.weight(i);
-                weights[i] = w;
-                moment += w * points.squaredNorm(i);
-                if (w > 0.0) {
-                    pos++;
-                    total += w;
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                    double w = b.weight(i);
+                    weights[g] = w;
+                    moment += w * b.squaredNorm(i);
+                    if (w > 0.0) {
+                        pos++;
+                        total += w;
+                    }
                 }
             }
             Guards.requireSummable(total, moment);
@@ -312,27 +316,33 @@ public abstract class Seeding {
         double add(int index, boolean[] active) {
             Guards.checkInterrupted("seeding");
             int id = centers.size();
-            centers.add(block.vector(index));
+            int cs = points.segmentOf(index);
+            PointBlock cb = points.segment(cs);
+            int ci = index - points.start(cs);
+            centers.add(cb.vector(ci));
             if (useScratch) {
                 if (scratch == null) {
-                    scratch = new double[block.dim()];
+                    scratch = new double[points.dim()];
                 }
-                block.scatterRow(index, scratch);
+                cb.scatterRow(ci, scratch);
             }
             double total = 0.0;
-            for (int i = 0; i < n; i++) {
-                double d = useScratch ? block.squaredDistanceScatteredToRow(i, scratch, index)
-                        : block.squaredDistance(i, index);
-                if (d < minD2[i]) {
-                    minD2[i] = d;
-                    nearest[i] = id;
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock b = points.segment(t);
+                for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                    double d = useScratch ? b.squaredDistanceScatteredToRow(i, scratch, cb, ci)
+                            : b.squaredDistance(i, cb, ci);
+                    if (d < minD2[g]) {
+                        minD2[g] = d;
+                        nearest[g] = id;
+                    }
+                    double v = active == null || active[g] ? weights[g] * minD2[g] : 0.0;
+                    mass[g] = v;
+                    total += v;
                 }
-                double v = active == null || active[i] ? weights[i] * minD2[i] : 0.0;
-                mass[i] = v;
-                total += v;
             }
             if (useScratch) {
-                block.clearRow(index, scratch);
+                cb.clearRow(ci, scratch);
             }
             evaluations += n;
             return total;

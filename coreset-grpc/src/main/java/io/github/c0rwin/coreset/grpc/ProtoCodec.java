@@ -2,6 +2,7 @@ package io.github.c0rwin.coreset.grpc;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.grpc.proto.Ack;
@@ -110,20 +111,23 @@ public final class ProtoCodec {
         return List.of(out);
     }
 
-    /** Encodes straight from the block's arrays: no per-point domain objects. */
+    /** Encodes straight from the segments' arrays: no per-point domain objects. */
     public static io.github.c0rwin.coreset.grpc.proto.Coreset toProto(Coreset c) {
-        PointBlock b = c.block();
+        PointSet points = c.pointSet();
         io.github.c0rwin.coreset.grpc.proto.Coreset.Builder out =
                 io.github.c0rwin.coreset.grpc.proto.Coreset.newBuilder().setOffset(c.offset());
-        for (int i = 0, n = b.size(); i < n; i++) {
-            io.github.c0rwin.coreset.grpc.proto.SparseVector.Builder v =
-                    io.github.c0rwin.coreset.grpc.proto.SparseVector.newBuilder().setDim(b.dim());
-            for (int e = b.rowStart(i), end = b.rowEnd(i); e < end; e++) {
-                v.addIndices(b.index(e));
-                v.addValues(b.value(e));
+        for (int t = 0; t < points.segmentCount(); t++) {
+            PointBlock b = points.segment(t);
+            for (int i = 0, n = b.size(); i < n; i++) {
+                io.github.c0rwin.coreset.grpc.proto.SparseVector.Builder v =
+                        io.github.c0rwin.coreset.grpc.proto.SparseVector.newBuilder().setDim(b.dim());
+                for (int e = b.rowStart(i), end = b.rowEnd(i); e < end; e++) {
+                    v.addIndices(b.index(e));
+                    v.addValues(b.value(e));
+                }
+                out.addPoints(io.github.c0rwin.coreset.grpc.proto.WeightedPoint.newBuilder()
+                        .setVector(v).setWeight(b.weight(i)));
             }
-            out.addPoints(io.github.c0rwin.coreset.grpc.proto.WeightedPoint.newBuilder()
-                    .setVector(v).setWeight(b.weight(i)));
         }
         return out.build();
     }

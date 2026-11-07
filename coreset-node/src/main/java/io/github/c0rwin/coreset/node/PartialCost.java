@@ -1,5 +1,7 @@
 package io.github.c0rwin.coreset.node;
 
+import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.util.List;
@@ -50,6 +52,39 @@ public record PartialCost(double cost, double weight, long points) {
                     }
                 }
                 cost += w * best;
+            }
+        }
+        return new PartialCost(cost + offset, weight, n);
+    }
+
+    /** {@link #of(List, List, double, BooleanSupplier)} streamed from the segment arrays: same sums, no allocation. */
+    static PartialCost of(PointSet points, List<SparseVector> centers, double offset, BooleanSupplier cancelled) {
+        int n = points.size();
+        int k = centers.size();
+        if (n > 0 && k == 0) {
+            throw new IllegalArgumentException("centers must not be empty");
+        }
+        SparseVector[] cs = centers.toArray(new SparseVector[0]);
+        double cost = 0.0;
+        double weight = 0.0;
+        for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+            PointBlock b = points.segment(t);
+            for (int i = 0, rows = b.size(); i < rows; i++, g++) {
+                if ((g & (CANCEL_CHECK_EVERY - 1)) == 0 && cancelled.getAsBoolean()) {
+                    throw new CancellationException("cost evaluation cancelled after " + g + " of " + n + " points");
+                }
+                double w = b.weight(i);
+                weight += w;
+                if (w > 0.0) {
+                    double best = b.squaredDistance(i, cs[0]);
+                    for (int j = 1; j < k; j++) {
+                        double d = b.squaredDistance(i, cs[j]);
+                        if (d < best) {
+                            best = d;
+                        }
+                    }
+                    cost += w * best;
+                }
             }
         }
         return new PartialCost(cost + offset, weight, n);

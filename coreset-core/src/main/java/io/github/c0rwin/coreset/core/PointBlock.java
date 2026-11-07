@@ -4,21 +4,19 @@ import java.io.InvalidObjectException;
 import java.io.ObjectInputStream;
 import java.io.Serial;
 import java.io.Serializable;
-import java.util.AbstractList;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.RandomAccess;
+import java.util.Objects;
 
 /**
  * Weighted points of one dimension in compressed sparse row (CSR) form: row offsets, column indices, values, weights
  * and cached row squared norms, five flat arrays in total. Row {@code i} holds the entries
  * {@code [rowStart(i), rowEnd(i))}, with strictly increasing indices in {@code [0, dim)} and non-zero finite values;
- * weights are finite and {@code >= 0}. This is the storage of {@link Coreset}: the algorithms stream the arrays through
- * the row kernels below and never create per-point objects in their inner loops.
+ * weights are finite and {@code >= 0}. Segments of a {@link PointSet} hold the points of a {@link Coreset}: the
+ * algorithms stream the arrays through the row kernels below and never create per-point objects in their inner loops.
  *
- * <p>Immutable and safe to share between threads. {@link #vector(int)}, {@link #point(int)} and {@link #asList()}
- * materialise rows on demand as views that share the arrays. Every empty block is {@link #EMPTY} (dimension 0).
+ * <p>Immutable and safe to share between threads. {@link #vector(int)} and {@link #point(int)} materialise rows on
+ * demand as views that share the arrays. Every empty block is {@link #EMPTY} (dimension 0).
  * Java serialization goes through a proxy rebuilt with {@link #wrap}, so a deserialized block is re-validated.
  */
 public final class PointBlock implements Serializable {
@@ -29,22 +27,24 @@ public final class PointBlock implements Serializable {
     private static final double[] NO_DOUBLES = new double[0];
 
     /** The block without points. */
-    public static final PointBlock EMPTY =
-            new PointBlock(0, 0, new int[1], SparseVector.NO_INDICES, SparseVector.NO_VALUES, NO_DOUBLES, NO_DOUBLES);
+    public static final PointBlock EMPTY = new PointBlock(0, 0, 0, new int[1], SparseVector.NO_INDICES,
+            SparseVector.NO_VALUES, NO_DOUBLES, NO_DOUBLES);
 
     private final int dim;
     private final int size;
-    private final int[] offsets; // size + 1 entries, offsets[0] == 0
-    private final int[] indices; // at least offsets[size] entries
+    private final int base; // rows are [base, base + size) of offsets, weights and norms (non-zero for slices)
+    private final int[] offsets; // at least base + size + 1 entries, absolute positions in indices and values
+    private final int[] indices;
     private final double[] values;
-    private final double[] weights; // size entries
-    private final double[] norms; // size entries
+    private final double[] weights;
+    private final double[] norms;
     private int hash;
 
-    private PointBlock(int dim, int size, int[] offsets, int[] indices, double[] values, double[] weights,
+    private PointBlock(int dim, int size, int base, int[] offsets, int[] indices, double[] values, double[] weights,
                        double[] norms) {
         this.dim = dim;
         this.size = size;
+        this.base = base;
         this.offsets = offsets;
         this.indices = indices;
         this.values = values;
@@ -127,11 +127,12 @@ public final class PointBlock implements Serializable {
             w += nnz;
         }
         rowOffsets[n] = w;
-        return new PointBlock(dim, n, rowOffsets, indices, values, weights, norms);
+        return new PointBlock(dim, n, 0, rowOffsets, indices, values, weights, norms);
     }
 
     /**
-     * Concatenates the blocks in order: one allocation per array.
+     * Concatenates the blocks in order: one allocation per array, every entry copied (see {@link PointSet#concat} for
+     * the copy-free form).
      *
      * @throws IllegalArgumentException if two non-empty blocks differ in dimension or the result would hold more than
      *     2^31 - 9 points or entries
@@ -152,7 +153,7 @@ public final class PointBlock implements Serializable {
                 throw new IllegalArgumentException("block has dim " + p.dim + ", expected " + dim);
             }
             rows += p.size;
-            entries += p.offsets[p.size];
+            entries += p.storedEntries();
             only = p;
             nonEmpty++;
         }
@@ -166,26 +167,31 @@ public final class PointBlock implements Serializable {
         return b.build();
     }
 
-    /**
-     * The rows {@code rows[0, count)}, in that order, with weights {@code weights[0, count)}: one allocation per
-     * array, entries copied with one {@code arraycopy} per row.
-     *
-     * @throws IllegalArgumentException if a weight is negative or not finite
-     */
-    public PointBlock select(int[] rows, double[] weights, int count) {
-        if (count == 0) {
-            return EMPTY;
+    /** Appends row {@code i} with {@code weight} to {@code b}: one {@code arraycopy} per entry array. */
+    void appendRowTo(int i, double weight, Builder b) {
+        b.appendRow(indices, values, offsets[base + i], offsets[base + i + 1], norms[base + i], weight);
+    }
+
+    /** Same entries (bitwise values) and weight as row {@code j} of {@code o}. */
+    boolean rowEquals(int i, PointBlock o, int j) {
+        int from = offsets[base + i];
+        int to = offsets[base + i + 1];
+        int oFrom = o.offsets[o.base + j];
+        int oTo = o.offsets[o.base + j + 1];
+        return Double.doubleToLongBits(weights[base + i]) == Double.doubleToLongBits(o.weights[o.base + j])
+                && Arrays.equals(indices, from, to, o.indices, oFrom, oTo)
+                && Arrays.equals(values, from, to, o.values, oFrom, oTo);
+    }
+
+    /** Hash of row {@code i}'s entries and weight, independent of where the row is stored. */
+    int rowHash(int i) {
+        int h = 1;
+        for (int e = offsets[base + i], to = offsets[base + i + 1]; e < to; e++) {
+            long bits = Double.doubleToLongBits(values[e]);
+            h = 31 * (31 * h + indices[e]) + (int) (bits ^ (bits >>> 32));
         }
-        long entries = 0;
-        for (int t = 0; t < count; t++) {
-            entries += offsets[rows[t] + 1] - offsets[rows[t]];
-        }
-        Builder b = new Builder(dim, count, entries);
-        for (int t = 0; t < count; t++) {
-            int i = rows[t];
-            b.appendRow(indices, values, offsets[i], offsets[i + 1], norms[i], weights[t]);
-        }
-        return b.build();
+        long bits = Double.doubleToLongBits(weights[base + i]);
+        return 31 * h + (int) (bits ^ (bits >>> 32));
     }
 
     /** Builder for a block of dimension {@code dim}; the expected sizes only presize its arrays. */
@@ -211,30 +217,47 @@ public final class PointBlock implements Serializable {
 
     /** Total stored entries over all rows. */
     public long storedEntries() {
-        return offsets[size];
+        return offsets[base + size] - offsets[base];
+    }
+
+    /**
+     * Rows {@code [from, to)} as a block sharing all of this block's arrays: O(1), nothing copied. The slice keeps
+     * the arrays reachable, so {@link #estimatedBytes()} counts them in full.
+     *
+     * @throws IndexOutOfBoundsException unless {@code 0 <= from <= to <= size()}
+     */
+    public PointBlock slice(int from, int to) {
+        Objects.checkFromToIndex(from, to, size);
+        if (from == 0 && to == size) {
+            return this;
+        }
+        if (from == to) {
+            return EMPTY;
+        }
+        return new PointBlock(dim, to - from, base + from, offsets, indices, values, weights, norms);
     }
 
     public double weight(int i) {
-        return weights[i];
+        return weights[base + i];
     }
 
     /** {@code ||row i||^2}, cached. */
     public double squaredNorm(int i) {
-        return norms[i];
+        return norms[base + i];
     }
 
     /** First entry of row {@code i}; its entries are {@code [rowStart(i), rowEnd(i))}. */
     public int rowStart(int i) {
-        return offsets[i];
+        return offsets[base + i];
     }
 
     public int rowEnd(int i) {
-        return offsets[i + 1];
+        return offsets[base + i + 1];
     }
 
     /** Stored entries of row {@code i}. */
     public int nnz(int i) {
-        return offsets[i + 1] - offsets[i];
+        return offsets[base + i + 1] - offsets[base + i];
     }
 
     /** Coordinate of entry {@code e} (an entry position, not a row). */
@@ -251,43 +274,38 @@ public final class PointBlock implements Serializable {
     public double totalWeight() {
         double s = 0.0;
         for (int i = 0; i < size; i++) {
-            s += weights[i];
+            s += weights[base + i];
         }
         return s;
     }
 
     /** Row {@code i} as a vector view sharing this block's arrays (one small object, no copy). */
     public SparseVector vector(int i) {
-        return new SparseVector(dim, indices, values, offsets[i], offsets[i + 1], norms[i]);
+        return new SparseVector(dim, indices, values, offsets[base + i], offsets[base + i + 1], norms[base + i]);
     }
 
     public WeightedPoint point(int i) {
-        return new WeightedPoint(vector(i), weights[i]);
-    }
-
-    /**
-     * Read-only list view of the points. Every {@code get} materialises a fresh {@link WeightedPoint} over a vector
-     * view (two small objects, no entry copy), so hot loops should use the row accessors and kernels instead.
-     */
-    public List<WeightedPoint> asList() {
-        return new Rows(this);
+        return new WeightedPoint(vector(i), weights[base + i]);
     }
 
     /** {@code ||row i - c||^2} by merging supports: bit-identical to {@code vector(i).squaredDistance(c)}. */
     public double squaredDistance(int i, SparseVector c) {
         checkDim(c.dim);
-        return Kernels.merge(indices, values, offsets[i], offsets[i + 1], c.indices, c.values, c.from, c.to);
+        return Kernels.merge(indices, values, offsets[base + i], offsets[base + i + 1], c.indices, c.values, c.from,
+                c.to);
     }
 
-    /** {@code ||row i - row j||^2} by merging supports. */
-    public double squaredDistance(int i, int j) {
-        return Kernels.merge(indices, values, offsets[i], offsets[i + 1], indices, values, offsets[j], offsets[j + 1]);
+    /** {@code ||row i - row j of o||^2} by merging supports ({@code o} may be this block). */
+    public double squaredDistance(int i, PointBlock o, int j) {
+        checkDim(o.dim);
+        return Kernels.merge(indices, values, offsets[base + i], offsets[base + i + 1], o.indices, o.values,
+                o.offsets[o.base + j], o.offsets[o.base + j + 1]);
     }
 
     /** Bit-identical to {@code vector(i).squaredDistance(dense, denseSquaredNorm)}. */
     public double squaredDistance(int i, double[] dense, double denseSquaredNorm) {
         checkDim(dense.length);
-        return Kernels.dense(indices, values, offsets[i], offsets[i + 1], dense, denseSquaredNorm);
+        return Kernels.dense(indices, values, offsets[base + i], offsets[base + i + 1], dense, denseSquaredNorm);
     }
 
     /**
@@ -299,7 +317,8 @@ public final class PointBlock implements Serializable {
     public double squaredDistanceScattered(int i, double[] scratch, int[] cIdx, double[] cVal, int cFrom, int cTo,
                                            double cNorm) {
         checkDim(scratch.length);
-        return Kernels.scattered(indices, values, offsets[i], offsets[i + 1], scratch, cIdx, cVal, cFrom, cTo, cNorm);
+        return Kernels.scattered(indices, values, offsets[base + i], offsets[base + i + 1], scratch, cIdx, cVal, cFrom,
+                cTo, cNorm);
     }
 
     /** {@link #squaredDistanceScattered(int, double[], int[], double[], int, int, double)} to a scattered vector. */
@@ -308,36 +327,39 @@ public final class PointBlock implements Serializable {
         return squaredDistanceScattered(i, scratch, c.indices, c.values, c.from, c.to, c.squaredNorm());
     }
 
-    /** {@link #squaredDistanceScattered(int, double[], int[], double[], int, int, double)} to scattered row j. */
-    public double squaredDistanceScatteredToRow(int i, double[] scratch, int j) {
+    /**
+     * {@link #squaredDistanceScattered(int, double[], int[], double[], int, int, double)} to row j of {@code o}, which
+     * the caller scattered into {@code scratch} ({@code o} may be this block).
+     */
+    public double squaredDistanceScatteredToRow(int i, double[] scratch, PointBlock o, int j) {
         checkDim(scratch.length);
-        return Kernels.scattered(indices, values, offsets[i], offsets[i + 1], scratch, indices, values, offsets[j],
-                offsets[j + 1], norms[j]);
+        return Kernels.scattered(indices, values, offsets[base + i], offsets[base + i + 1], scratch, o.indices,
+                o.values, o.offsets[o.base + j], o.offsets[o.base + j + 1], o.norms[o.base + j]);
     }
 
     /** {@code scratch[c] = value} for every entry of row {@code j}; {@link #clearRow} undoes it. */
     public void scatterRow(int j, double[] scratch) {
         checkDim(scratch.length);
-        Kernels.scatter(indices, values, offsets[j], offsets[j + 1], scratch);
+        Kernels.scatter(indices, values, offsets[base + j], offsets[base + j + 1], scratch);
     }
 
     public void clearRow(int j, double[] scratch) {
         checkDim(scratch.length);
-        Kernels.clear(indices, offsets[j], offsets[j + 1], scratch);
+        Kernels.clear(indices, offsets[base + j], offsets[base + j + 1], scratch);
     }
 
     /** {@code acc += scale * row i}. */
     public void addTo(int i, double[] acc, double scale) {
         checkDim(acc.length);
-        Kernels.addTo(indices, values, offsets[i], offsets[i + 1], acc, scale);
+        Kernels.addTo(indices, values, offsets[base + i], offsets[base + i + 1], acc, scale);
     }
 
     /**
      * Approximate retained heap size in bytes under the {@link SparseVector#estimatedBytes()} model: this object and
-     * its five arrays at their allocated lengths.
+     * its five arrays at their allocated lengths (shared in full with any block it was sliced from).
      */
     public long estimatedBytes() {
-        long self = SparseVector.align(SparseVector.OBJECT_HEADER_BYTES + 3L * 4 + 5L * SparseVector.REFERENCE_BYTES);
+        long self = SparseVector.align(SparseVector.OBJECT_HEADER_BYTES + 4L * 4 + 5L * SparseVector.REFERENCE_BYTES);
         return self + intArray(offsets.length) + intArray(indices.length) + doubleArray(values.length)
                 + doubleArray(weights.length) + doubleArray(norms.length);
     }
@@ -369,27 +391,25 @@ public final class PointBlock implements Serializable {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof PointBlock b)) {
+        if (!(o instanceof PointBlock b) || dim != b.dim || size != b.size) {
             return false;
         }
-        int nnz = offsets[size];
-        return dim == b.dim && size == b.size && Arrays.equals(offsets, b.offsets)
-                && Arrays.equals(indices, 0, nnz, b.indices, 0, nnz)
-                && Arrays.equals(values, 0, nnz, b.values, 0, nnz)
-                && Arrays.equals(weights, b.weights);
+        for (int i = 0; i < size; i++) {
+            if (!rowEquals(i, b, i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
     public int hashCode() {
         int h = hash;
         if (h == 0) {
-            int nnz = offsets[size];
-            h = 31 * dim + Arrays.hashCode(offsets);
-            for (int e = 0; e < nnz; e++) {
-                long bits = Double.doubleToLongBits(values[e]);
-                h = 31 * (31 * h + indices[e]) + (int) (bits ^ (bits >>> 32));
+            h = dim;
+            for (int i = 0; i < size; i++) {
+                h = 31 * h + rowHash(i);
             }
-            h = 31 * h + Arrays.hashCode(weights);
             hash = h;
         }
         return h;
@@ -397,14 +417,19 @@ public final class PointBlock implements Serializable {
 
     @Override
     public String toString() {
-        return "PointBlock[dim=" + dim + ", points=" + size + ", entries=" + offsets[size] + "]";
+        return "PointBlock[dim=" + dim + ", points=" + size + ", entries=" + storedEntries() + "]";
     }
 
     @Serial
     private Object writeReplace() {
-        int nnz = offsets[size];
-        return new SerializedForm(dim, offsets.clone(), Arrays.copyOf(indices, nnz), Arrays.copyOf(values, nnz),
-                weights.clone());
+        int first = offsets[base];
+        int[] rows = new int[size + 1];
+        for (int i = 1; i <= size; i++) {
+            rows[i] = offsets[base + i] - first;
+        }
+        int last = offsets[base + size];
+        return new SerializedForm(dim, rows, Arrays.copyOfRange(indices, first, last),
+                Arrays.copyOfRange(values, first, last), Arrays.copyOfRange(weights, base, base + size));
     }
 
     @Serial
@@ -424,30 +449,6 @@ public final class PointBlock implements Serializable {
                 ex.initCause(e);
                 throw ex;
             }
-        }
-    }
-
-    /** Read-only list over a block's rows; serialises as a plain list of materialised points. */
-    private static final class Rows extends AbstractList<WeightedPoint> implements RandomAccess, Serializable {
-        private final transient PointBlock block;
-
-        Rows(PointBlock block) {
-            this.block = block;
-        }
-
-        @Override
-        public WeightedPoint get(int index) {
-            return block.point(index);
-        }
-
-        @Override
-        public int size() {
-            return block.size;
-        }
-
-        @Serial
-        private Object writeReplace() {
-            return new ArrayList<>(this);
         }
     }
 
@@ -528,7 +529,7 @@ public final class PointBlock implements Serializable {
             if (offsets == null) {
                 throw new IllegalStateException("already built");
             }
-            PointBlock out = size == 0 ? EMPTY : new PointBlock(dim, size, trim(offsets, size + 1),
+            PointBlock out = size == 0 ? EMPTY : new PointBlock(dim, size, 0, trim(offsets, size + 1),
                     trim(indices, entries), trim(values, entries), trim(weights, size), trim(norms, size));
             offsets = null;
             return out;
@@ -549,14 +550,15 @@ public final class PointBlock implements Serializable {
 
         void appendAll(PointBlock b) {
             int n = b.size;
-            int nnz = b.offsets[n];
+            int first = b.offsets[b.base];
+            int nnz = b.offsets[b.base + n] - first;
             ensure(n, nnz);
-            System.arraycopy(b.indices, 0, indices, entries, nnz);
-            System.arraycopy(b.values, 0, values, entries, nnz);
-            System.arraycopy(b.weights, 0, weights, size, n);
-            System.arraycopy(b.norms, 0, norms, size, n);
+            System.arraycopy(b.indices, first, indices, entries, nnz);
+            System.arraycopy(b.values, first, values, entries, nnz);
+            System.arraycopy(b.weights, b.base, weights, size, n);
+            System.arraycopy(b.norms, b.base, norms, size, n);
             for (int i = 1; i <= n; i++) {
-                offsets[size + i] = entries + b.offsets[i];
+                offsets[size + i] = entries + b.offsets[b.base + i] - first;
             }
             size += n;
             entries += nnz;

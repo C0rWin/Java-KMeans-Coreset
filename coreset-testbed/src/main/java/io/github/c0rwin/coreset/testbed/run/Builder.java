@@ -2,6 +2,7 @@ package io.github.c0rwin.coreset.testbed.run;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.algo.SampledCoreset;
 import io.github.c0rwin.coreset.core.algo.SensitivityCoreset;
@@ -117,8 +118,8 @@ final class Builder {
     }
 
     private Built stream(Dataset ds, CoresetAlgorithm algorithm, ModeSpec mode, long seed) {
-        final List<WeightedPoint> points = ds.points();
-        final int n = points.size();
+        final PointSet rows = ds.coreset().pointSet();
+        final int n = rows.size();
         final int b = Math.min(mode.blockCount(), n);
         RecordingMetrics metrics = new RecordingMetrics();
         SplittableRandom rng = new SplittableRandom(seed);
@@ -128,7 +129,7 @@ final class Builder {
         int start = 0;
         for (int i = 0; i < b; i++) {
             int end = blockEnd(n, b, i);
-            tree.add(algorithm.compress(Coreset.of(points.subList(start, end)), rng, metrics));
+            tree.add(algorithm.compress(Coreset.of(rows.slice(start, end)), rng, metrics)); // zero-copy batch
             long added = tree.batchesAdded();
             if (Long.bitCount(added) == 1) {
                 captures.add(new LevelCapture(Long.numberOfTrailingZeros(added), tree.levelsView().get(0), end));
@@ -144,6 +145,7 @@ final class Builder {
     private Built distributed(Dataset ds, String algorithmId, Map<String, String> params, ModeSpec mode, long seed)
             throws Exception {
         final List<WeightedPoint> points = ds.points();
+        final PointSet rows = ds.coreset().pointSet();
         final int n = points.size();
         final int b = Math.min(mode.blockCount(), n);
         final int nodesCount = mode.nodes();
@@ -204,12 +206,11 @@ final class Builder {
                 for (int i = 0; i < b; i++) {
                     int end = blockEnd(n, b, i);
                     int target = i % nodesCount; // round-robin with per-node dense seqs, as the gRPC coordinator does
-                    ingest(nodes.get(target), producer, nextSeq[target]++, points.subList(start, end));
+                    ingest(nodes.get(target), producer, nextSeq[target]++, Coreset.of(rows.slice(start, end)));
                     start = end;
                 }
                 snapshots = new ArrayList<>(nodesCount);
-                int total = 0;
-                double offset = 0.0;
+                List<Coreset> parts = new ArrayList<>(nodesCount);
                 for (CoresetNode node : nodes) {
                     if (!node.awaitApplied(SESSION, TIMEOUT)) {
                         throw new IllegalStateException("node did not apply its batches within " + TIMEOUT);
@@ -219,18 +220,9 @@ final class Builder {
                         throw new IllegalStateException("node snapshot incomplete: " + s);
                     }
                     snapshots.add(s);
-                    total += s.coreset().size();
-                    offset += s.coreset().offset();
+                    parts.add(s.coreset());
                 }
-                // One pre-sized concatenation, as the coordinator's gather does, instead of re-copying per node.
-                WeightedPoint[] all = new WeightedPoint[total];
-                int at = 0;
-                for (NodeSnapshot s : snapshots) {
-                    for (WeightedPoint p : s.coreset().points()) {
-                        all[at++] = p;
-                    }
-                }
-                union = new Coreset(List.of(all), offset);
+                union = Coreset.union(parts); // shares the snapshots' segments, as the coordinator's gather does
             }
             Coreset out = mode.finalReduce() && !union.isEmpty()
                     ? finalAlgorithm.compress(union, new SplittableRandom(Seeds.mix(seed, FINAL_REDUCE_SALT)),
@@ -262,7 +254,7 @@ final class Builder {
         }
     }
 
-    private static void ingest(CoresetNode node, String producer, long seq, List<WeightedPoint> batch) {
+    private static void ingest(CoresetNode node, String producer, long seq, Coreset batch) {
         for (;;) {
             IngestResult r = node.ingest(SESSION, producer, seq, batch);
             switch (r.status()) {

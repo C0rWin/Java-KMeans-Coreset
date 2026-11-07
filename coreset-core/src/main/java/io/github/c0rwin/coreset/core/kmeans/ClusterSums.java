@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.core.kmeans;
 
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import java.util.Arrays;
 
 /**
@@ -13,8 +14,8 @@ import java.util.Arrays;
  */
 final class ClusterSums {
 
-    private final PointBlock points;
-    private final int[] members;
+    private final PointSet points;
+    private final int[] members; // global rows, ascending within each cluster
     private int[] start = new int[0];
     private int[] next = new int[0];
     private long[] entries = new long[0];
@@ -23,7 +24,7 @@ final class ClusterSums {
     private double[] values = new double[0];
     private double[] entryWeights = new double[0];
 
-    ClusterSums(PointBlock points) {
+    ClusterSums(PointSet points) {
         this.points = points;
         this.members = new int[points.size()];
     }
@@ -48,14 +49,16 @@ final class ClusterSums {
             Arrays.fill(entries, 0L);
             Arrays.fill(clusterWeight, 0.0);
         }
-        final int n = points.size();
-        for (int i = 0; i < n; i++) {
-            double w = points.weight(i);
-            if (w > 0.0) {
-                int j = assignment[i];
-                start[j + 1]++;
-                clusterWeight[j] += w;
-                entries[j] += points.nnz(i);
+        for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+            PointBlock b = points.segment(t);
+            for (int i = 0, n = b.size(); i < n; i++, g++) {
+                double w = b.weight(i);
+                if (w > 0.0) {
+                    int j = assignment[g];
+                    start[j + 1]++;
+                    clusterWeight[j] += w;
+                    entries[j] += b.nnz(i);
+                }
             }
         }
         long maxEntries = 0;
@@ -64,9 +67,12 @@ final class ClusterSums {
             next[j] = start[j];
             maxEntries = Math.max(maxEntries, entries[j]);
         }
-        for (int i = 0; i < n; i++) {
-            if (points.weight(i) > 0.0) {
-                members[next[assignment[i]]++] = i;
+        for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+            PointBlock b = points.segment(t);
+            for (int i = 0, n = b.size(); i < n; i++, g++) {
+                if (b.weight(i) > 0.0) {
+                    members[next[assignment[g]]++] = g;
+                }
             }
         }
         if (maxEntries > keys.length) {
@@ -87,12 +93,18 @@ final class ClusterSums {
      */
     Mean mean(int j, boolean withCost) {
         int e = 0;
+        int seg = 0; // members ascend, so the segment cursor only moves forward
         for (int t = start[j], end = start[j + 1]; t < end; t++) {
-            int i = members[t];
-            double w = points.weight(i);
-            for (int s = points.rowStart(i), stop = points.rowEnd(i); s < stop; s++, e++) {
-                keys[e] = ((long) points.index(s) << 32) | e;
-                values[e] = points.value(s);
+            int g = members[t];
+            while (points.start(seg + 1) <= g) {
+                seg++;
+            }
+            PointBlock b = points.segment(seg);
+            int i = g - points.start(seg);
+            double w = b.weight(i);
+            for (int s = b.rowStart(i), stop = b.rowEnd(i); s < stop; s++, e++) {
+                keys[e] = ((long) b.index(s) << 32) | e;
+                values[e] = b.value(s);
                 entryWeights[e] = w;
             }
         }

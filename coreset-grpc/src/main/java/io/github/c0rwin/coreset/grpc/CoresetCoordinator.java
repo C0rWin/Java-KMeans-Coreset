@@ -212,7 +212,7 @@ public final class CoresetCoordinator implements AutoCloseable {
         SplittableRandom compressRng = rng.split();
         SplittableRandom lloydRng = rng.split(); // independent of whether a final compression runs
         Coreset input = finalCompress == null ? coreset : finalCompress.compress(coreset, compressRng);
-        return WeightedLloyd.bestOf(input.points(), k, maxIterations, restarts, lloydRng, MetricsSink.NOOP);
+        return WeightedLloyd.bestOf(input.pointSet(), k, maxIterations, restarts, lloydRng, MetricsSink.NOOP);
     }
 
     /** Cost of {@code centers} on the union of the nodes' session coresets (offsets included), summed node-side. */

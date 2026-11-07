@@ -2,6 +2,7 @@ package io.github.c0rwin.coreset.spark;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
@@ -73,14 +74,15 @@ final class Partial implements Serializable {
     /**
      * Stage-0 partial: one pass over the partition, feeding a merge-reduce tree in chunks of {@code chunkSize}
      * points, then one compression of the tree's snapshot. Every generator is derived from
-     * {@code (seed, partition, level, chunk)}. Allocates one reused chunk buffer; each chunk is copied once into its
-     * (immutable) batch coreset.
+     * {@code (seed, partition, level, chunk)}. Each point's entries are appended once to its chunk's block, presized
+     * from the previous chunk; no per-chunk list.
      */
     static Partial ofPartition(int partition, Iterator<WeightedPoint> points, CoresetAlgorithm algorithm, long seed,
                                int chunkSize) {
         MergeReduceTree tree = new MergeReduceTree(algorithm, MergeRandomness.derived(seed, partition),
                 MetricsSink.NOOP);
-        List<WeightedPoint> chunk = new ArrayList<>(chunkSize);
+        PointBlock.Builder chunk = null;
+        long chunkEntries = 0; // entries of the previous full chunk, to presize the next
         long n = 0;
         double weight = 0.0;
         int dim = -1;
@@ -93,16 +95,22 @@ final class Partial implements Serializable {
                 throw new IllegalArgumentException(
                         "partition " + partition + ": point " + n + " has dim " + v.dim() + ", expected " + dim);
             }
-            chunk.add(p);
+            if (chunk == null) {
+                long expected = chunkEntries > 0 ? chunkEntries : (long) v.nnz() * chunkSize;
+                chunk = PointBlock.builder(dim, chunkSize, expected);
+            }
+            chunk.add(v, p.weight());
             n++;
             weight += p.weight();
             if (chunk.size() == chunkSize) {
-                tree.add(Coreset.of(chunk));
-                chunk.clear();
+                PointBlock block = chunk.build();
+                chunkEntries = block.storedEntries();
+                tree.add(Coreset.of(block));
+                chunk = null;
             }
         }
-        if (!chunk.isEmpty()) {
-            tree.add(Coreset.of(chunk));
+        if (chunk != null) {
+            tree.add(Coreset.of(chunk.build()));
         }
         long batches = tree.batchesAdded();
         int levels = 64 - Long.numberOfLeadingZeros(batches);
@@ -116,22 +124,19 @@ final class Partial implements Serializable {
     }
 
     /**
-     * Merges one group of partials of the previous stage: decodes them in index order straight into one pre-sized
-     * union, then compresses once with the generator derived from {@code (seed, REDUCE_STREAM, stage, index)}.
-     * Sorting makes the result independent of the order in which a shuffle delivered the group. With
-     * {@code encode} false (the driver's final merge) the result is kept decoded.
+     * Merges one group of partials of the previous stage: decodes each, in index order, straight into one block and
+     * unions them without copying (one segment per partial), then compresses once with the generator derived from
+     * {@code (seed, REDUCE_STREAM, stage, index)}. Sorting makes the result independent of the order in which a
+     * shuffle delivered the group. With {@code encode} false (the driver's final merge) the result is kept decoded.
      */
     static Partial merge(Iterable<Partial> group, int index, int stage, CoresetAlgorithm algorithm, long seed,
                          boolean encode) {
         List<Partial> parts = new ArrayList<>();
-        int total = 0;
         for (Partial p : group) {
             parts.add(p);
-            total += p.points;
         }
         parts.sort(Comparator.comparingInt(p -> p.index));
-        List<WeightedPoint> points = new ArrayList<>(total);
-        double offset = 0.0;
+        List<Coreset> decoded = new ArrayList<>(parts.size());
         int depth = 0;
         int treeLevels = 0;
         long ops = 0;
@@ -142,7 +147,7 @@ final class Partial implements Serializable {
             if (p.stage != stage - 1) {
                 throw new IllegalStateException("partial of stage " + p.stage + " merged into stage " + stage);
             }
-            offset += CoresetCodec.decodeInto(p.coreset, points);
+            decoded.add(CoresetCodec.decode(p.coreset));
             depth = Math.max(depth, p.depth);
             treeLevels = Math.max(treeLevels, p.treeLevels);
             ops += p.reduceOps;
@@ -152,7 +157,7 @@ final class Partial implements Serializable {
                 stats[i] += p.stats[i];
             }
         }
-        Coreset out = new Coreset(points, offset);
+        Coreset out = Coreset.union(decoded);
         if (!out.isEmpty() || out.offset() != 0.0) {
             out = algorithm.compress(out,
                     new SplittableRandom(MergeRandomness.derive(seed, REDUCE_STREAM, stage, index)));

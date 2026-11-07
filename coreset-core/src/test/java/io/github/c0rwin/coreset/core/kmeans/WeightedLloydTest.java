@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.c0rwin.coreset.core.Cost;
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
@@ -139,8 +140,8 @@ class WeightedLloydTest {
                 WeightedLloyd.run(block(pts), seeds, 20, MetricsSink.NOOP, Centroids.Layout.SPARSE, null));
     }
 
-    private static PointBlock block(List<WeightedPoint> pts) {
-        return PointBlock.of(pts);
+    private static PointSet block(List<WeightedPoint> pts) {
+        return PointSet.of(PointBlock.of(pts));
     }
 
     @Test

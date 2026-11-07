@@ -361,7 +361,7 @@ public final class CoresetNode implements AutoCloseable {
     public PartialCost partialCost(String sessionId, List<SparseVector> centers, BooleanSupplier cancelled) {
         Coreset c = snapshot(sessionId).coreset();
         limits.checkCost(c.size(), centers.size());
-        return PartialCost.of(c.points(), centers, c.offset(), cancelled);
+        return PartialCost.of(c.pointSet(), centers, c.offset(), cancelled);
     }
 
     public SessionSpec spec(String sessionId) {

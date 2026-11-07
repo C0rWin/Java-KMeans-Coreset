@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -96,20 +97,50 @@ class CoresetTest {
         assertThrows(UnsupportedOperationException.class, () -> c.points().set(0, wp(1, 1, 2)));
     }
 
-    /** Guard: a union allocates its point array once (the old path copied it twice). */
+    /** Guard: a union shares the parts' segments and allocates O(segments), whatever the number of points. */
     @Test
-    void unionAllocatesThePointArrayOnce() {
+    void unionSharesSegmentsAndAllocatesOnlyItsIndex() {
         List<WeightedPoint> pts = new ArrayList<>();
         for (int i = 0; i < 20_000; i++) {
             pts.add(wp(1, i, 1));
         }
         Coreset a = Coreset.of(pts.subList(0, 10_000));
         Coreset b = Coreset.of(pts.subList(10_000, 20_000));
-        Coreset expected = Coreset.union(a, b);
+        Coreset u = Coreset.union(a, b);
+        assertEquals(2, u.pointSet().segmentCount());
+        assertSame(a.pointSet().segment(0), u.pointSet().segment(0));
+        assertSame(b.pointSet().segment(0), u.pointSet().segment(1));
+        assertEquals(Coreset.of(pts), u);
+        assertEquals(Coreset.of(pts).hashCode(), u.hashCode());
         long union = Allocations.bytes(() -> Coreset.union(a, b));
-        // Exactly the result's five block arrays (and a few small objects): one concatenation, no staging copy.
-        assertTrue(union <= expected.estimatedBytes() + 256,
-                "union allocated " + union + " bytes, its block is " + expected.block().estimatedBytes());
+        assertTrue(union <= 256, "union allocated " + union + " bytes");
+
+        Coreset[] parts = new Coreset[64];
+        for (int i = 0; i < parts.length; i++) {
+            parts[i] = Coreset.of(pts.subList(i * 300, (i + 1) * 300));
+        }
+        long fold = Allocations.bytes(() -> {
+            Coreset acc = Coreset.of(PointBlock.EMPTY);
+            for (Coreset p : parts) {
+                acc = Coreset.union(acc, p);
+            }
+            return acc;
+        });
+        // 64 unions; each copies at most 64 segment references, never a point.
+        assertTrue(fold <= 64 * (128 + 2 * 8 * 64), "fold allocated " + fold + " bytes");
+    }
+
+    @Test
+    void compactCopiesOnlyWhenSegmented() {
+        Coreset a = new Coreset(List.of(wp(1.5, 1, 0), wp(2.0, 0, 1)), 3.0);
+        Coreset b = new Coreset(List.of(wp(4.0, 2, 2)), 0.25);
+        assertSame(a.pointSet().segment(0), a.pointSet().compact());
+        PointSet u = Coreset.union(a, b).pointSet();
+        assertEquals(PointSet.of(u.compact()), u);
+        assertEquals(0, u.segmentOf(1));
+        assertEquals(1, u.segmentOf(2));
+        assertEquals(2, u.start(1));
+        assertEquals(4.0, u.weight(2));
     }
 
     @Test
@@ -126,10 +157,10 @@ class CoresetTest {
         WeightedPoint p = wp(1, 1, 2);
         // header 12 + ref 4 + double 8 = 24
         assertEquals(24 + p.vector().estimatedBytes(), p.estimatedBytes());
-        // Points live in one CSR block: record 24 + block object 48 + its five arrays at 8-byte alignment.
-        assertEquals(24 + small.block().estimatedBytes(), small.estimatedBytes());
-        assertEquals(24 + 48 + align(16 + 4 * 4) + align(16 + 4 * 6) + align(16 + 8 * 6) + 2 * align(16 + 8 * 3),
-                large.estimatedBytes());
+        // Record 24 + point set 40 + its segment array 24 and starts 24 + block object 48 + its five arrays.
+        assertEquals(24 + small.pointSet().estimatedBytes(), small.estimatedBytes());
+        assertEquals(24 + 40 + 24 + 24 + 48 + align(16 + 4 * 4) + align(16 + 4 * 6) + align(16 + 8 * 6)
+                + 2 * align(16 + 8 * 3), large.estimatedBytes());
         assertTrue(large.estimatedBytes() > small.estimatedBytes());
     }
 

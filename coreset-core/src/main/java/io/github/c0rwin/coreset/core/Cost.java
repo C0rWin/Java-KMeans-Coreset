@@ -10,33 +10,36 @@ public final class Cost {
 
     /** {@code sum_p w_p * min_c ||p - c||^2 + offset}. */
     public static double cost(Coreset c, List<SparseVector> centers) {
-        return cost(c.block(), centers) + c.offset();
+        return cost(c.pointSet(), centers) + c.offset();
     }
 
     /**
-     * {@code sum_p w_p * min_c ||p - c||^2} over the rows of {@code points}, streamed from the block arrays;
-     * bit-identical to the list form on the same points. Zero-weight points are skipped.
+     * {@code sum_p w_p * min_c ||p - c||^2} over the rows of {@code points}, streamed segment by segment from the
+     * block arrays; bit-identical to the list form on the same points. Zero-weight points are skipped.
      *
      * @throws IllegalArgumentException if {@code points} is non-empty and {@code centers} is empty
      */
-    public static double cost(PointBlock points, List<SparseVector> centers) {
+    public static double cost(PointSet points, List<SparseVector> centers) {
         if (points.isEmpty()) {
             return 0.0;
         }
         requireCenters(centers);
         SparseVector[] cs = centers.toArray(new SparseVector[0]);
         double s = 0.0;
-        for (int i = 0, n = points.size(); i < n; i++) {
-            double w = points.weight(i);
-            if (w > 0.0) {
-                double best = points.squaredDistance(i, cs[0]);
-                for (int j = 1; j < cs.length; j++) {
-                    double d = points.squaredDistance(i, cs[j]);
-                    if (d < best) {
-                        best = d;
+        for (int t = 0, segments = points.segmentCount(); t < segments; t++) {
+            PointBlock b = points.segment(t);
+            for (int i = 0, n = b.size(); i < n; i++) {
+                double w = b.weight(i);
+                if (w > 0.0) {
+                    double best = b.squaredDistance(i, cs[0]);
+                    for (int j = 1; j < cs.length; j++) {
+                        double d = b.squaredDistance(i, cs[j]);
+                        if (d < best) {
+                            best = d;
+                        }
                     }
+                    s += w * best;
                 }
-                s += w * best;
             }
         }
         return s;

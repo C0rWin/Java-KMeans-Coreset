@@ -7,24 +7,31 @@ import java.util.Objects;
 
 /**
  * Weighted point set summarising a larger input for k-means: for any centers {@code C},
- * {@code cost(input, C) ~ sum_p w_p * min_c ||p - c||^2 + offset}. The points are stored as one {@link PointBlock}
- * (compressed sparse rows), which the algorithms read directly. Java deserialization re-validates the block and
- * re-runs the canonical constructor's checks.
+ * {@code cost(input, C) ~ sum_p w_p * min_c ||p - c||^2 + offset}. The points are a {@link PointSet}, a sequence of
+ * {@link PointBlock} segments that the algorithms stream directly; {@link #union} shares the parts' segments instead of
+ * copying their points. Java deserialization re-validates the segments and re-runs the canonical constructor's checks.
  *
- * @param block  the weighted points; all share one dimension
- * @param offset finite, non-negative additive cost constant that does not depend on the centers
+ * @param pointSet the weighted points; all share one dimension
+ * @param offset   finite, non-negative additive cost constant that does not depend on the centers
  */
-public record Coreset(PointBlock block, double offset) implements Serializable {
+public record Coreset(PointSet pointSet, double offset) implements Serializable {
 
     public Coreset {
-        Objects.requireNonNull(block, "block");
+        Objects.requireNonNull(pointSet, "pointSet");
         if (!Double.isFinite(offset) || offset < 0.0) {
             throw new IllegalArgumentException("offset must be finite and >= 0: " + offset);
         }
     }
 
+    /** The block as the only segment (no copy). */
+    public Coreset(PointBlock block, double offset) {
+        this(PointSet.of(block), offset);
+    }
+
     /**
-     * Copies {@code points} into a new block ({@link PointBlock#of}).
+     * Copies every point's entries into one new block ({@link PointBlock#of}): O(total entries). Code on a hot path
+     * should build a {@link PointBlock} instead (its {@link PointBlock.Builder}, or {@link PointBlock#wrap} in a
+     * decoder).
      *
      * @throws IllegalArgumentException if the points differ in dimension or the offset is invalid
      */
@@ -32,6 +39,7 @@ public record Coreset(PointBlock block, double offset) implements Serializable {
         this(PointBlock.of(points), offset);
     }
 
+    /** {@link #Coreset(List, double)} with offset 0: copies the entries. */
     public static Coreset of(List<WeightedPoint> points) {
         return new Coreset(points, 0.0);
     }
@@ -40,25 +48,29 @@ public record Coreset(PointBlock block, double offset) implements Serializable {
         return new Coreset(block, 0.0);
     }
 
-    /** Concatenates points (a's first) and adds offsets; one allocation per block array. */
+    public static Coreset of(PointSet points) {
+        return new Coreset(points, 0.0);
+    }
+
+    /** Points of {@code a} then {@code b}, sharing their segments, with the offsets added: O(segments). */
     public static Coreset union(Coreset a, Coreset b) {
-        return union(List.of(a, b));
+        return new Coreset(PointSet.concat(List.of(a.pointSet, b.pointSet)), a.offset + b.offset);
     }
 
     /**
-     * Concatenates the points of all coresets in order and adds their offsets: one allocation per block array, and
-     * no per-point checks beyond one dimension comparison per coreset.
+     * The points of all coresets in order, sharing their segments, with the offsets added: O(parts + segments), no
+     * point or entry copied and no per-point check beyond one dimension comparison per part.
      *
      * @throws IllegalArgumentException if two non-empty coresets differ in dimension
      */
     public static Coreset union(List<Coreset> parts) {
-        List<PointBlock> blocks = new ArrayList<>(parts.size());
+        List<PointSet> sets = new ArrayList<>(parts.size());
         double offset = 0.0;
         for (Coreset c : parts) {
-            blocks.add(c.block);
+            sets.add(c.pointSet);
             offset += c.offset;
         }
-        return new Coreset(PointBlock.concat(blocks), offset);
+        return new Coreset(PointSet.concat(sets), offset);
     }
 
     /** Builder that collects points one by one; the expected size only presizes it. */
@@ -70,35 +82,36 @@ public record Coreset(PointBlock block, double offset) implements Serializable {
     }
 
     /**
-     * The points as a read-only list view of {@link #block()}: every {@code get} materialises a {@link WeightedPoint}
-     * over a vector view (two small objects, no entry copy). Hot loops should read the block instead.
+     * The points as a read-only list view of {@link #pointSet()}: every {@code get} materialises a
+     * {@link WeightedPoint} over a vector view (two small objects, no entry copy). Hot loops should stream the
+     * segments instead.
      */
     public List<WeightedPoint> points() {
-        return block.asList();
+        return pointSet.asList();
     }
 
     public double totalWeight() {
-        return block.totalWeight();
+        return pointSet.totalWeight();
     }
 
     public int size() {
-        return block.size();
+        return pointSet.size();
     }
 
     public boolean isEmpty() {
-        return block.isEmpty();
+        return pointSet.isEmpty();
     }
 
     /**
      * Approximate retained heap size in bytes (same model as {@link SparseVector#estimatedBytes()}): this record and
-     * its {@link PointBlock#estimatedBytes() block}.
+     * its {@link PointSet#estimatedBytes() point set}.
      */
     public long estimatedBytes() {
         return SparseVector.align(SparseVector.OBJECT_HEADER_BYTES + SparseVector.REFERENCE_BYTES + 8L)
-                + block.estimatedBytes();
+                + pointSet.estimatedBytes();
     }
 
-    /** Collects points, checking each one's dimension as it is added. Not thread-safe; build at most once. */
+    /** Collects points into one block, checking each one's dimension as it is added. Not thread-safe; build once. */
     public static final class Builder {
         private final int expectedSize;
         private PointBlock.Builder points; // created by the first point, which fixes the dimension
@@ -119,10 +132,14 @@ public record Coreset(PointBlock block, double offset) implements Serializable {
             return this;
         }
 
-        /** Appends every point of {@code c}: one dimension check and one bulk copy. */
+        /** Appends every point of {@code c}: one dimension check and one bulk copy per segment. */
         public Builder addAll(Coreset c) {
-            if (!c.isEmpty()) {
-                target(c.block.dim(), c.block.storedEntries()).addAll(c.block);
+            PointSet s = c.pointSet;
+            if (!s.isEmpty()) {
+                PointBlock.Builder b = target(s.dim(), (s.storedEntries() + s.size() - 1) / s.size());
+                for (int t = 0; t < s.segmentCount(); t++) {
+                    b.addAll(s.segment(t));
+                }
             }
             return this;
         }
@@ -135,12 +152,13 @@ public record Coreset(PointBlock block, double offset) implements Serializable {
             return new Coreset(points == null ? PointBlock.EMPTY : points.build(), offset);
         }
 
-        private PointBlock.Builder target(int dim, long entries) {
+        /** The first point fixes the dimension; its entries per point times the expected size presize the arrays. */
+        private PointBlock.Builder target(int dim, long entriesPerPoint) {
             if (built) {
                 throw new IllegalStateException("already built");
             }
             if (points == null) {
-                points = PointBlock.builder(dim, expectedSize, entries * Math.max(1, expectedSize));
+                points = PointBlock.builder(dim, expectedSize, entriesPerPoint * Math.max(1, expectedSize));
             }
             return points;
         }

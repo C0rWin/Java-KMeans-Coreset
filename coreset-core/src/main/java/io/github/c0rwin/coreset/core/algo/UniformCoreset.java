@@ -4,6 +4,7 @@ import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.Span;
@@ -32,7 +33,7 @@ public final class UniformCoreset implements CoresetAlgorithm {
     @Override
     public Coreset compress(Coreset input, RandomGenerator rng, MetricsSink metrics) {
         try (Span ignored = metrics.span(MetricNames.UNIFORM_COMPRESS)) {
-            PointBlock points = input.block();
+            PointSet points = input.pointSet();
             final int n = points.size();
             if (n <= m) {
                 metrics.count(MetricNames.UNIFORM_PASSTHROUGH, 1);
@@ -41,10 +42,13 @@ public final class UniformCoreset implements CoresetAlgorithm {
             double[] weights = new double[n];
             double total = 0.0;
             double moment = 0.0;
-            for (int i = 0; i < n; i++) {
-                weights[i] = points.weight(i);
-                total += weights[i];
-                moment += weights[i] * points.squaredNorm(i);
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock p = points.segment(t);
+                for (int i = 0, size = p.size(); i < size; i++, g++) {
+                    weights[g] = p.weight(i);
+                    total += weights[g];
+                    moment += weights[g] * p.squaredNorm(i);
+                }
             }
             Guards.requireSummable(total, moment);
             if (total == 0.0) {

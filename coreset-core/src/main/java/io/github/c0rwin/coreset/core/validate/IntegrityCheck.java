@@ -3,6 +3,7 @@ package io.github.c0rwin.coreset.core.validate;
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.Cost;
 import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import java.util.List;
 
@@ -33,8 +34,8 @@ public final class IntegrityCheck {
         int dim = dimension(input, coreset);
         double[] inFirst = new double[dim];
         double[] outFirst = new double[dim];
-        Moments in = moments(input.block(), inFirst);
-        Moments out = moments(coreset.block(), outFirst);
+        Moments in = moments(input.pointSet(), inFirst);
+        Moments out = moments(coreset.pointSet(), outFirst);
         double diff = 0.0;
         double ref = 0.0;
         for (int d = 0; d < dim; d++) {
@@ -65,8 +66,8 @@ public final class IntegrityCheck {
     }
 
     private static int dimension(Coreset a, Coreset b) {
-        int da = a.isEmpty() ? -1 : a.block().dim();
-        int db = b.isEmpty() ? -1 : b.block().dim();
+        int da = a.isEmpty() ? -1 : a.pointSet().dim();
+        int db = b.isEmpty() ? -1 : b.pointSet().dim();
         if (da >= 0 && db >= 0 && da != db) {
             throw new IllegalArgumentException("dimension mismatch: input " + da + ", coreset " + db);
         }
@@ -76,23 +77,26 @@ public final class IntegrityCheck {
     private record Moments(double weight, double second, int negative, int nonFinite) {
     }
 
-    private static Moments moments(PointBlock points, double[] first) {
+    private static Moments moments(PointSet points, double[] first) {
         double weight = 0.0;
         double second = 0.0;
         int negative = 0;
         int nonFinite = 0;
-        for (int i = 0, n = points.size(); i < n; i++) {
-            double w = points.weight(i);
-            double s = w * points.squaredNorm(i);
-            if (w < 0.0) {
-                negative++;
+        for (int t = 0; t < points.segmentCount(); t++) {
+            PointBlock b = points.segment(t);
+            for (int i = 0, n = b.size(); i < n; i++) {
+                double w = b.weight(i);
+                double s = w * b.squaredNorm(i);
+                if (w < 0.0) {
+                    negative++;
+                }
+                if (!Double.isFinite(w) || !Double.isFinite(s)) {
+                    nonFinite++;
+                }
+                weight += w;
+                second += s;
+                b.addTo(i, first, w);
             }
-            if (!Double.isFinite(w) || !Double.isFinite(s)) {
-                nonFinite++;
-            }
-            weight += w;
-            second += s;
-            points.addTo(i, first, w);
         }
         return new Moments(weight, second, negative, nonFinite);
     }
