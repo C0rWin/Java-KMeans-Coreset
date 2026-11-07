@@ -20,14 +20,15 @@ public class StreamingAlgorithm {
     }
 
     public void addDataset(final List<SparseWeightableVector> dataset) {
-        List<SparseWeightableVector> coreset = coresetAlgorithm.takeSample(dataset);
+        // takeSample may return its input as is, so never merge into or store the list it hands back.
+        List<SparseWeightableVector> coreset = Lists.newArrayList(coresetAlgorithm.takeSample(dataset));
         int treeLevel = 0;
         List<SparseWeightableVector> leaf = coresetTree.get(treeLevel);
 
         while (leaf != null) {
             coresetTree.remove(treeLevel++);
             coreset.addAll(leaf);
-            coreset = coresetAlgorithm.takeSample(coreset);
+            coreset = Lists.newArrayList(coresetAlgorithm.takeSample(coreset));
 
             leaf = coresetTree.get(treeLevel);
         }
@@ -35,18 +36,17 @@ public class StreamingAlgorithm {
         coresetTree.put(treeLevel, coreset);
     }
 
+    /**
+     * Union of the coresets stored on every tree level. It is not compressed again: each extra
+     * reduce step would add another level of approximation error on top of the tree's.
+     */
     public List<SparseWeightableVector> getTotalCoreset() {
-        if (coresetTree.size() == 1) {
-            for (List<SparseWeightableVector> coreset : coresetTree.values()) {
-                return coreset;
-            }
-        }
         final List<SparseWeightableVector> treeCoresetView = Lists.newArrayList();
         for (Map.Entry<Integer, List<SparseWeightableVector>> each : coresetTree.entrySet()) {
             treeCoresetView.addAll(each.getValue());
         }
 
-        return coresetAlgorithm.takeSample(treeCoresetView);
+        return treeCoresetView;
     }
 
 }
