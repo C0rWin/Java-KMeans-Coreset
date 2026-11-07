@@ -9,21 +9,33 @@ class BoundsTest {
 
     @Test
     void errorBudgetComposesBackToTheTarget() {
-        ErrorBudget b = ErrorBudget.forStream(0.1, 0.01, 16_000, 500, false);
+        ErrorBudget b = ErrorBudget.forStream(0.1, 0.01, 16_000, 500, false, false);
         assertEquals(5, b.levels()); // 32 batches
         assertEquals(31, b.reduceOps()); // 32 - bitCount(32)
         assertEquals(1.1, Math.pow(1 + b.epsPerLevel(), b.levels()), 1e-12);
         assertEquals(0.01 / 31, b.deltaPerReduce(), 1e-18);
         assertEquals(Math.pow(0.1 / b.epsPerLevel(), 2), b.sampleSizeFactor(), 1e-12);
 
-        ErrorBudget withFinal = ErrorBudget.forStream(0.1, 0.01, 16_001, 500, true);
+        ErrorBudget withFinal = ErrorBudget.forStream(0.1, 0.01, 16_001, 500, false, true);
         assertEquals(6 + 1, withFinal.levels()); // 33 batches -> ceil(log2 33) = 6, plus the final reduce
         assertEquals(33 - 2 + 1, withFinal.reduceOps());
     }
 
+    /** Review F10: the node compresses every raw batch before inserting it, one more level and b more reductions. */
+    @Test
+    void leafCompressionAddsALevelAndOneReductionPerBatch() {
+        ErrorBudget node = ErrorBudget.forStream(0.1, 0.01, 16_000, 500, true, false);
+        assertEquals(6, node.levels());
+        assertEquals(63, node.reduceOps()); // 31 merges + 32 batch compressions
+        assertEquals(1.1, Math.pow(1 + node.epsPerLevel(), 6), 1e-12);
+        ErrorBudget single = ErrorBudget.forStream(0.1, 0.01, 300, 500, true, false);
+        assertEquals(1, single.levels());
+        assertEquals(1, single.reduceOps());
+    }
+
     @Test
     void errorBudgetWithoutReductionsKeepsTheTarget() {
-        ErrorBudget b = ErrorBudget.forStream(0.2, 0.05, 300, 500, false);
+        ErrorBudget b = ErrorBudget.forStream(0.2, 0.05, 300, 500, false, false);
         assertEquals(0, b.levels());
         assertEquals(0, b.reduceOps());
         assertEquals(0.2, b.epsPerLevel());
@@ -48,9 +60,9 @@ class BoundsTest {
 
     @Test
     void rejectsInvalidArguments() {
-        assertThrows(IllegalArgumentException.class, () -> ErrorBudget.forStream(0, 0.1, 10, 5, false));
-        assertThrows(IllegalArgumentException.class, () -> ErrorBudget.forStream(0.1, 1.0, 10, 5, false));
-        assertThrows(IllegalArgumentException.class, () -> ErrorBudget.forStream(0.1, 0.1, 0, 5, false));
+        assertThrows(IllegalArgumentException.class, () -> ErrorBudget.forStream(0, 0.1, 10, 5, false, false));
+        assertThrows(IllegalArgumentException.class, () -> ErrorBudget.forStream(0.1, 1.0, 10, 5, false, false));
+        assertThrows(IllegalArgumentException.class, () -> ErrorBudget.forStream(0.1, 0.1, 0, 5, false, false));
         assertThrows(IllegalArgumentException.class, () -> TheoryBounds.singleQuerySampleSize(0, 0.1, 0.1));
         assertThrows(IllegalArgumentException.class, () -> TheoryBounds.allQueriesSampleSize(1, 0.1, 0.1, 1, 0));
         assertThrows(IllegalArgumentException.class, () -> TheoryBounds.kMeansTotalSensitivity(0, 2.0));
