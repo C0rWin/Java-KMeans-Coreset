@@ -9,6 +9,7 @@ import io.github.c0rwin.coreset.core.algo.TestData;
 import io.github.c0rwin.coreset.core.algo.UniformCoreset;
 import java.util.List;
 import java.util.SplittableRandom;
+import java.util.random.RandomGenerator;
 import org.junit.jupiter.api.Test;
 
 class CandidateSolutionsTest {
@@ -44,6 +45,22 @@ class CandidateSolutionsTest {
                 for (int d = 0; d < 2; d++) {
                     assertTrue(v.get(d) >= lo[d] - 1e-9 && v.get(d) <= hi[d] + 1e-9, v.toString());
                 }
+            }
+        }
+    }
+
+    /**
+     * Review F12: nextDouble() may return 0.0, which made the single Exp(1) coefficient -0.0, its total 0 and the
+     * normalised coefficient NaN. A generator that always returns 0 forces that path.
+     */
+    @Test
+    void zeroUniformDrawDoesNotProduceNaNCenters() {
+        Coreset p = TestData.mixture(50, 2, 2, false, 6);
+        RandomGenerator zeros = () -> 0L;
+        assertEquals(0.0, zeros.nextDouble());
+        for (Candidate x : CandidateSolutions.convexCombinationsOfBicriteria(p, 2, 3, zeros)) {
+            for (SparseVector v : x.centers()) {
+                assertTrue(Double.isFinite(v.squaredNorm()), v.toString());
             }
         }
     }
