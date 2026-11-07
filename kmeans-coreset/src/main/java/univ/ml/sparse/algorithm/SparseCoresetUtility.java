@@ -1,43 +1,26 @@
-/*
- * BEGIN_COPYRIGHT
- *
- *   IBM Confidential
- *   OCO Source Materials
- *
- *   5727-I17
- *   (C) Copyright IBM Corp. 2011, 2016 All Rights Reserved.
- *
- *   The source code for this program is not published or otherwise
- *   divested of its trade secrets, irrespective of what has been
- *   deposited with the U.S. Copyright Office.
- *
- *  END_COPYRIGHT
- *
- */
-
+// SPDX-License-Identifier: MIT
 package univ.ml.sparse.algorithm;
 
 import java.util.List;
-
-import org.apache.commons.math3.util.FastMath;
 
 import univ.ml.sparse.SparseCentroidCluster;
 import univ.ml.sparse.SparseWeightableVector;
 
 public class SparseCoresetUtility {
 
+    /**
+     * Weighted k-means cost of {@code points} w.r.t. the cluster centers: sum_p w_p * min_c ||p - c||^2.
+     */
     public static double getEnergy(final List<SparseCentroidCluster> centers, final List<SparseWeightableVector> points) {
-        double result = 0d;
+        double energy = 0;
         for (final SparseWeightableVector point : points) {
-            double minDist = Double.MAX_VALUE;
+            double minSquaredDistance = Double.POSITIVE_INFINITY;
             for (final SparseCentroidCluster center : centers) {
-                double dist = FastMath.pow(point.getDistance(center.getCenter().getVector()), 2);
-                if (dist < minDist) {
-                    minDist = dist;
-                }
+                final double distance = center.getDistanceToCenter(point);
+                minSquaredDistance = Math.min(minSquaredDistance, distance * distance);
             }
-            result += minDist;
+            energy += point.getWeight() * minSquaredDistance;
         }
-        return result;
+        return energy;
     }
 }
