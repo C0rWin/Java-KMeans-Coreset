@@ -152,7 +152,7 @@ class SessionRacesTest {
         CoresetNode n = node(Map.of());
         n.createSession("window", new SessionSpec("identity", Map.of(), 1L, 1, 4));
         SplittableRandom rng = new SplittableRandom(4);
-        int window = 4096; // default dedupe window
+        int window = NodeLimits.defaults().maxSeqWindow();
         IngestResult far = n.ingest("window", window, TestData.batch(rng, 1, DIM));
         assertEquals(FAILED, far.status());
         assertTrue(far.reason().contains("dedupe window"), far.reason());

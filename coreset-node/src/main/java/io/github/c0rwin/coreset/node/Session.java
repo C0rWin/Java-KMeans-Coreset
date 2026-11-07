@@ -18,9 +18,6 @@ import java.util.random.RandomGenerator;
 /** One ingestion session: dedupe, routing to workers, failure state and snapshots. Lock-free throughout. */
 final class Session {
 
-    private static final int CAS_READ_ATTEMPTS = 1024;
-    /** Bound on distinct producer ids per session; each one keeps a small dedupe state for the session's life. */
-    static final int MAX_PRODUCERS = 1024;
     static final int MAX_PRODUCER_ID_LENGTH = 128;
 
     final String id;
@@ -28,8 +25,9 @@ final class Session {
     final CoresetAlgorithm algorithm;
     final MetricsSink metrics;
     final CasMergeReduceTree casTree;
+    private final NodeLimits limits;
     private final Worker[] workers;
-    private final Producer defaultProducer = new Producer(Producer.DEFAULT_ID);
+    private final Producer defaultProducer;
     private final ConcurrentHashMap<String, Producer> producers = new ConcurrentHashMap<>();
     private final AtomicInteger producerCount = new AtomicInteger();
     private final DoubleAdder acceptedWeight = new DoubleAdder();
@@ -38,11 +36,13 @@ final class Session {
     private final ConcurrentLinkedQueue<Thread> waiters = new ConcurrentLinkedQueue<>();
     private volatile boolean closed;
 
-    Session(String id, SessionSpec spec, CoresetAlgorithm algorithm, MetricsSink metrics) {
+    Session(String id, SessionSpec spec, CoresetAlgorithm algorithm, MetricsSink metrics, NodeLimits limits) {
         this.id = id;
         this.spec = spec;
         this.algorithm = algorithm;
         this.metrics = metrics;
+        this.limits = limits;
+        this.defaultProducer = new Producer(Producer.DEFAULT_ID, limits.maxSeqWindow());
         this.casTree = spec.treeMode() == TreeMode.CAS ? new CasMergeReduceTree(algorithm, metrics) : null;
         RandomGenerator[] rngs = Seeds.workers(spec.seed(), spec.workers());
         this.workers = new Worker[spec.workers()];
@@ -106,7 +106,7 @@ final class Session {
         if (producer == null) {
             return IngestResult.failed(producerId.length() > MAX_PRODUCER_ID_LENGTH
                     ? "producer id longer than " + MAX_PRODUCER_ID_LENGTH + " chars"
-                    : "session has the maximum of " + MAX_PRODUCERS + " producers");
+                    : "session has the maximum of " + limits.maxProducersPerSession() + " producers");
         }
         SeqDeduplicator dedupe = producer.dedupe;
         switch (dedupe.claim(seq)) {
@@ -114,19 +114,38 @@ final class Session {
                 return IngestResult.duplicate();
             case IN_FLIGHT:
                 return IngestResult.busy("seq " + seq + " is being enqueued by another call");
+            case OUT_OF_WINDOW:
+                return IngestResult.failed("seq " + seq + " is outside the dedupe window of " + dedupe.window()
+                        + " above the producer's lowest unacknowledged seq " + dedupe.floor()
+                        + "; number batches densely per producer");
             case CLAIMED:
                 break;
             default:
                 throw new AssertionError();
         }
         Worker w = workers[producer.worker(seq, workers.length)];
-        if (!w.queue.offer(new Worker.PendingBatch(seq, producer.salt, points, weight))) {
-            dedupe.release(seq);
+        // Counted before the offer so a snapshot never sees the batch applied but not accepted.
+        acceptedWeight.add(weight);
+        boolean offered = false;
+        try {
+            offered = w.queue.offer(new Worker.PendingBatch(seq, producer.salt, points, weight));
+        } finally {
+            if (offered) {
+                dedupe.commit(seq);
+            } else {
+                // Also on an Error between claim and offer: an abandoned claim would answer BUSY forever.
+                dedupe.release(seq);
+                acceptedWeight.add(-weight);
+            }
+        }
+        if (!offered) {
             return IngestResult.busy("worker queue full");
         }
-        dedupe.commit(seq);
-        acceptedWeight.add(weight);
         w.wake();
+        if (stopping()) {
+            // close() or fail() began after the checks above: the worker may never take this batch.
+            return IngestResult.failed("session " + (closed ? "closed" : "failed") + " while the batch was enqueued");
+        }
         if (metrics != MetricsSink.NOOP) {
             metrics.record(NodeMetricNames.QUEUE_DEPTH, w.queue.size());
         }
@@ -145,11 +164,11 @@ final class Session {
         if (id.length() > MAX_PRODUCER_ID_LENGTH) {
             return null;
         }
-        if (producerCount.incrementAndGet() > MAX_PRODUCERS) {
+        if (producerCount.incrementAndGet() > limits.maxProducersPerSession()) {
             producerCount.decrementAndGet();
             return producers.get(id);
         }
-        Producer fresh = new Producer(id);
+        Producer fresh = new Producer(id, limits.maxSeqWindow());
         Producer raced = producers.putIfAbsent(id, fresh);
         if (raced != null) {
             producerCount.decrementAndGet();
@@ -171,7 +190,8 @@ final class Session {
                 appliedWeight += v.inputWeight();
             }
         } else {
-            CasMergeReduceTree.Read read = casTree.read(CAS_READ_ATTEMPTS);
+            long waitNanos = stopping() ? 0L : limits.casSnapshotWait().toNanos();
+            CasMergeReduceTree.Read read = casTree.read(waitNanos, this::stopping);
             for (Summary s : read.summaries()) {
                 parts.add(s.coreset());
                 appliedBatches += s.batches();
@@ -213,15 +233,16 @@ final class Session {
                 appliedWeight, consistent);
     }
 
-    /**
-     * Waits until every batch accepted before this call is reflected in the trees. Per-worker FIFO order makes
-     * "worker i applied at least as many batches as had been enqueued to it" sufficient.
-     */
     /** Worker {@code i}'s last published view (tests). */
     Worker.View workerView(int i) {
         return workers[i].view();
     }
 
+    /**
+     * Waits until every batch accepted before this call is reflected in the trees. Per-worker FIFO order makes
+     * "worker i applied at least as many batches as had been enqueued to it" sufficient; in CAS mode new carries are
+     * then held off until the ones in flight are placed, so other producers cannot starve the wait.
+     */
     boolean awaitApplied(Duration timeout) throws InterruptedException {
         long[] targets = new long[workers.length];
         for (int i = 0; i < workers.length; i++) {
@@ -239,7 +260,7 @@ final class Session {
                 if (closed) {
                     throw new IllegalStateException("session " + id + " closed");
                 }
-                if (reached(targets)) {
+                if (reached(targets, deadline)) {
                     return true;
                 }
                 long remaining = deadline - System.nanoTime();
@@ -256,14 +277,14 @@ final class Session {
         }
     }
 
-    private boolean reached(long[] targets) {
+    private boolean reached(long[] targets, long deadline) {
         for (int i = 0; i < workers.length; i++) {
             if (workers[i].applied() < targets[i]) {
                 return false;
             }
         }
         // A carry in progress holds applied batches outside every slot.
-        return casTree == null || casTree.inFlightBatches() == 0;
+        return casTree == null || casTree.awaitQuiescent(deadline, this::stopping);
     }
 
     void onApplied() {

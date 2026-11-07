@@ -43,6 +43,7 @@ public final class CoresetNode implements AutoCloseable {
     private final AlgorithmResolver resolver;
     private final Duration shutdownGrace;
     private final MetricsSink metrics;
+    private final NodeLimits limits;
     private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
     private volatile boolean closed;
 
@@ -56,9 +57,15 @@ public final class CoresetNode implements AutoCloseable {
 
     /** @param shutdownGrace how long closing waits for a worker inside the algorithm before interrupting it */
     public CoresetNode(AlgorithmResolver resolver, MetricsSink metrics, Duration shutdownGrace) {
+        this(resolver, metrics, shutdownGrace, NodeLimits.defaults());
+    }
+
+    /** @param limits resource bounds enforced before anything is allocated for a caller */
+    public CoresetNode(AlgorithmResolver resolver, MetricsSink metrics, Duration shutdownGrace, NodeLimits limits) {
         this.resolver = Objects.requireNonNull(resolver, "resolver");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.shutdownGrace = Objects.requireNonNull(shutdownGrace, "shutdownGrace");
+        this.limits = Objects.requireNonNull(limits, "limits");
     }
 
     /**
@@ -81,14 +88,17 @@ public final class CoresetNode implements AutoCloseable {
         if (algorithm == null) {
             throw new IllegalStateException("resolver returned null for " + spec.algorithmId());
         }
-        Session session = new Session(sessionId, spec, algorithm, metrics);
+        Session session = new Session(sessionId, spec, algorithm, metrics, limits);
         Session raced = sessions.putIfAbsent(sessionId, session);
         if (raced != null) {
             return requireSameSpec(raced, spec);
         }
         session.start();
-        if (closed && sessions.remove(sessionId, session)) {
-            session.close(shutdownGrace);
+        if (closed) {
+            // If close() already removed the session it has closed it too; either way it is dead.
+            if (sessions.remove(sessionId, session)) {
+                session.close(shutdownGrace);
+            }
             throw new IllegalStateException("node closed");
         }
         metrics.count(NodeMetricNames.SESSIONS_CREATED, 1);

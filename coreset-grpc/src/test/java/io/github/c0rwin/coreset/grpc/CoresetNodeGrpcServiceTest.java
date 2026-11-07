@@ -3,7 +3,6 @@ package io.github.c0rwin.coreset.grpc;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -176,10 +175,14 @@ class CoresetNodeGrpcServiceTest {
         List<WeightedPoint> b = TestData.batch(new SplittableRandom(9), 2, DIM);
         AckCollector acks = new AckCollector();
         StreamObserver<Batch> requests = CoresetNodeServiceGrpc.newStub(cluster.channels.get(0)).ingest(acks);
-        requests.onNext(batch("s", Long.MAX_VALUE, b)); // 2^63 - 1 is the largest valid seq
+        requests.onNext(batch("s", 0, b));
         assertEquals(AckStatus.ACK_STATUS_ACCEPTED, acks.next().getStatus());
+        requests.onNext(batch("s", Long.MAX_VALUE, b)); // 2^63 - 1 is valid on the wire; the node's window refuses it
+        Ack far = acks.next();
+        assertEquals(AckStatus.ACK_STATUS_FAILED, far.getStatus());
+        assertTrue(far.getMessage().contains("dedupe window"), far.getMessage());
         requests.onNext(batch("s", Long.MIN_VALUE, b)); // uint64 2^63 on the wire
-        requests.onNext(batch("s", 0, b)); // never read: the stream is already failed
+        requests.onNext(batch("s", 1, b)); // never read: the stream is already failed
         assertTrue(acks.done.await(30, TimeUnit.SECONDS));
         Status status = Status.fromThrowable(acks.error);
         assertEquals(Status.Code.INVALID_ARGUMENT, status.getCode());
@@ -188,7 +191,7 @@ class CoresetNodeGrpcServiceTest {
 
         var counters = cluster.metrics.get(0).snapshot().counters();
         assertEquals(1, counters.get(io.github.c0rwin.coreset.node.NodeMetricNames.INGEST_ACCEPTED));
-        assertNull(counters.get(io.github.c0rwin.coreset.node.NodeMetricNames.INGEST_FAILED)); // node never saw it
+        assertEquals(1, counters.get(io.github.c0rwin.coreset.node.NodeMetricNames.INGEST_FAILED)); // 2^63 never got there
         assertTrue(cluster.nodes.get(0).awaitApplied("s", Duration.ofSeconds(30)));
         assertEquals(1, cluster.nodes.get(0).snapshot("s").appliedBatches());
     }

@@ -12,11 +12,12 @@ final class Producer {
     final String id;
     /** Mixed into the batch seed so equal seqs of different producers get independent generators. */
     final long salt;
-    final SeqDeduplicator dedupe = new SeqDeduplicator();
+    final SeqDeduplicator dedupe;
 
-    Producer(String id) {
+    Producer(String id, int seqWindow) {
         this.id = id;
         this.salt = id.isEmpty() ? 0L : Seeds.mix64(fnv1a64(id));
+        this.dedupe = new SeqDeduplicator(seqWindow);
     }
 
     /** Worker for {@code seq}: the salt rotates the start so concurrent producers spread over workers. */

@@ -6,23 +6,37 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Lock-free exactly-once filter over non-negative batch sequence numbers.
  *
- * <p>Memory stays bounded for (mostly) dense seqs: every seq below {@code floor} is known committed, and only seqs
- * at or above it are kept in a map, as PENDING (claimed, enqueue in progress) or COMMITTED. Committing the seq at the
- * floor advances it over the committed run and drops those entries. A gap that is never filled pins the floor.
+ * <p>Memory is bounded: every seq below {@code floor} is known committed, and only seqs in
+ * {@code [floor, floor + window)} are kept in a map, as PENDING (claimed, enqueue in progress) or COMMITTED; seqs
+ * further ahead are refused. Committing the seq at the floor advances it over the committed run and drops those
+ * entries. A gap that is never filled pins the floor, so a sender that skips seqs eventually gets refused instead of
+ * growing the map.
  *
  * <p>Invariant: the floor only passes a seq whose entry is COMMITTED, so a PENDING claim can never be overtaken.
  */
 final class SeqDeduplicator {
 
-    enum Claim { CLAIMED, DUPLICATE, IN_FLIGHT }
+    enum Claim { CLAIMED, DUPLICATE, IN_FLIGHT, OUT_OF_WINDOW }
 
+    private final long window;
     private final AtomicLong floor = new AtomicLong();
     private final ConcurrentHashMap<Long, Boolean> above = new ConcurrentHashMap<>();
 
+    SeqDeduplicator(long window) {
+        if (window < 1) {
+            throw new IllegalArgumentException("window must be >= 1: " + window);
+        }
+        this.window = window;
+    }
+
     /** Reserves {@code seq}; a {@link Claim#CLAIMED} result must be followed by {@link #commit} or {@link #release}. */
     Claim claim(long seq) {
-        if (seq < floor.get()) {
+        long f = floor.get();
+        if (seq < f) {
             return Claim.DUPLICATE;
+        }
+        if (seq - f >= window) {
+            return Claim.OUT_OF_WINDOW; // f only grows, so a stale read can only refuse, never over-admit
         }
         Boolean prev = above.putIfAbsent(seq, Boolean.FALSE);
         if (prev != null) {
@@ -34,6 +48,10 @@ final class SeqDeduplicator {
             return Claim.DUPLICATE;
         }
         return Claim.CLAIMED;
+    }
+
+    long window() {
+        return window;
     }
 
     void commit(long seq) {
