@@ -35,6 +35,12 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
+      <!-- Only CoresetCodec is benchmarked; Spark itself stays a provided dependency of coreset-spark. -->
+      <groupId>io.github.c0rwin.coreset</groupId>
+      <artifactId>coreset-spark</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
       <!-- Legacy Thrift server, only for the parity benchmark. -->
       <groupId>univ.ml.distributed.coreset</groupId>
       <artifactId>coreset-server</artifactId>

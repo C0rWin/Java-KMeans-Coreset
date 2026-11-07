@@ -14,6 +14,34 @@ public final class Workloads {
     }
 
     /**
+     * {@code n} unit-weight sparse points of dimension {@code dim} with about {@code nnz} non-zeros each, in
+     * {@code clusters} groups: every cluster owns {@code 8 * nnz} random coordinates and each entry of a point is drawn
+     * from its cluster's coordinates with probability 0.8 and uniformly otherwise (duplicates are summed). Values are
+     * in [1, 2). Models bag-of-words style data where the centers' supports grow far beyond a point's.
+     */
+    public static List<WeightedPoint> sparseMixture(int n, int dim, int nnz, int clusters, long seed) {
+        SplittableRandom rng = new SplittableRandom(seed);
+        int[][] pools = new int[clusters][8 * nnz];
+        for (int[] pool : pools) {
+            for (int j = 0; j < pool.length; j++) {
+                pool[j] = rng.nextInt(dim);
+            }
+        }
+        List<WeightedPoint> out = new ArrayList<>(n);
+        int[] idx = new int[nnz];
+        double[] val = new double[nnz];
+        for (int i = 0; i < n; i++) {
+            int[] pool = pools[rng.nextInt(clusters)];
+            for (int j = 0; j < nnz; j++) {
+                idx[j] = rng.nextDouble() < 0.8 ? pool[rng.nextInt(pool.length)] : rng.nextInt(dim);
+                val[j] = 1.0 + rng.nextDouble();
+            }
+            out.add(new WeightedPoint(SparseVector.of(dim, idx, val), 1.0));
+        }
+        return out;
+    }
+
+    /**
      * {@code n} unit-weight points from {@code clusters} isotropic Gaussians (sigma 1) whose means are uniform in
      * {@code [-50, 50]^d}; every coordinate is stored, so {@code nnz = d}.
      */
