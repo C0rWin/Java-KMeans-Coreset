@@ -40,7 +40,7 @@ class PartitionSeedsTest {
 
     private Coreset ingestAndSnapshot(String session, List<List<WeightedPoint>> batches) throws Exception {
         for (int seq = 0; seq < batches.size(); seq++) {
-            assertEquals(ACCEPTED, node.ingest(session, "p", seq, batches.get(seq)).status());
+            assertEquals(ACCEPTED, TestData.offer(node, session, "p", seq, batches.get(seq), WAIT).status());
         }
         assertTrue(node.awaitApplied(session, WAIT));
         return node.snapshot(session).coreset();

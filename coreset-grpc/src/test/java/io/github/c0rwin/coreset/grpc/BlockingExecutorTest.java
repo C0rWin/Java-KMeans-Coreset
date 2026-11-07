@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.grpc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
@@ -27,7 +28,6 @@ import java.util.SplittableRandom;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 
 /** Blocking calls run on a bounded executor; beyond its queue they are refused, not queued without bound (M4). */
@@ -50,7 +50,7 @@ class BlockingExecutorTest {
                     .setSpec(ProtoCodec.toProto(new SessionSpec("gated", Map.of(), 1L, 1, 2))).build());
             node.ingest("g", 0, TestData.batch(new SplittableRandom(1), 1, 2));
             gated.awaitEntered();
-            SnapshotRequest waiting = SnapshotRequest.newBuilder().setSessionId("g").setAwaitAppliedMs(30_000).build();
+            SnapshotRequest waiting = SnapshotRequest.newBuilder().setSessionId("g").setAwaitAppliedMs(300_000).build();
             CoresetNodeServiceGrpc.CoresetNodeServiceStub async = CoresetNodeServiceGrpc.newStub(channel);
             List<CompletableFuture<SnapshotResponse>> calls = new ArrayList<>();
             for (int i = 0; i < 5; i++) {
@@ -58,16 +58,18 @@ class BlockingExecutorTest {
                 async.snapshot(waiting, observer(f));
                 calls.add(f);
             }
-            // One thread plus one queue slot: at most two of the five waits are admitted while the gate is shut.
+            // One thread plus one queue slot: at most two of the five waits are admitted while the gate is shut, so
+            // at least three must come back refused; wait for them however slowly a loaded host answers.
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            while (calls.stream().filter(CompletableFuture::isDone).count() < 3 && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
             int refused = 0;
             for (CompletableFuture<SnapshotResponse> f : calls) {
-                try {
-                    f.get(200, TimeUnit.MILLISECONDS);
-                } catch (ExecutionException e) {
+                if (f.isDone()) {
+                    ExecutionException e = assertThrows(ExecutionException.class, f::get);
                     assertEquals(Status.Code.RESOURCE_EXHAUSTED, Status.fromThrowable(e.getCause()).getCode());
                     refused++;
-                } catch (TimeoutException e) {
-                    // admitted and waiting for the gate
                 }
             }
             assertTrue(refused >= 3, "refused " + refused);
