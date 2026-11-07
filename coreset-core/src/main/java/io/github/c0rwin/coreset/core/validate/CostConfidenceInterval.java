@@ -75,9 +75,10 @@ public final class CostConfidenceInterval {
      * {@code 1 - delta} the relative error is at most {@code eps = S * sqrt(ln(2 / delta) / (2 m))}. Very wide in
      * practice (upper end +infinity once {@code eps >= 1}).
      *
-     * <p>The guarantee holds only for {@code SensitivityBound.standard(alpha)} when the seeding's cost is within
-     * {@code alpha} of the optimum (for the default k-means++ alpha, with probability at least 1/2 per seeding). The
-     * legacy bound is not an upper bound, so this interval is then heuristic.
+     * <p>S is the total of whichever bound and alpha produced the sample. The guarantee holds only for
+     * {@code SensitivityBound.standard(alpha)} when the seeding's cost is within {@code alpha} of the optimum: with
+     * {@code alpha = kMeansPlusPlusAlpha(k)} that holds with probability at least 1/2 per seeding. With the default
+     * {@code DEFAULT_ALPHA = 2} or the legacy bound it is not ensured, so the interval is then heuristic.
      *
      * @throws IllegalArgumentException unless {@code 0 < delta < 1}
      */

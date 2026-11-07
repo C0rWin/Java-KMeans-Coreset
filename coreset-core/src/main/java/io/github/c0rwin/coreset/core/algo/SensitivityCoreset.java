@@ -15,7 +15,7 @@ import java.util.random.RandomGenerator;
 /**
  * Sensitivity (importance) sampling in the Feldman-Langberg framework. A {@link Seeding} gives a rough clustering B, a
  * {@link SensitivityBound} turns it into per-point bounds {@code s_p} (by default
- * {@link SensitivityBound#standard} with {@code alpha = }{@link SensitivityBound#kMeansPlusPlusAlpha}{@code (k)}),
+ * {@link SensitivityBound#standard} with {@code alpha = }{@link SensitivityBound#DEFAULT_ALPHA}),
  * m points are drawn i.i.d. with {@code q_p = s_p / S} where {@code S = sum_p s_p} is the actual total, and a point
  * drawn {@code c_p} times gets weight {@code w_p * c_p / (m * q_p)}. This makes {@code cost(C, Q)} unbiased for every
  * Q and the total weight unbiased, whatever the bound; the bound only has to dominate the true sensitivities for
@@ -32,12 +32,13 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
     private final SensitivityBound bound;
 
     /**
-     * Uses {@link SensitivityBound#standard} with {@link SensitivityBound#kMeansPlusPlusAlpha}{@code (k)}.
+     * Uses {@link SensitivityBound#standard} with {@link SensitivityBound#DEFAULT_ALPHA}; pass
+     * {@code standard(kMeansPlusPlusAlpha(k))} for a bound that holds with probability 1/2 per seeding.
      *
      * @throws IllegalArgumentException if {@code k < 1} or {@code m < 1}
      */
     public SensitivityCoreset(int k, int m, Seeding seeding) {
-        this(k, m, seeding, SensitivityBound.standard(SensitivityBound.kMeansPlusPlusAlpha(k)));
+        this(k, m, seeding, SensitivityBound.standard(SensitivityBound.DEFAULT_ALPHA));
     }
 
     /** @throws IllegalArgumentException if {@code k < 1} or {@code m < 1} */

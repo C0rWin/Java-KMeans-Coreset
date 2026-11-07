@@ -11,6 +11,16 @@ import java.util.List;
  */
 public abstract class SensitivityBound {
 
+    /**
+     * Default alpha of {@link #standard}, chosen by measurement, not theory: on Gaussian mixtures with and without
+     * outliers (k 4-20, m 100-400, offline and 16-batch merge-reduce) it gave the lowest distortion and weight error
+     * of {1, 2, 16 (log2 k + 2)} and the legacy formula. The theory value {@link #kMeansPlusPlusAlpha} over-weights
+     * the distance terms and inflated merge-reduce distortion up to 8x on data with outliers. With this default s_p
+     * bounds the sensitivity only when the seeding is within a factor 2 of optimal, so Hoeffding intervals and
+     * a-priori sizes are heuristic; pass {@code kMeansPlusPlusAlpha(k)} where a guarantee is needed.
+     */
+    public static final double DEFAULT_ALPHA = 2.0;
+
     private SensitivityBound() {
     }
 

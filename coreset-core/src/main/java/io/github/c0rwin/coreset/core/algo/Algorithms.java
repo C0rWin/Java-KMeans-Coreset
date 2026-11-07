@@ -14,8 +14,9 @@ import java.util.TreeSet;
  *   <li>{@code sensitivity}: {@code k}, {@code m} (required); {@code seeding} = {@code kmeans++} (default) or
  *       {@code bicriteria}; {@code lloydIterations} (default 0, only with {@code kmeans++}); {@code bound} =
  *       {@code standard} (default, {@link SensitivityBound#standard}) or {@code legacy}
- *       ({@link SensitivityBound#legacy}, for comparison only); {@code alpha} (only with {@code standard}, default
- *       {@link SensitivityBound#kMeansPlusPlusAlpha}{@code (k)}) — {@link SensitivityCoreset}.</li>
+ *       ({@link SensitivityBound#legacy}, for comparison only); {@code alpha} (only with {@code standard}: a number,
+ *       or {@code kmeans++} for the theory-valid {@link SensitivityBound#kMeansPlusPlusAlpha}{@code (k)}; default
+ *       {@link SensitivityBound#DEFAULT_ALPHA}) — {@link SensitivityCoreset}.</li>
  *   <li>{@code mean}: either {@code m} (fixed number of means) or {@code k}, {@code eps}, {@code maxM} (adaptive
  *       search, {@link MeanCoreset#adaptive}); {@code lloydIterations} (default 20) — {@link MeanCoreset}.</li>
  * </ul>
@@ -150,9 +151,10 @@ public final class Algorithms {
         String bound = params.getOrDefault("bound", BOUND_STANDARD);
         switch (bound) {
             case BOUND_STANDARD:
-                return SensitivityBound.standard(params.containsKey("alpha")
-                        ? doubleParam(id, params, "alpha")
-                        : SensitivityBound.kMeansPlusPlusAlpha(k));
+                String alpha = params.get("alpha");
+                return SensitivityBound.standard(alpha == null ? SensitivityBound.DEFAULT_ALPHA
+                        : SEEDING_KMEANS_PLUS_PLUS.equals(alpha.trim()) ? SensitivityBound.kMeansPlusPlusAlpha(k)
+                        : doubleParam(id, params, "alpha"));
             case BOUND_LEGACY:
                 if (params.containsKey("alpha")) {
                     throw new IllegalArgumentException(id + ": alpha applies only to bound=" + BOUND_STANDARD);
