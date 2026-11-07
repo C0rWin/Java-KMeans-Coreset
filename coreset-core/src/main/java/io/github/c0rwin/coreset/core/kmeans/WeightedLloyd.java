@@ -8,6 +8,7 @@ import io.github.c0rwin.coreset.core.metrics.Span;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.SplittableRandom;
 import java.util.random.RandomGenerator;
 
 /**
@@ -61,6 +62,36 @@ public final class WeightedLloyd {
         }
         try (Span ignored = metrics.span(MetricNames.LLOYD_CLUSTER)) {
             return run(points, initialCenters, maxIterations, metrics);
+        }
+    }
+
+    /**
+     * Runs {@link #cluster(List, int, int, RandomGenerator, MetricsSink)} {@code restarts} times and returns the
+     * cheapest result (ties: earliest restart). Restart {@code i} uses {@code new SplittableRandom(s_i)}, where
+     * {@code s_i} is the {@code i}-th {@code rng.nextLong()}, so one restart can be replayed on its own. Lloyd only
+     * finds a local optimum; independent k-means++ restarts are the standard guard against a bad one.
+     *
+     * @throws IllegalArgumentException if {@code restarts < 1}, or as {@code cluster}
+     */
+    public static KMeansResult bestOf(List<WeightedPoint> points, int k, int maxIterations, int restarts,
+                                      RandomGenerator rng, MetricsSink metrics) {
+        if (restarts < 1) {
+            throw new IllegalArgumentException("restarts must be >= 1: " + restarts);
+        }
+        long[] seeds = new long[restarts];
+        for (int i = 0; i < restarts; i++) {
+            seeds[i] = rng.nextLong();
+        }
+        try (Span ignored = metrics.span(MetricNames.LLOYD_BEST_OF)) {
+            KMeansResult best = null;
+            for (long seed : seeds) {
+                KMeansResult r = cluster(points, k, maxIterations, new SplittableRandom(seed), metrics);
+                metrics.record(MetricNames.LLOYD_RESTART_COST, r.cost());
+                if (best == null || r.cost() < best.cost()) {
+                    best = r;
+                }
+            }
+            return best;
         }
     }
 

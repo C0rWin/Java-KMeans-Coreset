@@ -80,7 +80,7 @@ class NettyEndToEndTest {
                 assertEquals(300, snap.appliedBatches());
                 assertEquals(weight, snap.coreset().totalWeight());
 
-                KMeansResult km = CoresetCoordinator.cluster(snap.coreset(), 3, 50, 3L, null);
+                KMeansResult km = CoresetCoordinator.cluster(snap.coreset(), 3, 50, 10, 3L, null);
                 double rawCost = Cost.cost(all, km.centers());
                 double distributed = coordinator.cost("e2e", km.centers());
                 assertEquals(rawCost, distributed, 1e-9 * rawCost);

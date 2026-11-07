@@ -31,6 +31,10 @@ public final class MetricNames {
     public static final String LLOYD_ITERATION_COST = "lloyd.iteration_cost";
     /** Counter: centers re-seeded because their cluster had no positive weight. */
     public static final String LLOYD_EMPTY_CLUSTER_RESEEDS = "lloyd.empty_cluster_reseeds";
+    /** Span around one {@code WeightedLloyd.bestOf} call, all restarts included. */
+    public static final String LLOYD_BEST_OF = "lloyd.best_of";
+    /** Distribution: final cost of each {@code bestOf} restart; its spread shows how bad local optima get. */
+    public static final String LLOYD_RESTART_COST = "lloyd.restart_cost";
 
     /** Span around one {@code MergeReduceTree.add}, including all carries. */
     public static final String MRTREE_ADD = "mrtree.add";

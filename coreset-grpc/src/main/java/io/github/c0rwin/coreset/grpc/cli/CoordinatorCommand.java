@@ -87,6 +87,10 @@ public final class CoordinatorCommand implements Callable<Integer> {
     @Option(names = "--iterations", defaultValue = "50", description = "Lloyd iterations. Default: ${DEFAULT-VALUE}")
     int iterations;
 
+    @Option(names = "--restarts", defaultValue = "10",
+            description = "k-means++ and Lloyd restarts; the cheapest is kept. Default: ${DEFAULT-VALUE}")
+    int restarts;
+
     @Option(names = "--final-algorithm", description = "Compress the gathered union once more with this algorithm.")
     String finalAlgorithm;
 
@@ -137,7 +141,8 @@ public final class CoordinatorCommand implements Callable<Integer> {
                 spec.commandLine().getErr().printf("warning: snapshot incomplete (%d of %d batches applied)%n",
                         snapshot.appliedBatches(), snapshot.acceptedBatches());
             }
-            KMeansResult result = CoresetCoordinator.cluster(snapshot.coreset(), k, iterations, seed, finalCompress);
+            KMeansResult result = CoresetCoordinator.cluster(snapshot.coreset(), k, iterations, restarts, seed,
+                    finalCompress);
             double cost = coordinator.cost(sessionId, result.centers());
             if (!keepSession) {
                 coordinator.closeSession(sessionId);
