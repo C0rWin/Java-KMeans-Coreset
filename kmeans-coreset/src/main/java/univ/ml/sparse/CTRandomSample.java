@@ -30,6 +30,9 @@ public class CTRandomSample implements RandomSampleAlgorithm, Serializable {
         for (int i = 0; i < t; i++) {
             double pr = rnd.nextDouble();
             int index = buckets[Math.min((int)Math.floor(pr * M), M - 1)];
+            // Rounding in pr * M can land one bucket late; step back to the first point with cumsum > pr.
+            for (; index > 0 && cumsum[index - 1] > pr; --index) {
+            }
             for(; index < cumsum.length && cumsum[index] <= pr; ++index) {
 
             }
@@ -64,11 +67,13 @@ public class CTRandomSample implements RandomSampleAlgorithm, Serializable {
             cumsum[i] /= cumsum[N-1];
         }
 
+        // Bucket b holds draws in [b/M, (b+1)/M), so it must start at the first point whose CDF exceeds its lower
+        // edge b/M; b/M < 1 = cumsum[N-1] keeps s in range.
         int s = 0;
-        for (int i = 1; i <=M ; i++) {
-            for(;s < cumsum.length && cumsum[s] <= (1.0*i)/M; ++s) {
+        for (int b = 0; b < M; b++) {
+            for (; cumsum[s] <= (1.0 * b) / M; ++s) {
             }
-            buckets[i - 1] = s < cumsum.length ? s : cumsum.length - 1;
+            buckets[b] = s;
         }
     }
 

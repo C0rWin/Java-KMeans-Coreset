@@ -50,7 +50,7 @@ public class RandomSampleTest {
     @Before
     public void setup() {
         dataset = new ArrayList<>();
-        final Random rng = new Random(System.currentTimeMillis());
+        final Random rng = new Random(17);
         for (double p : distr) {
             final Map<Integer, Double> coords = new HashMap<>();
             for (int i = 0; i < D; i++) {
@@ -64,7 +64,8 @@ public class RandomSampleTest {
 
     @Test
     public void randomSample() {
-        final RandomSampleAlgorithm randomSample = new SparseRandomSample();
+        // Fixed seed: a chi-square check at alpha = 0.01 over fresh randomness fails 1% of runs by design.
+        final RandomSampleAlgorithm randomSample = new SparseRandomSample(new Random(42));
         final Map<SparseWeightableVector, Integer> freq = new HashMap<>();
         for (final SparseWeightableVector vector : dataset) {
             freq.put(vector, 0);
