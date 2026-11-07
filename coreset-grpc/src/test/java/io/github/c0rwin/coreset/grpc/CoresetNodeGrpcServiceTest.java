@@ -168,6 +168,42 @@ class CoresetNodeGrpcServiceTest {
         assertEquals(TestData.weight(b0) + TestData.weight(b1), ProtoCodec.fromProto(snap.getCoreset(), DIM).totalWeight());
     }
 
+    /** A batch whose vector has an index but no value: decoding it fails. */
+    private static Batch undecodable(String session, long seq) {
+        return Batch.newBuilder().setSessionId(session).setSeq(seq).addPoints(
+                io.github.c0rwin.coreset.grpc.proto.WeightedPoint.newBuilder().setWeight(1).setVector(
+                        io.github.c0rwin.coreset.grpc.proto.SparseVector.newBuilder().setDim(DIM).addIndices(1)))
+                .build();
+    }
+
+    @Test
+    void duplicateBusyAndUnknownSessionAreAnsweredBeforeDecoding() throws Exception {
+        TestAlgorithms.Gated gated = new TestAlgorithms.Gated(TestAlgorithms.IDENTITY);
+        start(Map.of("gated", gated), 8);
+        create("s", new SessionSpec("gated", Map.of(), 1L, 1, 2));
+        SplittableRandom rng = new SplittableRandom(3);
+        AckCollector acks = new AckCollector();
+        StreamObserver<Batch> requests = CoresetNodeServiceGrpc.newStub(cluster.channels.get(0)).ingest(acks);
+        requests.onNext(batch("s", 0, TestData.batch(rng, 1, DIM)));
+        assertEquals(AckStatus.ACK_STATUS_ACCEPTED, acks.next().getStatus());
+        gated.awaitEntered(); // the worker holds seq 0: two more fill the ring
+        requests.onNext(batch("s", 1, TestData.batch(rng, 1, DIM)));
+        requests.onNext(batch("s", 2, TestData.batch(rng, 1, DIM)));
+        assertEquals(AckStatus.ACK_STATUS_ACCEPTED, acks.next().getStatus());
+        assertEquals(AckStatus.ACK_STATUS_ACCEPTED, acks.next().getStatus());
+
+        requests.onNext(undecodable("s", 0)); // a retry is DUPLICATE whatever it carries
+        assertEquals(AckStatus.ACK_STATUS_DUPLICATE, acks.next().getStatus());
+        requests.onNext(undecodable("s", 3)); // full ring: BUSY before the payload is looked at
+        assertEquals(AckStatus.ACK_STATUS_BUSY, acks.next().getStatus());
+        requests.onNext(undecodable("missing", 0));
+        Ack missing = acks.next();
+        assertEquals(AckStatus.ACK_STATUS_FAILED, missing.getStatus());
+        assertTrue(missing.getMessage().contains("unknown session"), missing.getMessage());
+        gated.release();
+        requests.onCompleted();
+    }
+
     @Test
     void seqAtOrAbove2To63IsRejectedBeforeReachingTheNode() throws Exception {
         start(Map.of(), 4);

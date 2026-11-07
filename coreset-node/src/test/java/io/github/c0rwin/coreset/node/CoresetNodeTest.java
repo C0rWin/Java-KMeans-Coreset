@@ -460,9 +460,9 @@ class CoresetNodeTest {
         assertTrue(m.distributions().get(NodeMetricNames.INGEST_LATENCY).count() >= 9);
         assertEquals(8, m.distributions().get(NodeMetricNames.QUEUE_DEPTH).count());
         assertEquals(8, m.distributions().get(NodeMetricNames.BATCH_COMPRESS + ".wall_ns").count());
-        // Seqs alternate between the two workers: 4 insertions each, tree height 3 after the 4th.
-        assertEquals(4, m.distributions().get(NodeMetricNames.workerTreeDepth(0)).count());
-        assertEquals(3.0, m.distributions().get(NodeMetricNames.workerTreeDepth(1)).max());
+        // One distribution for all workers: 8 insertions, 4 per worker, tree height 3 after a worker's 4th.
+        assertEquals(8, m.distributions().get("node.worker.tree_depth").count());
+        assertEquals(3.0, m.distributions().get("node.worker.tree_depth").max());
         assertEquals(1, m.distributions().get(NodeMetricNames.SNAPSHOT_POINTS).count());
         assertNull(m.distributions().get(MetricNames.MRTREE_SNAPSHOT_POINTS)); // no per-insertion tree union
         assertTrue(m.distributions().get(NodeMetricNames.SNAPSHOT_BYTES).max() > 0);
