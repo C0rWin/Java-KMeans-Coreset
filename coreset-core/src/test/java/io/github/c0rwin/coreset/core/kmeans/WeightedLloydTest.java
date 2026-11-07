@@ -73,6 +73,36 @@ class WeightedLloydTest {
         assertTrue(r.iterations() >= 1);
     }
 
+    /** Two unit-variance clusters 6 apart in the plane, translated by {@code base} in both coordinates. */
+    private static List<WeightedPoint> twoClusters(double base, int n) {
+        SplittableRandom rnd = new SplittableRandom(1);
+        List<WeightedPoint> pts = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            double off = i % 2 == 0 ? 0.0 : 6.0;
+            pts.add(wp(1.0, base + off + gaussian(rnd), base + gaussian(rnd)));
+        }
+        return pts;
+    }
+
+    /** Review F1: k-means is translation invariant, so data far from the origin must cluster like the original. */
+    @Test
+    void farFromTheOriginClustersLikeTheUntranslatedData() {
+        List<WeightedPoint> near = twoClusters(0.0, 4000);
+        KMeansResult reference = WeightedLloyd.cluster(near, 2, 20, new SplittableRandom(7));
+        for (double base : new double[] {1e8, 1e9}) {
+            List<WeightedPoint> far = twoClusters(base, 4000);
+            KMeansResult r = WeightedLloyd.cluster(far, 2, 20, new SplittableRandom(7));
+
+            assertArrayEquals(reference.assignment(), r.assignment(), "assignments at base " + base);
+            assertEquals(reference.cost(), r.cost(), 1e-6 * reference.cost(), "cost at base " + base);
+            assertEquals(Cost.cost(far, r.centers()), r.cost(), 1e-6 * reference.cost(), "exact cost at " + base);
+            int[] a = r.assignment();
+            for (int i = 0; i < far.size(); i++) {
+                assertEquals(Cost.nearest(far.get(i).vector(), r.centers()), a[i], "point " + i + " at " + base);
+            }
+        }
+    }
+
     @Test
     void weightTwoPointEqualsTwoCopies() {
         SplittableRandom rnd = new SplittableRandom(13);

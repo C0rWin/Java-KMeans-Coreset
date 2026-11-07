@@ -127,6 +127,28 @@ class MeanCoresetTest {
         assertTrue(capped.size() <= 5);
     }
 
+    /** Review F1: adaptive m is chosen from Lloyd costs, which must not depend on where the data sits. */
+    @Test
+    void adaptiveChoiceOfMIsTranslationInvariant() {
+        double[] chosen = new double[2];
+        int[] sizes = new int[2];
+        double[] bases = {0.0, 1e9};
+        for (int b = 0; b < bases.length; b++) {
+            SplittableRandom rnd = new SplittableRandom(1);
+            List<WeightedPoint> pts = new ArrayList<>();
+            for (int i = 0; i < 4000; i++) {
+                pts.add(point(1.0, bases[b] + (i % 8) * 100.0 + rnd.nextGaussian(), bases[b] + rnd.nextGaussian()));
+            }
+            RecordingMetrics metrics = new RecordingMetrics();
+            Coreset c = MeanCoreset.adaptive(8, 0.2, 512, 20).compress(Coreset.of(pts), new SplittableRandom(3),
+                    metrics);
+            chosen[b] = metrics.snapshot().distributions().get(MetricNames.MEAN_ADAPTIVE_M).max();
+            sizes[b] = c.size();
+        }
+        assertEquals(chosen[0], chosen[1], "adaptive m near the origin vs at 1e9");
+        assertEquals(sizes[0], sizes[1]);
+    }
+
     @Test
     void rejectsInvalidParameters() {
         assertThrows(IllegalArgumentException.class, () -> new MeanCoreset(0, 5));

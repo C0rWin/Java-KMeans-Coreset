@@ -122,6 +122,25 @@ class SparseVectorTest {
         assertTrue(p.squaredDistance(c, norm * (1 - 1e-15)) >= 0.0);
     }
 
+    /** Review F1: the dense-center distance must stay accurate when ||c||^2 dwarfs the distance itself. */
+    @Test
+    void denseDistanceDoesNotCancelFarFromTheOrigin() {
+        double base = 1e9;
+        double[] c = {base, base};
+        double norm = c[0] * c[0] + c[1] * c[1];
+        SparseVector full = SparseVector.dense(new double[] {base + 0.5, base - 0.25});
+        assertEquals(0.3125, full.squaredDistance(c, norm), 1e-12);
+
+        // Only coordinate 0 stored: the off-support term base^2 is large and must survive as is.
+        SparseVector partial = SparseVector.of(2, new int[] {0}, new double[] {base + 0.5});
+        assertEquals(0.25 + base * base, partial.squaredDistance(c, norm), 1e-15 * base * base);
+
+        // Almost all of ||c||^2 sits on the point's support; the small off-support mass 1e-6 must not vanish.
+        double[] skewed = {base, 1e-3};
+        double skewedNorm = skewed[0] * skewed[0] + skewed[1] * skewed[1];
+        assertEquals(0.25 + 1e-6, partial.squaredDistance(skewed, skewedNorm), 1e-12);
+    }
+
     @Test
     void addToAccumulatesScaledEntries() {
         double[] acc = {1.0, 1.0, 1.0};
