@@ -3,108 +3,81 @@ package univ.ml.distributed.coreset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.Executor;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
+import org.apache.thrift.TApplicationException;
 import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import univ.ml.sparse.SparseWeightableVector;
 import univ.ml.sparse.algorithm.SparseCoresetAlgorithm;
 
-public class StreamingCoresetHandler implements CoresetService.Iface {
+public class StreamingCoresetHandler implements CoresetService.Iface, AutoCloseable {
 
     private final static Logger log = LoggerFactory.getLogger(StreamingCoresetHandler.class);
 
     private Map<Integer, List<SparseWeightableVector>> coresetTree = new HashMap<>();
 
-    private ConcurrentLinkedQueue<List<SparseWeightableVector>> samples = new ConcurrentLinkedQueue<>();
+    // Daemon threads, so a handler that is never closed does not keep the JVM alive.
+    private final ExecutorService mergePool = Executors.newSingleThreadExecutor(
+            new ThreadFactoryBuilder().setDaemon(true).setNameFormat("coreset-merge-%d").build());
 
-    private ConcurrentLinkedQueue<CoresetPoints> pointsQueue = new ConcurrentLinkedQueue<>();
-
-    private Executor pool = Executors.newFixedThreadPool(1);
-
-    private Executor compressPool = Executors.newFixedThreadPool(20);
+    private final ExecutorService compressPool = Executors.newFixedThreadPool(20,
+            new ThreadFactoryBuilder().setDaemon(true).setNameFormat("coreset-compress-%d").build());
 
     private AtomicLong counter = new AtomicLong();
 
+    private final AtomicReference<Throwable> failure = new AtomicReference<>();
+
     private ReentrantLock lock = new ReentrantLock();
 
-    private SparseCoresetAlgorithm algorithm;
+    // Set by initialize() on a server thread, read by the worker threads.
+    private volatile SparseCoresetAlgorithm algorithm;
 
     public StreamingCoresetHandler() {
         log.info("Creating new instance of [StreamingCoresetHandler].");
-        pool.execute(() -> {
-            log.info("Submitting thread to pool for new coreset nodes and merge them into the tree.");
-            while (true) {
-                List<SparseWeightableVector> coreset = samples.poll();
-                if (coreset == null) {
-                    try {
-                        TimeUnit.MILLISECONDS.sleep(200);
-                        continue;
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
+    }
+
+    private void merge(List<SparseWeightableVector> coreset) {
+        lock.lock();
+        try {
+            int treeLevel = 0;
+            List<SparseWeightableVector> leaf = coresetTree.get(treeLevel);
+
+            while (null != leaf) {
+                coresetTree.remove(treeLevel++);
+                coreset.addAll(leaf);
+                double weightBefore = 0d;
+                if (log.isDebugEnabled()) {
+                    weightBefore = coreset.stream().map(x -> x.getWeight()).collect(Collectors.summingDouble(x -> x));
                 }
-                try {
-                    int treeLevel = 0;
-                    lock.lock();
-                    List<SparseWeightableVector> leaf = coresetTree.get(treeLevel);
-
-                    while (null != leaf) {
-                        coresetTree.remove(treeLevel++);
-                        coreset.addAll(leaf);
-                        double weightBefore = 0d;
-                        if (log.isDebugEnabled()) {
-                            weightBefore = coreset.stream().map(x -> x.getWeight()).collect(Collectors.summingDouble(x -> x));
-                        }
-                        coreset = algorithm.takeSample(coreset);
-                        if (log.isDebugEnabled()) {
-                            double weightAfter = coreset.stream().map(x -> x.getWeight()).collect(Collectors.summingDouble(x -> x));
-                            log.debug("Total weight of two nodes before merging = {}, after merging = {}, level = {}, next level = {}",
-                                    weightBefore,
-                                    weightAfter,
-                                    treeLevel - 1,
-                                    treeLevel);
-                        }
-
-                        leaf = coresetTree.get(treeLevel);
-                    }
-
-                    coresetTree.put(treeLevel, coreset);
-                    counter.decrementAndGet();
-                } finally {
-                    lock.unlock();
+                coreset = algorithm.takeSample(coreset);
+                if (log.isDebugEnabled()) {
+                    double weightAfter = coreset.stream().map(x -> x.getWeight()).collect(Collectors.summingDouble(x -> x));
+                    log.debug("Total weight of two nodes before merging = {}, after merging = {}, level = {}, next level = {}",
+                            weightBefore,
+                            weightAfter,
+                            treeLevel - 1,
+                            treeLevel);
                 }
+
+                leaf = coresetTree.get(treeLevel);
             }
-        });
 
-        for (int i = 0; i < 20; i++) {
-            compressPool.execute(() -> {
-                while (true) {
-                    final CoresetPoints points = pointsQueue.poll();
-                    if (points == null) {
-                        try {
-                            TimeUnit.MILLISECONDS.sleep(200);
-                            continue;
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
-                    }
-
-                    final List<SparseWeightableVector> sample = algorithm.takeSample(
-                            CoresetUtils.toSparseWeightableVectors(points));
-                    samples.add(sample);
-                }
-            });
+            coresetTree.put(treeLevel, coreset);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -133,14 +106,32 @@ public class StreamingCoresetHandler implements CoresetService.Iface {
 
     @Override
     public void compressPoints(CoresetPoints coresetPoints) throws TException {
+        requireInitialized();
         counter.incrementAndGet();
-        pointsQueue.add(coresetPoints);
+        // Batches compress in parallel; a single merge thread keeps tree updates sequential.
+        CompletableFuture
+                .supplyAsync(() -> algorithm.takeSample(CoresetUtils.toSparseWeightableVectors(coresetPoints)), compressPool)
+                .thenAcceptAsync(this::merge, mergePool)
+                .whenComplete((ignored, error) -> {
+                    if (error != null) {
+                        final Throwable cause = error instanceof CompletionException ? error.getCause() : error;
+                        log.error("Failed to compress points id = {}.", coresetPoints.getId(), cause);
+                        failure.compareAndSet(null, cause);
+                    }
+                    counter.decrementAndGet();
+                });
     }
 
     @Override
     public CoresetPoints getTotalCoreset() throws TException {
+        requireInitialized();
+        final Throwable error = failure.get();
+        if (error != null) {
+            throw new TApplicationException(TApplicationException.INTERNAL_ERROR,
+                    "A batch of points failed to compress, the coreset would be incomplete: " + error);
+        }
+        lock.lock();
         try {
-            lock.lock();
             if (coresetTree.size() == 1) {
                 log.debug("There is only one node in the tree, returning as a final coreset.");
                 for (List<SparseWeightableVector> coreset : coresetTree.values()) {
@@ -173,7 +164,7 @@ public class StreamingCoresetHandler implements CoresetService.Iface {
             }
             return totalCoreset;
         } finally {
-            lock.lock();
+            lock.unlock();
         }
     }
 
@@ -193,5 +184,22 @@ public class StreamingCoresetHandler implements CoresetService.Iface {
     @Override
     public boolean isDone() throws TException {
         return counter.get() == 0;
+    }
+
+    /**
+     * Stops the worker threads; the handler cannot be used afterwards.
+     */
+    @Override
+    public void close() {
+        compressPool.shutdownNow();
+        mergePool.shutdownNow();
+    }
+
+    // Unlike other exceptions, a TApplicationException reaches the Thrift client with its message.
+    private void requireInitialized() throws TApplicationException {
+        if (algorithm == null) {
+            throw new TApplicationException(TApplicationException.INTERNAL_ERROR,
+                    "Coreset service is not initialized, call initialize() first.");
+        }
     }
 }
