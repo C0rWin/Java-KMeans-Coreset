@@ -6,6 +6,7 @@ import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.math3.util.FastMath;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -23,6 +24,7 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
+@Ignore("JMH micro-benchmark, not a unit test")
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)

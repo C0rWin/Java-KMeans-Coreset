@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.Ignore;
 import org.junit.Test;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -31,6 +32,7 @@ import univ.ml.sparse.RandomSampleAlgorithm;
 import univ.ml.sparse.SparseRandomSample;
 import univ.ml.sparse.SparseWeightableVector;
 
+@Ignore("JMH micro-benchmark, not a unit test")
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -26,6 +27,7 @@ import univ.ml.sparse.algorithm.NormalizeWeightsDecorator;
 import univ.ml.sparse.algorithm.SparseCoresetAlgorithm;
 import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
 
+@Ignore("Needs external Wikipedia dataset files at a hardcoded local path")
 @RunWith(Parameterized.class)
 public class WikiTest {
 

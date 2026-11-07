@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.math3.util.MathArrays;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -28,6 +29,7 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 import univ.ml.sparse.SparseWeightableVector;
 
+@Ignore("JMH micro-benchmark, not a unit test")
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)

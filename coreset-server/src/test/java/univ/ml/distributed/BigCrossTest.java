@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.junit.Ignore;
 import org.junit.Test;
 
 import com.google.common.base.Splitter;
@@ -22,6 +23,7 @@ import univ.ml.sparse.SparseWeightableVector;
 import univ.ml.sparse.algorithm.SparseCoresetAlgorithm;
 import univ.ml.sparse.algorithm.SparseWeightedKMeansPlusPlus;
 
+@Ignore("Needs the external BigCross dataset at a hardcoded local path")
 public class BigCrossTest {
 
     @Test
