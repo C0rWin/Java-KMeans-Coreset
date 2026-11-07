@@ -1,6 +1,7 @@
 package univ.ml.distributed;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -89,6 +90,25 @@ class StreamingCoresetHandlerTest {
                 .sorted()
                 .collect(Collectors.toList());
         assertEquals(List.of(), nonDaemon);
+    }
+
+    @Test
+    void closeStopsTheWorkerThreads() throws Exception {
+        final Set<Thread> before = Thread.getAllStackTraces().keySet();
+        final StreamingCoresetHandler handler = new StreamingCoresetHandler();
+        handler.initialize(2, 100, CoresetAlgorithm.UNIFORM);
+        handler.compressPoints(batch(1, 0, 4));
+        awaitDone(handler);
+
+        final List<Thread> workers = Thread.getAllStackTraces().keySet().stream()
+                .filter(t -> !before.contains(t) && t.getName().startsWith("coreset-"))
+                .collect(Collectors.toList());
+        assertFalse(workers.isEmpty());
+        handler.close();
+        for (Thread worker : workers) {
+            worker.join(HANG.toMillis());
+            assertFalse(worker.isAlive(), worker.getName() + " still running after close()");
+        }
     }
 
     // isDone() never blocks, so a deadline on the test thread is enough to detect a hang.
