@@ -93,6 +93,8 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
         }
     }
 
+    private static final int MAX_BUSY_SHIFT = 6;
+
     private final CoresetNode node;
     private final NodeLimits limits;
     private final Supplier<String> statsJson;
@@ -145,6 +147,7 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
         call.request(config.ingestWindow());
         return new StreamObserver<>() {
             private boolean rejected; // inbound callbacks are serialised by gRPC
+            private int busyStreak;
 
             @Override
             public void onNext(Batch batch) {
@@ -157,22 +160,28 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
                             + " exceeds 2^63-1").asRuntimeException());
                     return;
                 }
-                IngestResult r;
-                try {
-                    limits.checkPoints(batch.getPointsCount()); // before decoding: refused batches cost no heap
-                    List<WeightedPoint> points = ProtoCodec.pointsFromProto(batch.getPointsList(), limits.maxDim());
-                    r = node.ingest(batch.getSessionId(), batch.getProducerId(), batch.getSeq(), points);
-                } catch (IllegalArgumentException e) {
-                    r = IngestResult.failed("invalid batch: " + e.getMessage());
+                // Outcomes known from the header skip the proto-to-core conversion, the bulk of the per-batch heap.
+                IngestResult r = node.admit(batch.getSessionId(), batch.getProducerId(), batch.getSeq());
+                if (r == null) {
+                    try {
+                        limits.checkPoints(batch.getPointsCount());
+                        List<WeightedPoint> points = ProtoCodec.pointsFromProto(batch.getPointsList(), limits.maxDim());
+                        r = node.ingest(batch.getSessionId(), batch.getProducerId(), batch.getSeq(), points);
+                    } catch (IllegalArgumentException e) {
+                        r = IngestResult.failed("invalid batch: " + e.getMessage());
+                    }
                 }
                 call.onNext(ProtoCodec.ack(batch.getSeq(), r));
                 if (r.status() == IngestResult.Status.BUSY) {
+                    // Back off harder while the node stays saturated: 1x, 2x, ... 64x the base delay.
+                    long delay = busyReadDelayNanos << Math.min(busyStreak++, MAX_BUSY_SHIFT);
                     scheduler.schedule(() -> {
                         if (!call.isCancelled()) {
                             call.request(1);
                         }
-                    }, busyReadDelayNanos, TimeUnit.NANOSECONDS);
+                    }, delay, TimeUnit.NANOSECONDS);
                 } else {
+                    busyStreak = 0;
                     call.request(1);
                 }
             }

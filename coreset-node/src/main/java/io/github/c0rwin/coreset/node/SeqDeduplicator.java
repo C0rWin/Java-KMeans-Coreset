@@ -50,6 +50,11 @@ final class SeqDeduplicator {
         return Claim.CLAIMED;
     }
 
+    /** Read-only: whether {@code seq} is known committed (a retry would be DUPLICATE). */
+    boolean committed(long seq) {
+        return seq < floor.get() || Boolean.TRUE.equals(above.get(seq));
+    }
+
     long window() {
         return window;
     }

@@ -15,6 +15,7 @@ import io.grpc.protobuf.services.HealthStatusManager;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -22,6 +23,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * Netty gRPC server exposing a {@link CoresetNode} plus the standard {@code grpc.health.v1.Health} service.
@@ -38,6 +41,9 @@ public final class CoresetNodeServer implements AutoCloseable {
      * few dozen non-zeros per point; decoded heap is several times the wire size, so keep it modest.
      */
     public static final int DEFAULT_MAX_INBOUND_MESSAGE_BYTES = 16 * 1024 * 1024;
+
+    /** Stats responses are served from a snapshot at most this old. */
+    public static final Duration STATS_TTL = Duration.ofSeconds(1);
 
     private final Server server;
     private final CoresetNodeGrpcService service;
@@ -59,7 +65,7 @@ public final class CoresetNodeServer implements AutoCloseable {
     public static CoresetNodeServer start(NodeServerOptions options, CoresetNode node, RecordingMetrics stats,
                                           MetricsSink transportSink) throws IOException {
         ServerSecurity security = options.security();
-        CoresetNodeGrpcService service = new CoresetNodeGrpcService(node, () -> stats.snapshot().toJson(),
+        CoresetNodeGrpcService service = new CoresetNodeGrpcService(node, cached(() -> stats.snapshot().toJson()),
                 CoresetNodeGrpcService.Config.defaults()
                         .withBlocking(options.blockingThreads(), options.blockingQueue())
                         .withSessionIdsInStats(security.authenticatesCallers()));
@@ -97,6 +103,23 @@ public final class CoresetNodeServer implements AutoCloseable {
         health.setStatus(HealthStatusManager.SERVICE_NAME_ALL_SERVICES, ServingStatus.SERVING);
         health.setStatus(CoresetNodeServiceGrpc.SERVICE_NAME, ServingStatus.SERVING);
         return new CoresetNodeServer(server, service, health, handlers);
+    }
+
+    /** Rebuilds the Stats JSON (a full copy of every histogram) at most once per {@link #STATS_TTL}. */
+    static Supplier<String> cached(Supplier<String> json) {
+        AtomicReference<Cached> last = new AtomicReference<>();
+        return () -> {
+            long now = System.nanoTime();
+            Cached c = last.get();
+            if (c == null || now - c.at() > STATS_TTL.toNanos()) {
+                c = new Cached(now, json.get());
+                last.set(c); // racing callers may both rebuild once; either result is fresh
+            }
+            return c.json();
+        };
+    }
+
+    private record Cached(long at, String json) {
     }
 
     private static ServerCredentials credentials(ServerSecurity security) throws IOException {

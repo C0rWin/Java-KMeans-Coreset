@@ -231,6 +231,27 @@ public final class CoresetNode implements AutoCloseable {
         Session s = sessions.get(sessionId);
         IngestResult r = s == null ? IngestResult.failed("unknown session: " + Messages.bounded(sessionId))
                 : s.ingest(producerId, seq, batch);
+        record(r, start);
+        return r;
+    }
+
+    /**
+     * Answers a batch from its header alone when the outcome is already known (unknown, failed or closed session,
+     * committed seq, full target queue), so a transport can skip decoding it. Returns null when the batch must be
+     * decoded and passed to {@link #ingest(String, String, long, List)}, which re-checks everything. Never blocks.
+     */
+    public IngestResult admit(String sessionId, String producerId, long seq) {
+        long start = metrics == MetricsSink.NOOP ? 0L : System.nanoTime();
+        Session s = sessions.get(sessionId);
+        IngestResult r = s == null ? IngestResult.failed("unknown session: " + Messages.bounded(sessionId))
+                : s.admit(producerId, seq);
+        if (r != null) {
+            record(r, start);
+        }
+        return r;
+    }
+
+    private void record(IngestResult r, long start) {
         if (metrics != MetricsSink.NOOP) {
             metrics.timeNanos(NodeMetricNames.INGEST_LATENCY, System.nanoTime() - start);
             switch (r.status()) {
@@ -243,7 +264,6 @@ public final class CoresetNode implements AutoCloseable {
                 case FAILED -> metrics.count(NodeMetricNames.INGEST_FAILED, 1);
             }
         }
-        return r;
     }
 
     /** Union of the session's published summaries plus completeness counters; wait-free in single-writer mode. */

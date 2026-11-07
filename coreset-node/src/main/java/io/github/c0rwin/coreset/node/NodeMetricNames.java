@@ -34,6 +34,8 @@ public final class NodeMetricNames {
     public static final String CAS_RETRIES = "node.cas.retries";
     /** Distribution: input weight held by in-flight CAS carries, sampled at each snapshot. */
     public static final String CAS_IN_FLIGHT_WEIGHT = "node.cas.in_flight_weight";
+    /** Distribution: merge-reduce tree height (levels) seen by a worker after each insertion, all workers pooled. */
+    public static final String WORKER_TREE_DEPTH = "node.worker.tree_depth";
     /** Counter: sessions created. */
     public static final String SESSIONS_CREATED = "node.sessions.created";
     /** Counter: sessions closed. */
@@ -42,9 +44,4 @@ public final class NodeMetricNames {
     public static final String SESSIONS_EXPIRED = "node.sessions.expired";
     /** Counter: sessions that failed. */
     public static final String SESSION_FAILURES = "node.sessions.failed";
-
-    /** Distribution: merge-reduce tree height (levels) observed by worker {@code worker} after each insertion. */
-    public static String workerTreeDepth(int worker) {
-        return "node.worker." + worker + ".tree_depth";
-    }
 }

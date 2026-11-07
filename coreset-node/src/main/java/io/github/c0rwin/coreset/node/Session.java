@@ -171,6 +171,30 @@ final class Session {
         return IngestResult.accepted(points.size());
     }
 
+    /**
+     * Read-only pre-check that answers without the payload when the outcome is already known: FAILED for a stopped
+     * session, DUPLICATE for a committed seq, BUSY for a full target queue. Null means "decode and ingest"; the
+     * ingest repeats every check, so a stale answer here costs at most a retry.
+     */
+    IngestResult admit(String producerId, long seq) {
+        Throwable f = failure.get();
+        if (f != null) {
+            return IngestResult.failed("session failed: " + Messages.bounded(f));
+        }
+        if (closed) {
+            return IngestResult.failed("session closed");
+        }
+        Producer producer = producerId.isEmpty() ? defaultProducer : producers.get(producerId);
+        if (seq < 0 || producer == null) {
+            return null;
+        }
+        if (producer.dedupe.committed(seq)) {
+            return IngestResult.duplicate();
+        }
+        Worker w = workers[producer.worker(seq, workers.length)];
+        return w.queue.size() >= spec.queueCapacity() ? IngestResult.busy("worker queue full") : null;
+    }
+
     /** The producer's state, created on first use; null if the id is too long or the session has too many. */
     private Producer producer(String id) {
         if (id.isEmpty()) {

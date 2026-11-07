@@ -34,7 +34,6 @@ final class Worker implements Runnable {
     private final Session session;
     private final RandomGenerator treeRng;
     private final MergeReduceTree tree;
-    private final String depthMetric;
     private volatile View view = View.EMPTY;
     private volatile long applied;
     private volatile boolean parked;
@@ -44,7 +43,6 @@ final class Worker implements Runnable {
         this.treeRng = treeRng;
         this.queue = new MpscArrayQueue<>(session.spec.queueCapacity());
         this.tree = session.casTree == null ? new MergeReduceTree(session.algorithm, treeRng, session.metrics) : null;
-        this.depthMetric = NodeMetricNames.workerTreeDepth(index);
         this.thread = new Thread(this, "coreset-node-" + session.id + "-w" + index);
         this.thread.setDaemon(true);
     }
@@ -110,7 +108,7 @@ final class Worker implements Runnable {
         }
         applied = applied + 1; // single writer: no read-modify-write race
         if (metrics != MetricsSink.NOOP) {
-            metrics.record(depthMetric, height);
+            metrics.record(NodeMetricNames.WORKER_TREE_DEPTH, height);
         }
         session.onApplied();
     }

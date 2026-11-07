@@ -16,12 +16,15 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.Status;
+import java.util.EnumMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Interceptors recording per-method call latency (whole stream for streaming calls), serialized message bytes and
  * message counts in each direction, and final status codes. Names: {@code grpc.<side>.<Method>.latency_ns},
  * {@code .bytes_in}, {@code .bytes_out}, {@code .messages_in}, {@code .messages_out}, {@code .status.<CODE>}.
  * Protobuf memoizes the serialized size, so measuring it costs nothing extra when the message is then marshalled.
+ * Metric names are built once per method, not per message.
  */
 public final class GrpcMetrics {
 
@@ -29,11 +32,13 @@ public final class GrpcMetrics {
     }
 
     public static ServerInterceptor server(MetricsSink sink) {
+        ConcurrentHashMap<String, Names> names = new ConcurrentHashMap<>();
         return new ServerInterceptor() {
             @Override
             public <Q, R> ServerCall.Listener<Q> interceptCall(ServerCall<Q, R> call, Metadata headers,
                                                                ServerCallHandler<Q, R> next) {
-                Recorder rec = new Recorder(sink, "grpc.server." + call.getMethodDescriptor().getBareMethodName());
+                Recorder rec = new Recorder(sink, names.computeIfAbsent(
+                        call.getMethodDescriptor().getBareMethodName(), m -> new Names("grpc.server." + m)));
                 ServerCall<Q, R> counted = new ForwardingServerCall.SimpleForwardingServerCall<>(call) {
                     @Override
                     public void sendMessage(R message) {
@@ -60,11 +65,13 @@ public final class GrpcMetrics {
     }
 
     public static ClientInterceptor client(MetricsSink sink) {
+        ConcurrentHashMap<String, Names> names = new ConcurrentHashMap<>();
         return new ClientInterceptor() {
             @Override
             public <Q, R> ClientCall<Q, R> interceptCall(MethodDescriptor<Q, R> method, CallOptions options,
                                                          Channel next) {
-                Recorder rec = new Recorder(sink, "grpc.client." + method.getBareMethodName());
+                Recorder rec = new Recorder(sink, names.computeIfAbsent(method.getBareMethodName(),
+                        m -> new Names("grpc.client." + m)));
                 return new ForwardingClientCall.SimpleForwardingClientCall<>(next.newCall(method, options)) {
                     @Override
                     public void start(Listener<R> listener, Metadata headers) {
@@ -93,29 +100,50 @@ public final class GrpcMetrics {
         };
     }
 
+    /** Every metric name of one method, precomputed. */
+    private static final class Names {
+        final String messagesIn;
+        final String bytesIn;
+        final String messagesOut;
+        final String bytesOut;
+        final String latency;
+        final EnumMap<Status.Code, String> status = new EnumMap<>(Status.Code.class);
+
+        Names(String prefix) {
+            messagesIn = prefix + ".messages_in";
+            bytesIn = prefix + ".bytes_in";
+            messagesOut = prefix + ".messages_out";
+            bytesOut = prefix + ".bytes_out";
+            latency = prefix + ".latency_ns";
+            for (Status.Code c : Status.Code.values()) {
+                status.put(c, prefix + ".status." + c);
+            }
+        }
+    }
+
     private static final class Recorder {
         private final MetricsSink sink;
-        private final String prefix;
+        private final Names names;
         private final long start = System.nanoTime();
 
-        Recorder(MetricsSink sink, String prefix) {
+        Recorder(MetricsSink sink, Names names) {
             this.sink = sink;
-            this.prefix = prefix;
+            this.names = names;
         }
 
         void in(Object message) {
-            sink.count(prefix + ".messages_in", 1);
-            sink.count(prefix + ".bytes_in", size(message));
+            sink.count(names.messagesIn, 1);
+            sink.count(names.bytesIn, size(message));
         }
 
         void out(Object message) {
-            sink.count(prefix + ".messages_out", 1);
-            sink.count(prefix + ".bytes_out", size(message));
+            sink.count(names.messagesOut, 1);
+            sink.count(names.bytesOut, size(message));
         }
 
         void done(Status status) {
-            sink.timeNanos(prefix + ".latency_ns", System.nanoTime() - start);
-            sink.count(prefix + ".status." + status.getCode(), 1);
+            sink.timeNanos(names.latency, System.nanoTime() - start);
+            sink.count(names.status.get(status.getCode()), 1);
         }
 
         private static long size(Object message) {
