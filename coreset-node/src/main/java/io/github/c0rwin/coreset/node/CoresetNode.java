@@ -257,6 +257,20 @@ public final class CoresetNode implements AutoCloseable {
     }
 
     /**
+     * {@link #ingest(String, String, long, List)} for a batch already in block form, e.g. decoded straight from the
+     * wire: the block is enqueued and compressed as is, without any copy.
+     */
+    public IngestResult ingest(String sessionId, String producerId, long seq, Coreset batch) {
+        Objects.requireNonNull(producerId, "producerId");
+        long start = metrics == MetricsSink.NOOP ? 0L : System.nanoTime();
+        Session s = sessions.get(sessionId);
+        IngestResult r = s == null ? IngestResult.failed("unknown session: " + Messages.bounded(sessionId))
+                : s.ingest(producerId, seq, batch);
+        record(r, start);
+        return r;
+    }
+
+    /**
      * Answers a batch from its header alone when the outcome is already known (unknown, failed or closed session,
      * committed seq, full target queue), so a transport can skip decoding it. Returns null when the batch must be
      * decoded and passed to {@link #ingest(String, String, long, List)}, which re-checks everything. Never blocks.

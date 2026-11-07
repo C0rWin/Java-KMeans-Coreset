@@ -2,13 +2,12 @@ package io.github.c0rwin.coreset.core.algo;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
-import io.github.c0rwin.coreset.core.WeightedPoint;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
 import io.github.c0rwin.coreset.core.kmeans.WeightedLloyd;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.Span;
-import java.util.List;
 import java.util.random.RandomGenerator;
 
 /**
@@ -72,7 +71,7 @@ public final class MeanCoreset implements CoresetAlgorithm {
     @Override
     public Coreset compress(Coreset input, RandomGenerator rng, MetricsSink metrics) {
         try (Span ignored = metrics.span(MetricNames.MEAN_COMPRESS)) {
-            List<WeightedPoint> points = input.points();
+            PointBlock points = input.block();
             if (points.size() <= (isAdaptive() ? 1 : m)) {
                 metrics.count(MetricNames.MEAN_PASSTHROUGH, 1);
                 return input;
@@ -86,7 +85,7 @@ public final class MeanCoreset implements CoresetAlgorithm {
             }
             Coreset means = WeightedLloyd.meansOf(points, partition.assignment(), partition.centers().size());
             metrics.record(MetricNames.MEAN_ADDED_OFFSET, means.offset());
-            Coreset out = new Coreset(means.points(), input.offset() + means.offset());
+            Coreset out = new Coreset(means.block(), input.offset() + means.offset());
             metrics.record(MetricNames.MEAN_OUTPUT_POINTS, out.size());
             return out;
         }
@@ -96,7 +95,7 @@ public final class MeanCoreset implements CoresetAlgorithm {
         return k > 0;
     }
 
-    private KMeansResult adaptivePartition(List<WeightedPoint> points, RandomGenerator rng, MetricsSink metrics) {
+    private KMeansResult adaptivePartition(PointBlock points, RandomGenerator rng, MetricsSink metrics) {
         final int maxM = m;
         KMeansResult optK = WeightedLloyd.cluster(points, Math.min(k, maxM), lloydIterations, rng, metrics);
         final double threshold = eps * eps * optK.cost();

@@ -2,8 +2,8 @@ package io.github.c0rwin.coreset.core.validate;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.Cost;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.SparseVector;
-import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.util.List;
 
 /**
@@ -33,8 +33,8 @@ public final class IntegrityCheck {
         int dim = dimension(input, coreset);
         double[] inFirst = new double[dim];
         double[] outFirst = new double[dim];
-        Moments in = moments(input.points(), inFirst);
-        Moments out = moments(coreset.points(), outFirst);
+        Moments in = moments(input.block(), inFirst);
+        Moments out = moments(coreset.block(), outFirst);
         double diff = 0.0;
         double ref = 0.0;
         for (int d = 0; d < dim; d++) {
@@ -65,8 +65,8 @@ public final class IntegrityCheck {
     }
 
     private static int dimension(Coreset a, Coreset b) {
-        int da = a.isEmpty() ? -1 : a.points().get(0).vector().dim();
-        int db = b.isEmpty() ? -1 : b.points().get(0).vector().dim();
+        int da = a.isEmpty() ? -1 : a.block().dim();
+        int db = b.isEmpty() ? -1 : b.block().dim();
         if (da >= 0 && db >= 0 && da != db) {
             throw new IllegalArgumentException("dimension mismatch: input " + da + ", coreset " + db);
         }
@@ -76,15 +76,14 @@ public final class IntegrityCheck {
     private record Moments(double weight, double second, int negative, int nonFinite) {
     }
 
-    private static Moments moments(List<WeightedPoint> points, double[] first) {
+    private static Moments moments(PointBlock points, double[] first) {
         double weight = 0.0;
         double second = 0.0;
         int negative = 0;
         int nonFinite = 0;
         for (int i = 0, n = points.size(); i < n; i++) {
-            WeightedPoint p = points.get(i);
-            double w = p.weight();
-            double s = w * p.vector().squaredNorm();
+            double w = points.weight(i);
+            double s = w * points.squaredNorm(i);
             if (w < 0.0) {
                 negative++;
             }
@@ -93,7 +92,7 @@ public final class IntegrityCheck {
             }
             weight += w;
             second += s;
-            p.vector().addTo(first, w);
+            points.addTo(i, first, w);
         }
         return new Moments(weight, second, negative, nonFinite);
     }

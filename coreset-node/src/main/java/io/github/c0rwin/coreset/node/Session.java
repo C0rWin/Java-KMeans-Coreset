@@ -83,41 +83,41 @@ final class Session {
     }
 
     /**
-     * One pass over the batch (dimension check fused with the weight sum); the caller's list is copied once unless
-     * it already is an immutable {@code List.of}/{@code List.copyOf} list, which is taken by reference.
+     * Checks the list, then copies it once into the batch's CSR block ({@link Coreset#of}) and ingests that; the
+     * block is the only copy and the worker compresses it as is.
      */
     IngestResult ingest(String producerId, long seq, List<WeightedPoint> batch) {
-        Throwable f = failure.get();
-        if (f != null) {
-            return IngestResult.failed("session failed: " + Messages.bounded(f));
+        IngestResult early = rejectEarly(seq, batch.size());
+        if (early != null) {
+            return early;
         }
-        if (closed) {
-            return IngestResult.failed("session closed");
+        int d = -1;
+        for (WeightedPoint p : batch) {
+            if (p == null) {
+                return IngestResult.failed("batch contains null points");
+            }
+            if (d >= 0 && p.vector().dim() != d) {
+                return IngestResult.failed("batch mixes dimensions " + d + " and " + p.vector().dim());
+            }
+            d = p.vector().dim();
         }
-        if (seq < 0) {
-            return IngestResult.failed("seq must be >= 0: " + seq);
+        if (d > limits.maxDim()) {
+            return IngestResult.failed("dim " + d + " exceeds the node limit of " + limits.maxDim());
         }
-        if (batch.size() > limits.maxPointsPerBatch()) {
-            return IngestResult.failed(batch.size() + " points exceed the per-batch limit of "
-                    + limits.maxPointsPerBatch());
+        return ingest(producerId, seq, Coreset.of(batch));
+    }
+
+    /** Ingests a batch already in block form (e.g. decoded straight from the wire): no copy, one dimension check. */
+    IngestResult ingest(String producerId, long seq, Coreset points) {
+        IngestResult early = rejectEarly(seq, points.size());
+        if (early != null) {
+            return early;
         }
-        List<WeightedPoint> points;
-        try {
-            points = List.copyOf(batch);
-        } catch (NullPointerException e) {
-            return IngestResult.failed("batch contains null points");
-        }
-        double weight = 0.0;
+        double weight = points.totalWeight();
         if (!points.isEmpty()) {
-            int d = points.get(0).vector().dim();
+            int d = points.block().dim();
             if (d > limits.maxDim()) {
                 return IngestResult.failed("dim " + d + " exceeds the node limit of " + limits.maxDim());
-            }
-            for (WeightedPoint p : points) {
-                if (p.vector().dim() != d) {
-                    return IngestResult.failed("batch mixes dimensions " + d + " and " + p.vector().dim());
-                }
-                weight += p.weight();
             }
             int sessionDim = dim.get();
             if (sessionDim < 0 && !dim.compareAndSet(-1, d)) {
@@ -175,6 +175,24 @@ final class Session {
             metrics.record(NodeMetricNames.QUEUE_DEPTH, w.queue.size());
         }
         return IngestResult.accepted(points.size());
+    }
+
+    /** FAILED for a stopped session, a negative seq or an oversized batch, before any work on the payload. */
+    private IngestResult rejectEarly(long seq, int size) {
+        Throwable f = failure.get();
+        if (f != null) {
+            return IngestResult.failed("session failed: " + Messages.bounded(f));
+        }
+        if (closed) {
+            return IngestResult.failed("session closed");
+        }
+        if (seq < 0) {
+            return IngestResult.failed("seq must be >= 0: " + seq);
+        }
+        if (size > limits.maxPointsPerBatch()) {
+            return IngestResult.failed(size + " points exceed the per-batch limit of " + limits.maxPointsPerBatch());
+        }
+        return null;
     }
 
     /**

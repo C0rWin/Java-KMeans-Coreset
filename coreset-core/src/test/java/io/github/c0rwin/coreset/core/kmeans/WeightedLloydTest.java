@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.c0rwin.coreset.core.Cost;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
@@ -124,9 +125,9 @@ class WeightedLloydTest {
                 double[] denseDist = new double[pts.size()];
                 double[] sparseDist = new double[pts.size()];
                 KMeansResult dense =
-                        WeightedLloyd.run(pts, seeds, 30, MetricsSink.NOOP, Centroids.Layout.DENSE, denseDist);
+                        WeightedLloyd.run(block(pts), seeds, 30, MetricsSink.NOOP, Centroids.Layout.DENSE, denseDist);
                 KMeansResult sparseCenters =
-                        WeightedLloyd.run(pts, seeds, 30, MetricsSink.NOOP, Centroids.Layout.SPARSE, sparseDist);
+                        WeightedLloyd.run(block(pts), seeds, 30, MetricsSink.NOOP, Centroids.Layout.SPARSE, sparseDist);
                 assertEquals(dense, sparseCenters, "input " + t + ", k=" + k);
                 assertArrayEquals(denseDist, sparseDist);
             }
@@ -134,8 +135,12 @@ class WeightedLloydTest {
         // A far-away initial center owns nothing and is reseeded, in both layouts alike.
         List<WeightedPoint> pts = List.of(wp(1, 0, 0), wp(1, 1, 0), wp(1, 10, 0), wp(1, 11, 0));
         List<SparseVector> seeds = List.of(v(5, 0), v(1e6, 1e6));
-        assertEquals(WeightedLloyd.run(pts, seeds, 20, MetricsSink.NOOP, Centroids.Layout.DENSE, null),
-                WeightedLloyd.run(pts, seeds, 20, MetricsSink.NOOP, Centroids.Layout.SPARSE, null));
+        assertEquals(WeightedLloyd.run(block(pts), seeds, 20, MetricsSink.NOOP, Centroids.Layout.DENSE, null),
+                WeightedLloyd.run(block(pts), seeds, 20, MetricsSink.NOOP, Centroids.Layout.SPARSE, null));
+    }
+
+    private static PointBlock block(List<WeightedPoint> pts) {
+        return PointBlock.of(pts);
     }
 
     @Test
@@ -165,13 +170,13 @@ class WeightedLloydTest {
         int n = pts.size();
         List<SparseVector> seeds = List.of(v(1, 1), v(49, 49), v(25, 25));
         RecordingMetrics dense = new RecordingMetrics();
-        KMeansResult d = WeightedLloyd.run(pts, seeds, 10, dense, Centroids.Layout.DENSE, null);
+        KMeansResult d = WeightedLloyd.run(block(pts), seeds, 10, dense, Centroids.Layout.DENSE, null);
         long it = d.iterations();
         assertEquals(n * (1 + (it + 1) + it), dense.snapshot().counters().get(MetricNames.LLOYD_POINTS_SCANNED));
         assertEquals(null, dense.snapshot().counters().get(MetricNames.LLOYD_SPARSE_CENTERS));
 
         RecordingMetrics sparse = new RecordingMetrics();
-        WeightedLloyd.run(pts, seeds, 10, sparse, Centroids.Layout.SPARSE, null);
+        WeightedLloyd.run(block(pts), seeds, 10, sparse, Centroids.Layout.SPARSE, null);
         assertEquals(n * (1 + (it + 1) * 3 + it * 3), sparse.snapshot().counters().get(MetricNames.LLOYD_POINTS_SCANNED));
         assertEquals(1L, sparse.snapshot().counters().get(MetricNames.LLOYD_SPARSE_CENTERS));
     }

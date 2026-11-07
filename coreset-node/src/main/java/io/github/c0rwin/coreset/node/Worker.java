@@ -21,7 +21,7 @@ final class Worker implements Runnable {
     /** Short spin before parking: cheap when batches arrive back to back, no CPU burn when idle. */
     private static final int SPINS = 64;
 
-    record PendingBatch(long seq, long producerSalt, List<WeightedPoint> points, double weight) {
+    record PendingBatch(long seq, long producerSalt, Coreset points, double weight) {
     }
 
     /** Published tree state: occupied levels (shared immutable coresets) and the input they summarise. */
@@ -83,7 +83,7 @@ final class Worker implements Runnable {
 
     private void process(PendingBatch batch) {
         MetricsSink metrics = session.metrics;
-        Coreset input = Coreset.of(batch.points());
+        Coreset input = batch.points();
         Coreset compressed;
         if (input.isEmpty()) {
             compressed = input;

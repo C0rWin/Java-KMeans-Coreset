@@ -28,7 +28,7 @@ public final class CandidateSolutions {
     public static List<Candidate> kMeansPlusPlusOnFull(Coreset full, int k, int count, RandomGenerator rng) {
         List<Candidate> out = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
-            out.add(new Candidate("kmeans++@P#" + i, KMeansPlusPlus.seed(full.points(), k, rng)));
+            out.add(new Candidate("kmeans++@P#" + i, KMeansPlusPlus.seed(full.block(), k, rng, MetricsSink.NOOP)));
         }
         return out;
     }
@@ -48,7 +48,8 @@ public final class CandidateSolutions {
                                          RandomGenerator rng) {
         List<Candidate> out = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
-            out.add(new Candidate(label + i, WeightedLloyd.cluster(data.points(), k, iterations, rng).centers()));
+            out.add(new Candidate(label + i,
+                    WeightedLloyd.cluster(data.block(), k, iterations, rng, MetricsSink.NOOP).centers()));
         }
         return out;
     }
@@ -59,7 +60,7 @@ public final class CandidateSolutions {
      * clustering is shared by all candidates.
      */
     public static List<Candidate> convexCombinationsOfBicriteria(Coreset full, int k, int count, RandomGenerator rng) {
-        List<SparseVector> b = Seeding.bicriteria().cluster(full.points(), k, rng, MetricsSink.NOOP).centers();
+        List<SparseVector> b = Seeding.bicriteria().cluster(full.block(), k, rng, MetricsSink.NOOP).centers();
         if (b.isEmpty()) {
             throw new IllegalArgumentException("input has no positive-weight point");
         }

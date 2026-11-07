@@ -1,6 +1,6 @@
 package io.github.c0rwin.coreset.core.kmeans;
 
-import io.github.c0rwin.coreset.core.SparseVector;
+import io.github.c0rwin.coreset.core.PointBlock;
 import java.util.Arrays;
 
 /**
@@ -13,8 +13,7 @@ import java.util.Arrays;
  */
 final class ClusterSums {
 
-    private final SparseVector[] vectors;
-    private final double[] weights;
+    private final PointBlock points;
     private final int[] members;
     private int[] start = new int[0];
     private int[] next = new int[0];
@@ -24,15 +23,14 @@ final class ClusterSums {
     private double[] values = new double[0];
     private double[] entryWeights = new double[0];
 
-    ClusterSums(SparseVector[] vectors, double[] weights) {
-        this.vectors = vectors;
-        this.weights = weights;
-        this.members = new int[vectors.length];
+    ClusterSums(PointBlock points) {
+        this.points = points;
+        this.members = new int[points.size()];
     }
 
     /** Number of points. */
     int size() {
-        return vectors.length;
+        return points.size();
     }
 
     /**
@@ -50,13 +48,14 @@ final class ClusterSums {
             Arrays.fill(entries, 0L);
             Arrays.fill(clusterWeight, 0.0);
         }
-        for (int i = 0; i < vectors.length; i++) {
-            double w = weights[i];
+        final int n = points.size();
+        for (int i = 0; i < n; i++) {
+            double w = points.weight(i);
             if (w > 0.0) {
                 int j = assignment[i];
                 start[j + 1]++;
                 clusterWeight[j] += w;
-                entries[j] += vectors[i].nnz();
+                entries[j] += points.nnz(i);
             }
         }
         long maxEntries = 0;
@@ -65,8 +64,8 @@ final class ClusterSums {
             next[j] = start[j];
             maxEntries = Math.max(maxEntries, entries[j]);
         }
-        for (int i = 0; i < vectors.length; i++) {
-            if (weights[i] > 0.0) {
+        for (int i = 0; i < n; i++) {
+            if (points.weight(i) > 0.0) {
                 members[next[assignment[i]]++] = i;
             }
         }
@@ -90,11 +89,10 @@ final class ClusterSums {
         int e = 0;
         for (int t = start[j], end = start[j + 1]; t < end; t++) {
             int i = members[t];
-            SparseVector x = vectors[i];
-            double w = weights[i];
-            for (int k = 0, nnz = x.nnz(); k < nnz; k++, e++) {
-                keys[e] = ((long) x.indexAt(k) << 32) | e;
-                values[e] = x.valueAt(k);
+            double w = points.weight(i);
+            for (int s = points.rowStart(i), stop = points.rowEnd(i); s < stop; s++, e++) {
+                keys[e] = ((long) points.index(s) << 32) | e;
+                values[e] = points.value(s);
                 entryWeights[e] = w;
             }
         }

@@ -1,5 +1,6 @@
 package io.github.c0rwin.coreset.core.algo;
 
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.util.List;
 
@@ -66,22 +67,37 @@ public abstract class SensitivityBound {
         return Legacy.INSTANCE;
     }
 
+    /** {@link #sensitivities(PointBlock, Clustering)} reading the weights from a list. */
+    public final double[] sensitivities(List<WeightedPoint> points, Clustering b) {
+        double[] weights = new double[points.size()];
+        for (int i = 0; i < weights.length; i++) {
+            weights[i] = points.get(i).weight();
+        }
+        return sensitivities(weights, b);
+    }
+
     /**
      * Per-point bounds for {@code points} under the clustering {@code b} of the same points (zero for zero-weight
      * points). Two passes: cluster weights and costs, then the bounds.
      */
-    public final double[] sensitivities(List<WeightedPoint> points, Clustering b) {
-        final int n = points.size();
+    public final double[] sensitivities(PointBlock points, Clustering b) {
+        double[] weights = new double[points.size()];
+        for (int i = 0; i < weights.length; i++) {
+            weights[i] = points.weight(i);
+        }
+        return sensitivities(weights, b);
+    }
+
+    private double[] sensitivities(double[] weights, Clustering b) {
+        final int n = weights.length;
         if (b.assignment.length != n) {
             throw new IllegalArgumentException("clustering has " + b.assignment.length + " points, input " + n);
         }
         final int clusters = b.centers().size();
         double[] clusterWeight = new double[clusters];
         double[] clusterCost = new double[clusters];
-        double[] weights = new double[n];
         for (int i = 0; i < n; i++) {
-            double w = points.get(i).weight();
-            weights[i] = w;
+            double w = weights[i];
             if (w > 0.0) {
                 int c = b.assignment[i];
                 clusterWeight[c] += w;

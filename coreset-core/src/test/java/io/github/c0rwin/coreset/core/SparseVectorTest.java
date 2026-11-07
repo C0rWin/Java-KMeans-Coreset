@@ -224,9 +224,12 @@ class SparseVectorTest {
 
     @Test
     void estimatedBytesFollowsDocumentedModel() {
-        // 40 (object) + align(16 + 4*3) + align(16 + 8*3)
+        // 48 (object; from/to fields let a vector view one PointBlock row) + align(16 + 4*3) + align(16 + 8*3)
         SparseVector v = SparseVector.of(100, new int[] {1, 2, 3}, new double[] {1, 2, 3});
-        assertEquals(40 + 32 + 40, v.estimatedBytes());
+        assertEquals(48 + 32 + 40, v.estimatedBytes());
+        PointBlock b = PointBlock.of(java.util.List.of(new WeightedPoint(v, 1.0)));
+        assertEquals(v, b.vector(0));
+        assertEquals(v.hashCode(), b.vector(0).hashCode());
     }
 
     private static double[] randomDense(SplittableRandom rnd, int dim) {

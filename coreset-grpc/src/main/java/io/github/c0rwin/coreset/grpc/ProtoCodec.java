@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.grpc;
 
 import io.github.c0rwin.coreset.core.Coreset;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.grpc.proto.Ack;
@@ -109,21 +110,84 @@ public final class ProtoCodec {
         return List.of(out);
     }
 
+    /** Encodes straight from the block's arrays: no per-point domain objects. */
     public static io.github.c0rwin.coreset.grpc.proto.Coreset toProto(Coreset c) {
-        return io.github.c0rwin.coreset.grpc.proto.Coreset.newBuilder()
-                .addAllPoints(pointsToProto(c.points()))
-                .setOffset(c.offset())
-                .build();
+        PointBlock b = c.block();
+        io.github.c0rwin.coreset.grpc.proto.Coreset.Builder out =
+                io.github.c0rwin.coreset.grpc.proto.Coreset.newBuilder().setOffset(c.offset());
+        for (int i = 0, n = b.size(); i < n; i++) {
+            io.github.c0rwin.coreset.grpc.proto.SparseVector.Builder v =
+                    io.github.c0rwin.coreset.grpc.proto.SparseVector.newBuilder().setDim(b.dim());
+            for (int e = b.rowStart(i), end = b.rowEnd(i); e < end; e++) {
+                v.addIndices(b.index(e));
+                v.addValues(b.value(e));
+            }
+            out.addPoints(io.github.c0rwin.coreset.grpc.proto.WeightedPoint.newBuilder()
+                    .setVector(v).setWeight(b.weight(i)));
+        }
+        return out.build();
     }
 
-    /** Decodes straight into the coreset's own storage: no intermediate list. */
+    /** Decodes straight into one exactly sized {@link PointBlock} ({@link PointBlock#wrap}): no per-point objects. */
     public static Coreset fromProto(io.github.c0rwin.coreset.grpc.proto.Coreset c, int maxDim) {
-        int n = c.getPointsCount();
-        Coreset.Builder b = Coreset.builder(n);
-        for (int i = 0; i < n; i++) {
-            b.add(fromProto(c.getPoints(i), maxDim));
+        return new Coreset(blockFromProto(c.getPointsList(), maxDim), c.getOffset());
+    }
+
+    /**
+     * Decodes points into one block: a first pass checks dimensions and sizes the five arrays exactly, the second
+     * fills them, and {@link PointBlock#wrap} validates and canonicalises in place.
+     *
+     * @throws IllegalArgumentException if a point has no vector, an invalid vector or weight, a dimension above
+     *     {@code maxDim}, or the points differ in dimension
+     */
+    public static PointBlock blockFromProto(List<io.github.c0rwin.coreset.grpc.proto.WeightedPoint> points,
+                                            int maxDim) {
+        final int n = points.size();
+        if (n == 0) {
+            return PointBlock.EMPTY;
         }
-        return b.build(c.getOffset());
+        int dim = -1;
+        long entries = 0;
+        for (int i = 0; i < n; i++) {
+            io.github.c0rwin.coreset.grpc.proto.WeightedPoint p = points.get(i);
+            if (!p.hasVector()) {
+                throw new IllegalArgumentException("point without vector");
+            }
+            io.github.c0rwin.coreset.grpc.proto.SparseVector v = p.getVector();
+            int d = v.getDim(); // uint32 above 2^31 arrives negative and is rejected here
+            if (d < 0 || d > maxDim) {
+                throw new IllegalArgumentException("dim " + Integer.toUnsignedString(d) + " exceeds the limit of "
+                        + maxDim);
+            }
+            if (dim >= 0 && d != dim) {
+                throw new IllegalArgumentException("point " + i + " has dim " + d + ", expected " + dim);
+            }
+            dim = d;
+            if (v.getIndicesCount() != v.getValuesCount()) {
+                throw new IllegalArgumentException("indices and values lengths differ: " + v.getIndicesCount()
+                        + " vs " + v.getValuesCount());
+            }
+            entries += v.getIndicesCount();
+        }
+        if (entries > Integer.MAX_VALUE - 8) {
+            throw new IllegalArgumentException("more than 2^31 entries: " + entries);
+        }
+        int[] offsets = new int[n + 1];
+        int[] idx = new int[(int) entries];
+        double[] val = new double[(int) entries];
+        double[] weights = new double[n];
+        int e = 0;
+        for (int i = 0; i < n; i++) {
+            io.github.c0rwin.coreset.grpc.proto.WeightedPoint p = points.get(i);
+            io.github.c0rwin.coreset.grpc.proto.SparseVector v = p.getVector();
+            for (int k = 0, nnz = v.getIndicesCount(); k < nnz; k++, e++) {
+                idx[e] = v.getIndices(k);
+                val[e] = v.getValues(k);
+            }
+            offsets[i + 1] = e;
+            weights[i] = p.getWeight();
+        }
+        return PointBlock.wrap(dim, offsets, idx, val, weights);
     }
 
     public static io.github.c0rwin.coreset.grpc.proto.SessionSpec toProto(SessionSpec s) {

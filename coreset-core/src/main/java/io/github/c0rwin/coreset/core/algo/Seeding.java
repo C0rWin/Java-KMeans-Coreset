@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.core.algo;
 
 import io.github.c0rwin.coreset.core.Guards;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
@@ -58,12 +59,20 @@ public abstract class Seeding {
         return new BicriteriaSeeding(removeFraction);
     }
 
+    /** {@link #cluster(PointBlock, int, RandomGenerator, MetricsSink)} on a copy of {@code points} in one block. */
+    public final Clustering cluster(List<WeightedPoint> points, int k, RandomGenerator rng, MetricsSink metrics) {
+        if (k < 1) {
+            throw new IllegalArgumentException("k must be >= 1: " + k);
+        }
+        return cluster(PointBlock.of(points), k, rng, metrics);
+    }
+
     /**
      * Clusters {@code points}; with no positive-weight point the result has no centers, assignments -1 and cost 0.
      *
      * @throws IllegalArgumentException if {@code k < 1} or the input overflows ({@link Guards#requireSummable})
      */
-    public final Clustering cluster(List<WeightedPoint> points, int k, RandomGenerator rng, MetricsSink metrics) {
+    public final Clustering cluster(PointBlock points, int k, RandomGenerator rng, MetricsSink metrics) {
         if (k < 1) {
             throw new IllegalArgumentException("k must be >= 1: " + k);
         }
@@ -74,14 +83,14 @@ public abstract class Seeding {
                 Arrays.fill(none, -1);
                 return new Clustering(List.of(), none, new double[points.size()], 0.0);
             }
-            Clustering result = run(state, points, k, rng, metrics);
+            Clustering result = run(state, k, rng, metrics);
             metrics.count(MetricNames.SEEDING_DISTANCE_EVALUATIONS, state.evaluations);
             metrics.record(MetricNames.SEEDING_CENTERS, result.centers().size());
             return result;
         }
     }
 
-    abstract Clustering run(D2 state, List<WeightedPoint> points, int k, RandomGenerator rng, MetricsSink metrics);
+    abstract Clustering run(D2 state, int k, RandomGenerator rng, MetricsSink metrics);
 
     private static final class KMeansPlusPlusSeeding extends Seeding {
         private final int lloydIterations;
@@ -91,7 +100,7 @@ public abstract class Seeding {
         }
 
         @Override
-        Clustering run(D2 s, List<WeightedPoint> points, int k, RandomGenerator rng, MetricsSink metrics) {
+        Clustering run(D2 s, int k, RandomGenerator rng, MetricsSink metrics) {
             double total = s.add(D2.draw(s.weights, s.totalWeight, rng), null);
             while (s.centers.size() < k && total != 0.0) { // zero: every positive-weight point sits on a center
                 total = s.add(D2.draw(s.mass, total, rng), null);
@@ -100,7 +109,7 @@ public abstract class Seeding {
                 return s.toClustering();
             }
             double[] sq = new double[s.n];
-            KMeansResult r = WeightedLloyd.refine(points, s.centers, lloydIterations, metrics, sq);
+            KMeansResult r = WeightedLloyd.refine(s.block, s.centers, lloydIterations, metrics, sq);
             return new Clustering(r.centers(), r.assignment(), sq, r.cost());
         }
 
@@ -118,7 +127,7 @@ public abstract class Seeding {
         }
 
         @Override
-        Clustering run(D2 s, List<WeightedPoint> points, int k, RandomGenerator rng, MetricsSink metrics) {
+        Clustering run(D2 s, int k, RandomGenerator rng, MetricsSink metrics) {
             final int n = s.n;
             final double[] w = s.weights;
             final double[] d2 = s.minD2;
@@ -251,7 +260,7 @@ public abstract class Seeding {
     /** D^2 seeding state: every point's distance to, and index of, its nearest chosen center. */
     static final class D2 {
         final int n;
-        final SparseVector[] vectors;
+        final PointBlock block;
         final double[] weights;
         final double[] minD2;
         final int[] nearest;
@@ -264,28 +273,29 @@ public abstract class Seeding {
         private double[] scratch; // O(dim), zero outside the center being added
 
         D2(List<WeightedPoint> points) {
+            this(PointBlock.of(points));
+        }
+
+        D2(PointBlock points) {
             n = points.size();
-            vectors = new SparseVector[n];
+            block = points;
             weights = new double[n];
             int pos = 0;
             double total = 0.0;
             double moment = 0.0;
-            long entries = 0;
             for (int i = 0; i < n; i++) {
-                WeightedPoint p = points.get(i);
-                vectors[i] = p.vector();
-                weights[i] = p.weight();
-                moment += p.weight() * p.vector().squaredNorm();
-                entries += p.vector().nnz();
-                if (p.weight() > 0.0) {
+                double w = points.weight(i);
+                weights[i] = w;
+                moment += w * points.squaredNorm(i);
+                if (w > 0.0) {
                     pos++;
-                    total += p.weight();
+                    total += w;
                 }
             }
             Guards.requireSummable(total, moment);
             positive = pos;
             totalWeight = total;
-            useScratch = n > 0 && SparseVector.scatterPays(vectors[0].dim(), n, entries);
+            useScratch = n > 0 && SparseVector.scatterPays(points.dim(), n, points.storedEntries());
             minD2 = new double[n];
             Arrays.fill(minD2, Double.POSITIVE_INFINITY);
             nearest = new int[n];
@@ -294,25 +304,25 @@ public abstract class Seeding {
         }
 
         /**
-         * Adds {@code vectors[index]} as a center in one pass over the points (preceded by a cancellation check): the
-         * center is scattered into a dense scratch once, so each distance costs O(nnz(point)) lookups (the exact merge
-         * when the dimension is too large for a scratch). The same pass refreshes {@code mass} as {@link #fillD2Mass}
-         * would and returns its total.
+         * Adds row {@code index} as a center in one pass over the points (preceded by a cancellation check): on sparse
+         * input the center is scattered into a dense scratch once, so each distance costs O(nnz(point)) lookups
+         * ({@link SparseVector#scatterPays}); otherwise supports are merged. The same pass refreshes {@code mass} as
+         * {@link #fillD2Mass} would and returns its total.
          */
         double add(int index, boolean[] active) {
             Guards.checkInterrupted("seeding");
-            SparseVector c = vectors[index];
             int id = centers.size();
-            centers.add(c);
+            centers.add(block.vector(index));
             if (useScratch) {
                 if (scratch == null) {
-                    scratch = new double[c.dim()];
+                    scratch = new double[block.dim()];
                 }
-                c.scatterInto(scratch);
+                block.scatterRow(index, scratch);
             }
             double total = 0.0;
             for (int i = 0; i < n; i++) {
-                double d = useScratch ? vectors[i].squaredDistanceScattered(scratch, c) : vectors[i].squaredDistance(c);
+                double d = useScratch ? block.squaredDistanceScatteredToRow(i, scratch, index)
+                        : block.squaredDistance(i, index);
                 if (d < minD2[i]) {
                     minD2[i] = d;
                     nearest[i] = id;
@@ -322,7 +332,7 @@ public abstract class Seeding {
                 total += v;
             }
             if (useScratch) {
-                c.clearFrom(scratch);
+                block.clearRow(index, scratch);
             }
             evaluations += n;
             return total;

@@ -105,9 +105,11 @@ class CoresetTest {
         }
         Coreset a = Coreset.of(pts.subList(0, 10_000));
         Coreset b = Coreset.of(pts.subList(10_000, 20_000));
-        long array = Allocations.bytes(() -> new Object[20_000]);
+        Coreset expected = Coreset.union(a, b);
         long union = Allocations.bytes(() -> Coreset.union(a, b));
-        assertTrue(union <= array + 256, "union allocated " + union + " bytes, one array is " + array);
+        // Exactly the result's five block arrays (and a few small objects): one concatenation, no staging copy.
+        assertTrue(union <= expected.estimatedBytes() + 256,
+                "union allocated " + union + " bytes, its block is " + expected.block().estimatedBytes());
     }
 
     @Test
@@ -124,7 +126,15 @@ class CoresetTest {
         WeightedPoint p = wp(1, 1, 2);
         // header 12 + ref 4 + double 8 = 24
         assertEquals(24 + p.vector().estimatedBytes(), p.estimatedBytes());
-        assertEquals(small.estimatedBytes() + 2 * p.estimatedBytes() + 8, large.estimatedBytes());
+        // Points live in one CSR block: record 24 + block object 48 + its five arrays at 8-byte alignment.
+        assertEquals(24 + small.block().estimatedBytes(), small.estimatedBytes());
+        assertEquals(24 + 48 + align(16 + 4 * 4) + align(16 + 4 * 6) + align(16 + 8 * 6) + 2 * align(16 + 8 * 3),
+                large.estimatedBytes());
+        assertTrue(large.estimatedBytes() > small.estimatedBytes());
+    }
+
+    private static long align(long bytes) {
+        return (bytes + 7) & ~7L;
     }
 
     private static byte[] serialize(Object o) throws IOException {

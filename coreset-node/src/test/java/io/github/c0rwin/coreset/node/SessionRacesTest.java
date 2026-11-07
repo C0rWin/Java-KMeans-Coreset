@@ -52,23 +52,26 @@ class SessionRacesTest {
         return node;
     }
 
-    /** A batch whose defensive copy (taken after the state checks, before the enqueue) runs {@code during}. */
+    /**
+     * A batch whose first element read (the payload checks and copy into the batch block, which run after the state
+     * checks and before the enqueue) runs {@code during} once.
+     */
     private static List<WeightedPoint> copyRuns(List<WeightedPoint> batch, Runnable during) {
         return new AbstractList<>() {
+            private boolean ran;
+
             @Override
             public WeightedPoint get(int i) {
+                if (!ran) {
+                    ran = true;
+                    during.run();
+                }
                 return batch.get(i);
             }
 
             @Override
             public int size() {
                 return batch.size();
-            }
-
-            @Override
-            public Object[] toArray() {
-                during.run();
-                return batch.toArray();
             }
         };
     }
@@ -135,8 +138,10 @@ class SessionRacesTest {
         pool = Executors.newSingleThreadExecutor();
         AtomicBoolean stop = new AtomicBoolean();
         WeightedPoint p = new WeightedPoint(SparseVector.dense(new double[] {1, 0, 0, 0}), 1);
+        // Bounded so a fast host cannot outgrow the identity session's snapshot limit within the 3 s window.
+        long cap = NodeLimits.defaults().maxSnapshotPoints() / 2;
         Future<?> producer = pool.submit(() -> {
-            for (long seq = 0; !stop.get(); ) {
+            for (long seq = 0; !stop.get() && seq < cap; ) {
                 IngestResult r = n.ingest("order", seq, List.of(p));
                 if (r.status() == ACCEPTED) {
                     seq++;

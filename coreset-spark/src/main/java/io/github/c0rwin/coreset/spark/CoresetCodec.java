@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.spark;
 
 import io.github.c0rwin.coreset.core.Coreset;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.lang.invoke.MethodHandles;
@@ -38,30 +39,30 @@ public final class CoresetCodec {
 
     /** Exact size of {@link #encode(Coreset)}'s output, from one read of the index arrays. */
     static long encodedLength(Coreset coreset) {
-        List<WeightedPoint> points = coreset.points();
+        PointBlock points = coreset.block();
         int n = points.size();
         long size = 8L + varintLength(n);
         if (n > 0) {
-            size += varintLength(points.get(0).vector().dim());
+            size += varintLength(points.dim());
             for (int i = 0; i < n; i++) {
-                size += 8 + bodyLength(points.get(i).vector());
+                size += 8 + bodyLength(points.vector(i));
             }
         }
         return size;
     }
 
+    /** Encodes from the block's rows (one vector view per point, no entry copy). */
     public static byte[] encode(Coreset coreset) {
-        List<WeightedPoint> points = coreset.points();
+        PointBlock points = coreset.block();
         int n = points.size();
         Writer w = new Writer(encodedLength(coreset));
         w.f64(coreset.offset());
         w.varint(n);
         if (n > 0) {
-            w.varint(points.get(0).vector().dim());
+            w.varint(points.dim());
             for (int i = 0; i < n; i++) {
-                WeightedPoint p = points.get(i);
-                w.f64(p.weight());
-                w.body(p.vector());
+                w.f64(points.weight(i));
+                w.body(points.vector(i));
             }
         }
         return w.done();
@@ -78,10 +79,9 @@ public final class CoresetCodec {
         Reader r = new Reader(bytes, offset, offset + length);
         double off = r.f64();
         int n = r.length(9); // weight + nnz at least
-        Coreset.Builder points = Coreset.builder(n);
-        r.points(points::add, n);
+        PointBlock points = r.block(n);
         r.end();
-        return points.build(off);
+        return new Coreset(points, off);
     }
 
     /**
@@ -236,6 +236,56 @@ public final class CoresetCodec {
             int n = varint();
             need((long) n * minBytes);
             return n;
+        }
+
+        /**
+         * The dim header (when {@code n > 0}) and {@code n} points as one block: a skimming pass counts the entries
+         * (bounds-checked, nothing allocated), so the five arrays are allocated once at their exact sizes and filled
+         * by the second pass; {@link PointBlock#wrap} then validates the rows.
+         */
+        PointBlock block(int n) {
+            if (n == 0) {
+                return PointBlock.EMPTY;
+            }
+            int dim = varint();
+            int start = pos;
+            long entries = 0;
+            for (int i = 0; i < n; i++) {
+                need(8);
+                pos += 8;
+                int nnz = length(9);
+                for (int k = 0; k < nnz; k++) {
+                    varint();
+                }
+                need(8L * nnz);
+                pos += 8 * nnz;
+                entries += nnz;
+            }
+            pos = start;
+            int[] offsets = new int[n + 1];
+            int[] idx = new int[(int) entries]; // entries fit: each takes at least 9 of the buffer's bytes
+            double[] val = new double[idx.length];
+            double[] weights = new double[n];
+            int e = 0;
+            for (int i = 0; i < n; i++) {
+                weights[i] = f64();
+                int nnz = varint();
+                int prev = 0;
+                for (int k = 0; k < nnz; k++, e++) {
+                    int index = prev + varint();
+                    if (k > 0 ? index <= prev : index < 0) {
+                        throw new IllegalArgumentException("indices not strictly increasing at byte " + pos);
+                    }
+                    idx[e] = index;
+                    prev = index;
+                }
+                for (int k = e - nnz; k < e; k++) {
+                    val[k] = Double.longBitsToDouble((long) LONGS.get(buf, pos));
+                    pos += 8;
+                }
+                offsets[i + 1] = e;
+            }
+            return PointBlock.wrap(dim, offsets, idx, val, weights);
         }
 
         /** The dim header (when {@code n > 0}) and {@code n} points, passed to {@code out} in order. */

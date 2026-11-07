@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.core.kmeans;
 
 import io.github.c0rwin.coreset.core.Guards;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.SparseVector;
 import java.util.Arrays;
 import java.util.List;
@@ -9,7 +10,8 @@ import java.util.List;
  * The centers of one Lloyd run. {@link Dense} keeps m x dim arrays; {@link Sparse} keeps every center as its sorted
  * stored coordinates plus an open-addressing index, so memory and update time follow the clusters' stored entries
  * instead of m * dim. Both perform the same floating-point operations in the same order and return bit-identical
- * results; {@link #layoutFor} picks one. Not thread-safe: one instance per run.
+ * results; {@link #layoutFor} picks one. Points are read from their {@link PointBlock}. Not thread-safe: one instance
+ * per run.
  */
 abstract class Centroids {
 
@@ -38,11 +40,10 @@ abstract class Centroids {
         return (long) m * dim <= Math.max(DENSE_CELLS, 2 * totalNnz) ? Layout.DENSE : Layout.SPARSE;
     }
 
-    static Centroids create(Layout layout, List<SparseVector> initial, int dim, SparseVector[] vectors,
-                            double[] weights, long totalNnz) {
+    static Centroids create(Layout layout, List<SparseVector> initial, int dim, PointBlock points) {
         Centroids c = layout == Layout.DENSE
-                ? new Dense(initial.size(), dim, vectors.length)
-                : new Sparse(initial.size(), dim, new ClusterSums(vectors, weights), vectors, totalNnz);
+                ? new Dense(initial.size(), dim, points.size())
+                : new Sparse(initial.size(), dim, new ClusterSums(points), points.size());
         for (int j = 0; j < initial.size(); j++) {
             c.set(j, initial.get(j));
         }
@@ -53,17 +54,18 @@ abstract class Centroids {
      * Assigns every point to its nearest center (ties: lowest index), stores the squared distances in {@code dist} and
      * the weighted cost in {@link #cost}; returns whether any assignment changed.
      */
-    final boolean assign(SparseVector[] vectors, double[] weights, int[] assignment, double[] dist) {
-        findNearest(vectors, nearest, dist);
+    final boolean assign(PointBlock points, int[] assignment, double[] dist) {
+        findNearest(points, nearest, dist);
         boolean changed = false;
         double total = 0.0;
-        for (int i = 0; i < vectors.length; i++) {
+        for (int i = 0, n = points.size(); i < n; i++) {
             if (assignment[i] != nearest[i]) {
                 assignment[i] = nearest[i];
                 changed = true;
             }
-            if (weights[i] > 0.0) { // a zero weight times an overflowed distance would be NaN
-                total += weights[i] * dist[i];
+            double w = points.weight(i);
+            if (w > 0.0) { // a zero weight times an overflowed distance would be NaN
+                total += w * dist[i];
             }
         }
         cost = total;
@@ -71,13 +73,13 @@ abstract class Centroids {
     }
 
     /** For every point, the index of its nearest center (ties: lowest index) and the squared distance to it. */
-    abstract void findNearest(SparseVector[] vectors, int[] best, double[] dist);
+    abstract void findNearest(PointBlock points, int[] best, double[] dist);
 
     /**
      * Moves every center whose cluster has positive weight to the cluster's weighted mean and leaves the others in
      * place; fills {@code clusterWeight}, summed in point order. Passes over the points: {@link #updatePasses()}.
      */
-    abstract void moveToMeans(SparseVector[] vectors, double[] weights, int[] assignment, double[] clusterWeight);
+    abstract void moveToMeans(PointBlock points, int[] assignment, double[] clusterWeight);
 
     /** Places center {@code j} at {@code v}. */
     abstract void set(int j, SparseVector v);
@@ -107,16 +109,15 @@ abstract class Centroids {
 
         /** Point-major: a point is read once while all centers, small by {@link #layoutFor}, stay cached. */
         @Override
-        void findNearest(SparseVector[] vectors, int[] best, double[] dist) {
-            for (int i = 0; i < vectors.length; i++) {
+        void findNearest(PointBlock points, int[] best, double[] dist) {
+            for (int i = 0, n = points.size(); i < n; i++) {
                 if ((i & 1023) == 0) {
                     Guards.checkInterrupted("Lloyd assignment");
                 }
-                SparseVector x = vectors[i];
                 int b = 0;
-                double bestD = x.squaredDistance(centers[0], norms[0]);
+                double bestD = points.squaredDistance(i, centers[0], norms[0]);
                 for (int j = 1; j < centers.length; j++) {
-                    double d = x.squaredDistance(centers[j], norms[j]);
+                    double d = points.squaredDistance(i, centers[j], norms[j]);
                     if (d < bestD) {
                         bestD = d;
                         b = j;
@@ -128,16 +129,16 @@ abstract class Centroids {
         }
 
         @Override
-        void moveToMeans(SparseVector[] vectors, double[] weights, int[] assignment, double[] clusterWeight) {
+        void moveToMeans(PointBlock points, int[] assignment, double[] clusterWeight) {
             for (double[] row : spare) {
                 Arrays.fill(row, 0.0);
             }
             Arrays.fill(clusterWeight, 0.0);
-            for (int i = 0; i < vectors.length; i++) {
-                double w = weights[i];
+            for (int i = 0, n = points.size(); i < n; i++) {
+                double w = points.weight(i);
                 if (w > 0.0) {
                     int j = assignment[i];
-                    vectors[i].addTo(spare[j], w);
+                    points.addTo(i, spare[j], w);
                     clusterWeight[j] += w;
                 }
             }
@@ -175,59 +176,40 @@ abstract class Centroids {
     /**
      * Per center: sorted stored coordinates and values, and an open-addressing table (load at most 1/2) from
      * coordinate to value for O(1) lookups during assignment. A table slot keeps key and value next to each other, so a
-     * lookup usually touches one cache line. About 44-76 bytes per stored center coordinate, plus one flat copy of the
-     * points' entries (12 bytes each) that the center-major assignment streams.
+     * lookup usually touches one cache line. About 44-76 bytes per stored center coordinate; the assignment streams
+     * the points' own block arrays.
      */
     static final class Sparse extends Centroids {
         private final ClusterSums sums;
         private final int[][] indices;
         private final double[][] values;
         private final double[][] tables; // slot s: [2s] = coordinate + 1 (0 = empty), [2s + 1] = value
-        // Points in compressed-row form: entries of point i are [start[i], start[i + 1]).
-        private final int[] start;
-        private final int[] pointIndices;
-        private final double[] pointValues;
 
-        Sparse(int m, int dim, ClusterSums sums, SparseVector[] vectors, long totalNnz) {
-            super(m, dim, vectors.length);
-            if (totalNnz > Integer.MAX_VALUE - 8) {
-                throw new IllegalArgumentException("more than 2^31 stored entries: " + totalNnz);
-            }
+        Sparse(int m, int dim, ClusterSums sums, int n) {
+            super(m, dim, n);
             this.sums = sums;
             indices = new int[m][];
             values = new double[m][];
             tables = new double[m][];
-            start = new int[vectors.length + 1];
-            pointIndices = new int[(int) totalNnz];
-            pointValues = new double[(int) totalNnz];
-            int e = 0;
-            for (int i = 0; i < vectors.length; i++) {
-                SparseVector x = vectors[i];
-                for (int k = 0, nnz = x.nnz(); k < nnz; k++, e++) {
-                    pointIndices[e] = x.indexAt(k);
-                    pointValues[e] = x.valueAt(k);
-                }
-                start[i + 1] = e;
-            }
         }
 
         /**
-         * Center-major over the flat point arrays: each center's table stays cached while the points stream past it
+         * Center-major over the block's arrays: each center's table stays cached while the points stream past it
          * sequentially. Visiting centers in index order with a strict comparison keeps the lowest index on ties, as
          * the point-major order does.
          */
         @Override
-        void findNearest(SparseVector[] vectors, int[] best, double[] dist) {
-            final int n = start.length - 1;
+        void findNearest(PointBlock points, int[] best, double[] dist) {
+            final int n = points.size();
             Guards.checkInterrupted("Lloyd assignment");
             for (int i = 0; i < n; i++) {
-                dist[i] = squaredDistance(0, start[i], start[i + 1]);
+                dist[i] = squaredDistance(points, 0, i);
                 best[i] = 0;
             }
             for (int j = 1; j < norms.length; j++) {
                 Guards.checkInterrupted("Lloyd assignment");
                 for (int i = 0; i < n; i++) {
-                    double d = squaredDistance(j, start[i], start[i + 1]);
+                    double d = squaredDistance(points, j, i);
                     if (d < dist[i]) {
                         dist[i] = d;
                         best[i] = j;
@@ -236,14 +218,16 @@ abstract class Centroids {
             }
         }
 
-        /** Same arithmetic as {@link SparseVector#squaredDistance(double[], double)} for the point in [from, to). */
-        private double squaredDistance(int j, int from, int to) {
+        /** Same arithmetic as {@link SparseVector#squaredDistance(double[], double)} for point {@code i}. */
+        private double squaredDistance(PointBlock points, int j, int i) {
             final double[] table = tables[j];
             final int mask = (table.length >> 1) - 1;
+            final int from = points.rowStart(i);
+            final int to = points.rowEnd(i);
             double onSupport = 0.0;
             double centerOnSupport = 0.0;
             for (int e = from; e < to; e++) {
-                int index = pointIndices[e];
+                int index = points.index(e);
                 double key = index + 1.0;
                 double c = 0.0;
                 for (int s = slot(index, mask); ; s = (s + 1) & mask) {
@@ -256,7 +240,7 @@ abstract class Centroids {
                         break;
                     }
                 }
-                double d = pointValues[e] - c;
+                double d = points.value(e) - c;
                 onSupport += d * d;
                 centerOnSupport += c * c;
             }
@@ -265,21 +249,21 @@ abstract class Centroids {
             if (offSupport > SparseVector.CANCELLATION_GUARD * norm) {
                 return onSupport + offSupport;
             }
-            return onSupport + offSupportSquaredNorm(j, from, to);
+            return onSupport + offSupportSquaredNorm(points, j, from, to);
         }
 
         /** Exact {@code sum of c_i^2} over the center's coordinates outside the point's support, in index order. */
-        private double offSupportSquaredNorm(int j, int from, int to) {
+        private double offSupportSquaredNorm(PointBlock points, int j, int from, int to) {
             final int[] idx = indices[j];
             final double[] val = values[j];
             double s = 0.0;
             int e = from;
             for (int t = 0; t < idx.length; t++) {
                 int i = idx[t];
-                while (e < to && pointIndices[e] < i) {
+                while (e < to && points.index(e) < i) {
                     e++;
                 }
-                if (e == to || pointIndices[e] != i) {
+                if (e == to || points.index(e) != i) {
                     s += val[t] * val[t];
                 }
             }
@@ -287,7 +271,7 @@ abstract class Centroids {
         }
 
         @Override
-        void moveToMeans(SparseVector[] vectors, double[] weights, int[] assignment, double[] clusterWeight) {
+        void moveToMeans(PointBlock points, int[] assignment, double[] clusterWeight) {
             double[] w = sums.group(assignment, norms.length);
             System.arraycopy(w, 0, clusterWeight, 0, w.length);
             for (int j = 0; j < norms.length; j++) {

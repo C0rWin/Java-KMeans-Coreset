@@ -5,9 +5,13 @@ import java.io.ObjectInputStream;
 import java.io.Serial;
 import java.io.Serializable;
 import java.util.Arrays;
+import java.util.Objects;
 
 /**
  * Immutable sparse vector of fixed dimension, stored as strictly increasing indices with non-zero, finite values.
+ *
+ * <p>A vector either owns its two arrays or is a read-only view of one row of a {@link PointBlock}
+ * ({@link PointBlock#vector(int)}); a view costs one small object and shares (and keeps reachable) the block's arrays.
  *
  * <p>Equality is value-based: two vectors are equal iff they have the same dimension and the same non-zero entries.
  * Instances are safe to share between threads.
@@ -31,24 +35,30 @@ public final class SparseVector implements Serializable {
      */
     public static final double CANCELLATION_GUARD = 0x1p-16;
 
-    private static final int[] NO_INDICES = new int[0];
-    private static final double[] NO_VALUES = new double[0];
+    static final int[] NO_INDICES = new int[0];
+    static final double[] NO_VALUES = new double[0];
 
-    private final int dim;
-    private final int[] indices;
-    private final double[] values;
+    final int dim;
+    final int[] indices;
+    final double[] values;
+    /** Entries are {@code [from, to)} of the arrays. */
+    final int from;
+    final int to;
     private final double squaredNorm;
     private int hash;
 
-    private SparseVector(int dim, int[] indices, double[] values) {
+    /** A vector over {@code (indices, values)[from, to)}, which must already be canonical. */
+    SparseVector(int dim, int[] indices, double[] values, int from, int to, double squaredNorm) {
         this.dim = dim;
         this.indices = indices;
         this.values = values;
-        double s = 0.0;
-        for (double v : values) {
-            s += v * v;
-        }
-        this.squaredNorm = s;
+        this.from = from;
+        this.to = to;
+        this.squaredNorm = squaredNorm;
+    }
+
+    private SparseVector(int dim, int[] indices, double[] values) {
+        this(dim, indices, values, 0, indices.length, Entries.squaredNorm(values, 0, values.length));
     }
 
     /**
@@ -82,54 +92,9 @@ public final class SparseVector implements Serializable {
                     "indices and values lengths differ: " + indices.length + " vs " + values.length);
         }
         final int n = indices.length;
-        boolean sorted = true;
-        for (int k = 0; k < n; k++) {
-            int i = indices[k];
-            if (i < 0 || i >= dim) {
-                throw new IllegalArgumentException("index " + i + " out of range [0, " + dim + ")");
-            }
-            if (!Double.isFinite(values[k])) {
-                throw new IllegalArgumentException("value at index " + i + " is not finite: " + values[k]);
-            }
-            if (k > 0 && i <= indices[k - 1]) {
-                sorted = false;
-            }
-        }
-        int[] idx;
-        double[] val;
-        if (sorted) {
-            idx = owned ? indices : indices.clone();
-            val = owned ? values : values.clone();
-        } else {
-            // (index, position) packed into a long gives a stable primitive sort without boxing.
-            long[] keys = new long[n];
-            for (int k = 0; k < n; k++) {
-                keys[k] = ((long) indices[k] << 32) | k;
-            }
-            Arrays.sort(keys);
-            idx = new int[n];
-            val = new double[n];
-            for (int k = 0; k < n; k++) {
-                idx[k] = (int) (keys[k] >>> 32);
-                val[k] = values[(int) keys[k]];
-            }
-        }
-        int w = 0;
-        for (int r = 0; r < n; ) {
-            int i = idx[r];
-            double s = val[r++];
-            while (r < n && idx[r] == i) {
-                s += val[r++];
-            }
-            if (s != 0.0) {
-                if (!Double.isFinite(s)) {
-                    throw new IllegalArgumentException("sum of duplicates at index " + i + " is not finite");
-                }
-                idx[w] = i;
-                val[w] = s;
-                w++;
-            }
-        }
+        int[] idx = owned ? indices : new int[n];
+        double[] val = owned ? values : new double[n];
+        int w = Entries.canonicalize(dim, indices, values, 0, n, idx, val, 0);
         if (w == 0) {
             return new SparseVector(dim, NO_INDICES, NO_VALUES);
         }
@@ -177,17 +142,17 @@ public final class SparseVector implements Serializable {
 
     /** Number of stored (non-zero) entries. */
     public int nnz() {
-        return indices.length;
+        return to - from;
     }
 
     /** Index of the {@code k}-th stored entry; indices are strictly increasing in {@code k}. */
     public int indexAt(int k) {
-        return indices[k];
+        return indices[from + Objects.checkIndex(k, to - from)];
     }
 
     /** Value of the {@code k}-th stored entry. */
     public double valueAt(int k) {
-        return values[k];
+        return values[from + Objects.checkIndex(k, to - from)];
     }
 
     /** Coordinate {@code index}, zero if not stored. */
@@ -195,7 +160,7 @@ public final class SparseVector implements Serializable {
         if (index < 0 || index >= dim) {
             throw new IndexOutOfBoundsException("index " + index + " out of range [0, " + dim + ")");
         }
-        int k = Arrays.binarySearch(indices, index);
+        int k = Arrays.binarySearch(indices, from, to, index);
         return k >= 0 ? values[k] : 0.0;
     }
 
@@ -205,31 +170,13 @@ public final class SparseVector implements Serializable {
 
     public double dot(SparseVector o) {
         checkDim(o.dim);
-        final int[] ai = indices;
-        final int[] bi = o.indices;
-        final double[] av = values;
-        final double[] bv = o.values;
-        int i = 0;
-        int j = 0;
-        double s = 0.0;
-        while (i < ai.length && j < bi.length) {
-            int x = ai[i];
-            int y = bi[j];
-            if (x == y) {
-                s += av[i++] * bv[j++];
-            } else if (x < y) {
-                i++;
-            } else {
-                j++;
-            }
-        }
-        return s;
+        return Kernels.dot(indices, values, from, to, o.indices, o.values, o.from, o.to);
     }
 
     public double dot(double[] dense) {
         checkDim(dense.length);
         double s = 0.0;
-        for (int k = 0; k < indices.length; k++) {
+        for (int k = from; k < to; k++) {
             s += values[k] * dense[indices[k]];
         }
         return s;
@@ -241,36 +188,7 @@ public final class SparseVector implements Serializable {
         if (o == this) {
             return 0.0;
         }
-        final int[] ai = indices;
-        final int[] bi = o.indices;
-        final double[] av = values;
-        final double[] bv = o.values;
-        int i = 0;
-        int j = 0;
-        double s = 0.0;
-        while (i < ai.length && j < bi.length) {
-            int x = ai[i];
-            int y = bi[j];
-            if (x == y) {
-                double d = av[i++] - bv[j++];
-                s += d * d;
-            } else if (x < y) {
-                double d = av[i++];
-                s += d * d;
-            } else {
-                double d = bv[j++];
-                s += d * d;
-            }
-        }
-        while (i < ai.length) {
-            double d = av[i++];
-            s += d * d;
-        }
-        while (j < bi.length) {
-            double d = bv[j++];
-            s += d * d;
-        }
-        return s;
+        return Kernels.merge(indices, values, from, to, o.indices, o.values, o.from, o.to);
     }
 
     /**
@@ -283,36 +201,7 @@ public final class SparseVector implements Serializable {
      */
     public double squaredDistance(double[] dense, double denseSquaredNorm) {
         checkDim(dense.length);
-        double onSupport = 0.0;
-        double denseOnSupport = 0.0;
-        for (int k = 0; k < indices.length; k++) {
-            double c = dense[indices[k]];
-            double d = values[k] - c;
-            onSupport += d * d;
-            denseOnSupport += c * c;
-        }
-        double offSupport = denseSquaredNorm - denseOnSupport;
-        if (offSupport > CANCELLATION_GUARD * denseSquaredNorm) {
-            return onSupport + offSupport;
-        }
-        return onSupport + offSupportSquaredNorm(dense);
-    }
-
-    /** {@code sum of dense[i]^2} over the coordinates outside this vector's support, in index order. */
-    private double offSupportSquaredNorm(double[] dense) {
-        if (indices.length == dense.length) {
-            return 0.0;
-        }
-        double s = 0.0;
-        int k = 0;
-        for (int i = 0; i < dense.length; i++) {
-            if (k < indices.length && indices[k] == i) {
-                k++;
-            } else {
-                s += dense[i] * dense[i];
-            }
-        }
-        return s;
+        return Kernels.dense(indices, values, from, to, dense, denseSquaredNorm);
     }
 
     /**
@@ -335,82 +224,43 @@ public final class SparseVector implements Serializable {
     public double squaredDistanceScattered(double[] scratch, SparseVector c) {
         checkDim(scratch.length);
         checkDim(c.dim);
-        double onSupport = 0.0;
-        double centerOnSupport = 0.0;
-        int hits = 0;
-        for (int k = 0; k < indices.length; k++) {
-            double x = scratch[indices[k]];
-            double d = values[k] - x;
-            onSupport += d * d;
-            centerOnSupport += x * x;
-            hits += x != 0.0 ? 1 : 0; // stored center values are non-zero
-        }
-        double norm = c.squaredNorm;
-        double offSupport = norm - centerOnSupport;
-        if (offSupport > CANCELLATION_GUARD * norm) {
-            return onSupport + offSupport;
-        }
-        return hits == c.indices.length ? onSupport : onSupport + offSupportSquaredNorm(c);
-    }
-
-    /** {@code sum of c_i^2} over {@code c}'s stored coordinates outside this vector's support, in index order. */
-    private double offSupportSquaredNorm(SparseVector c) {
-        final int[] ci = c.indices;
-        final double[] cv = c.values;
-        double s = 0.0;
-        int k = 0;
-        for (int t = 0; t < ci.length; t++) {
-            int i = ci[t];
-            while (k < indices.length && indices[k] < i) {
-                k++;
-            }
-            if (k == indices.length || indices[k] != i) {
-                s += cv[t] * cv[t];
-            }
-        }
-        return s;
+        return Kernels.scattered(indices, values, from, to, scratch, c.indices, c.values, c.from, c.to,
+                c.squaredNorm);
     }
 
     /** {@code scratch[i] = this_i} over the stored entries; {@link #clearFrom} undoes it in O(nnz). */
     public void scatterInto(double[] scratch) {
         checkDim(scratch.length);
-        for (int k = 0; k < indices.length; k++) {
-            scratch[indices[k]] = values[k];
-        }
+        Kernels.scatter(indices, values, from, to, scratch);
     }
 
     /** Zeroes {@code scratch} at this vector's stored coordinates. */
     public void clearFrom(double[] scratch) {
         checkDim(scratch.length);
-        for (int k = 0; k < indices.length; k++) {
-            scratch[indices[k]] = 0.0;
-        }
+        Kernels.clear(indices, from, to, scratch);
     }
 
     /** {@code acc += scale * this}. */
     public void addTo(double[] acc, double scale) {
         checkDim(acc.length);
-        for (int k = 0; k < indices.length; k++) {
-            acc[indices[k]] += scale * values[k];
-        }
+        Kernels.addTo(indices, values, from, to, acc, scale);
     }
 
     public double[] toDense() {
         double[] out = new double[dim];
-        for (int k = 0; k < indices.length; k++) {
-            out[indices[k]] = values[k];
-        }
+        Kernels.scatter(indices, values, from, to, out);
         return out;
     }
 
     /**
      * Approximate retained heap size in bytes under a 64-bit HotSpot model with compressed oops and 8-byte alignment:
-     * object header plus fields, plus both backing arrays (16-byte array header each). Shared empty arrays are counted.
+     * object header plus fields, plus both arrays sized to the stored entries (16-byte array header each), as if
+     * owned; a {@link PointBlock} view shares its block's arrays instead. Shared empty arrays are counted.
      */
     public long estimatedBytes() {
-        long self = align(OBJECT_HEADER_BYTES + 4L + 4L + 2L * REFERENCE_BYTES + 8L);
-        long idx = align(ARRAY_HEADER_BYTES + 4L * indices.length);
-        long val = align(ARRAY_HEADER_BYTES + 8L * values.length);
+        long self = align(OBJECT_HEADER_BYTES + 4L * 4 + 2L * REFERENCE_BYTES + 8L);
+        long idx = align(ARRAY_HEADER_BYTES + 4L * nnz());
+        long val = align(ARRAY_HEADER_BYTES + 8L * nnz());
         return self + idx + val;
     }
 
@@ -432,14 +282,23 @@ public final class SparseVector implements Serializable {
         if (!(o instanceof SparseVector v)) {
             return false;
         }
-        return dim == v.dim && Arrays.equals(indices, v.indices) && Arrays.equals(values, v.values);
+        return dim == v.dim && Arrays.equals(indices, from, to, v.indices, v.from, v.to)
+                && Arrays.equals(values, from, to, v.values, v.from, v.to);
     }
 
+    /** Same value as {@code 31 * (31 * dim + Arrays.hashCode(indices)) + Arrays.hashCode(values)} on owned arrays. */
     @Override
     public int hashCode() {
         int h = hash;
         if (h == 0) {
-            h = 31 * (31 * dim + Arrays.hashCode(indices)) + Arrays.hashCode(values);
+            int hi = 1;
+            int hv = 1;
+            for (int k = from; k < to; k++) {
+                hi = 31 * hi + indices[k];
+                long bits = Double.doubleToLongBits(values[k]);
+                hv = 31 * hv + (int) (bits ^ (bits >>> 32));
+            }
+            h = 31 * (31 * dim + hi) + hv;
             hash = h;
         }
         return h;
@@ -448,8 +307,8 @@ public final class SparseVector implements Serializable {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder("SparseVector[dim=").append(dim).append(", {");
-        for (int k = 0; k < indices.length; k++) {
-            if (k > 0) {
+        for (int k = from; k < to; k++) {
+            if (k > from) {
                 sb.append(", ");
             }
             sb.append(indices[k]).append('=').append(values[k]);
@@ -459,7 +318,7 @@ public final class SparseVector implements Serializable {
 
     @Serial
     private Object writeReplace() {
-        return new SerializedForm(dim, indices, values);
+        return new SerializedForm(dim, Arrays.copyOfRange(indices, from, to), Arrays.copyOfRange(values, from, to));
     }
 
     @Serial

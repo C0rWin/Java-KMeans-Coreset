@@ -1,8 +1,8 @@
 package io.github.c0rwin.coreset.core.validate;
 
 import io.github.c0rwin.coreset.core.Cost;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.SparseVector;
-import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.algo.SampledCoreset;
 import java.util.List;
 
@@ -90,7 +90,7 @@ public final class CostConfidenceInterval {
             return exact(sample, q);
         }
         double offset = sample.coreset().offset();
-        double estimate = Cost.cost(sample.coreset().points(), q);
+        double estimate = Cost.cost(sample.coreset().block(), q);
         double eps = sample.totalSensitivity() * Math.sqrt(Math.log(2.0 / delta) / (2.0 * sample.draws()));
         double upper = eps < 1.0 ? estimate / (1.0 - eps) + offset : Double.POSITIVE_INFINITY;
         return new Interval(estimate / (1.0 + eps) + offset, estimate + offset, upper);
@@ -103,13 +103,13 @@ public final class CostConfidenceInterval {
 
     /** Per coreset point, the term {@code w_p f(p) / q_p = u_p * m * f(p) / c_p} of each of its draws. */
     private static double[] terms(SampledCoreset sample, List<SparseVector> q) {
-        List<WeightedPoint> points = sample.coreset().points();
+        PointBlock points = sample.coreset().block();
         int[] counts = sample.drawCounts();
         double[] terms = new double[points.size()];
         for (int j = 0; j < terms.length; j++) {
-            WeightedPoint p = points.get(j);
-            double f = p.vector().squaredDistance(q.get(Cost.nearest(p.vector(), q)));
-            terms[j] = p.weight() * sample.draws() / counts[j] * f;
+            SparseVector p = points.vector(j);
+            double f = p.squaredDistance(q.get(Cost.nearest(p, q)));
+            terms[j] = points.weight(j) * sample.draws() / counts[j] * f;
         }
         return terms;
     }

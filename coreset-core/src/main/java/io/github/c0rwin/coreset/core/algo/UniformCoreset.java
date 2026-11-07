@@ -3,13 +3,11 @@ package io.github.c0rwin.coreset.core.algo;
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.Guards;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
-import io.github.c0rwin.coreset.core.WeightedPoint;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.Span;
 import io.github.c0rwin.coreset.core.sampling.AliasSampler;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.random.RandomGenerator;
 
 /**
@@ -34,7 +32,7 @@ public final class UniformCoreset implements CoresetAlgorithm {
     @Override
     public Coreset compress(Coreset input, RandomGenerator rng, MetricsSink metrics) {
         try (Span ignored = metrics.span(MetricNames.UNIFORM_COMPRESS)) {
-            List<WeightedPoint> points = input.points();
+            PointBlock points = input.block();
             final int n = points.size();
             if (n <= m) {
                 metrics.count(MetricNames.UNIFORM_PASSTHROUGH, 1);
@@ -44,24 +42,26 @@ public final class UniformCoreset implements CoresetAlgorithm {
             double total = 0.0;
             double moment = 0.0;
             for (int i = 0; i < n; i++) {
-                WeightedPoint p = points.get(i);
-                weights[i] = p.weight();
+                weights[i] = points.weight(i);
                 total += weights[i];
-                moment += weights[i] * p.vector().squaredNorm();
+                moment += weights[i] * points.squaredNorm(i);
             }
             Guards.requireSummable(total, moment);
             if (total == 0.0) {
-                return new Coreset(List.of(), input.offset());
+                return new Coreset(PointBlock.EMPTY, input.offset());
             }
             int[] counts = AliasSampler.drawCounts(weights, m, rng);
-            List<WeightedPoint> out = new ArrayList<>(Math.min(n, m));
+            int[] rows = new int[Math.min(n, m)];
+            double[] outWeights = new double[rows.length];
+            int distinct = 0;
             for (int i = 0; i < n; i++) {
                 if (counts[i] > 0) {
-                    out.add(new WeightedPoint(points.get(i).vector(), total * counts[i] / m));
+                    rows[distinct] = i;
+                    outWeights[distinct++] = total * counts[i] / m;
                 }
             }
-            metrics.record(MetricNames.UNIFORM_OUTPUT_POINTS, out.size());
-            return new Coreset(out, input.offset());
+            metrics.record(MetricNames.UNIFORM_OUTPUT_POINTS, distinct);
+            return new Coreset(points.select(rows, outWeights, distinct), input.offset());
         }
     }
 

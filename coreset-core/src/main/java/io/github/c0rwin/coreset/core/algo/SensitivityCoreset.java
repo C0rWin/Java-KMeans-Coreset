@@ -2,13 +2,11 @@ package io.github.c0rwin.coreset.core.algo;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
-import io.github.c0rwin.coreset.core.WeightedPoint;
+import io.github.c0rwin.coreset.core.PointBlock;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.Span;
 import io.github.c0rwin.coreset.core.sampling.AliasSampler;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 import java.util.random.RandomGenerator;
 
@@ -63,7 +61,7 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
     /** Same coreset as {@link #compress} for the same generator state, plus the sampling provenance. */
     public SampledCoreset compressWithProvenance(Coreset input, RandomGenerator rng, MetricsSink metrics) {
         try (Span ignored = metrics.span(MetricNames.SENSITIVITY_COMPRESS)) {
-            List<WeightedPoint> points = input.points();
+            PointBlock points = input.block();
             final int n = points.size();
             if (n <= m) {
                 metrics.count(MetricNames.SENSITIVITY_PASSTHROUGH, 1);
@@ -71,7 +69,7 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
             }
             Clustering b = seeding.cluster(points, k, rng, metrics);
             if (b.centers().isEmpty()) {
-                return SampledCoreset.exact(new Coreset(List.of(), input.offset())); // no positive weight
+                return SampledCoreset.exact(new Coreset(PointBlock.EMPTY, input.offset())); // no positive weight
             }
             if (b.cost() == 0.0) {
                 metrics.count(MetricNames.SENSITIVITY_ZERO_COST_SEEDINGS, 1);
@@ -88,22 +86,24 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
             for (int c : counts) {
                 distinct += c > 0 ? 1 : 0;
             }
-            List<WeightedPoint> out = new ArrayList<>(distinct);
+            int[] rows = new int[distinct];
+            double[] outWeights = new double[distinct];
             int[] outCounts = new int[distinct];
             double[] outProb = new double[distinct];
             for (int i = 0, j = 0; i < n; i++) {
                 int c = counts[i];
                 if (c > 0) {
-                    WeightedPoint p = points.get(i);
                     double q = s[i] / total;
-                    out.add(new WeightedPoint(p.vector(), p.weight() * c / (m * q)));
+                    rows[j] = i;
+                    outWeights[j] = points.weight(i) * c / (m * q);
                     outCounts[j] = c;
                     outProb[j] = q;
                     j++;
                 }
             }
             metrics.record(MetricNames.SENSITIVITY_OUTPUT_POINTS, distinct);
-            return new SampledCoreset(new Coreset(out, input.offset()), outCounts, outProb, m, total);
+            return new SampledCoreset(new Coreset(points.select(rows, outWeights, distinct), input.offset()),
+                    outCounts, outProb, m, total);
         }
     }
 

@@ -1,5 +1,6 @@
 package io.github.c0rwin.coreset.grpc;
 
+import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.grpc.proto.Ack;
 import io.github.c0rwin.coreset.grpc.proto.Batch;
@@ -165,7 +166,8 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
                 if (r == null) {
                     try {
                         limits.checkPoints(batch.getPointsCount());
-                        List<WeightedPoint> points = ProtoCodec.pointsFromProto(batch.getPointsList(), limits.maxDim());
+                        // Decoded straight into the batch's CSR block, which the worker then compresses as is.
+                        Coreset points = Coreset.of(ProtoCodec.blockFromProto(batch.getPointsList(), limits.maxDim()));
                         r = node.ingest(batch.getSessionId(), batch.getProducerId(), batch.getSeq(), points);
                     } catch (IllegalArgumentException e) {
                         r = IngestResult.failed("invalid batch: " + e.getMessage());
