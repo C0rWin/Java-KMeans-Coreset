@@ -75,6 +75,13 @@ public final class MetricNames {
     public static final String SEEDING_CENTERS = "seeding.centers";
     /** Distribution: sample-and-remove rounds performed by one bicriteria seeding call. */
     public static final String SEEDING_BICRITERIA_ROUNDS = "seeding.bicriteria.rounds";
+    /**
+     * Counter: points visited by full passes of {@code Seeding} (input read, one per center, bicriteria round
+     * bookkeeping, final clustering); excludes D^2 draws and Lloyd refinement.
+     */
+    public static final String SEEDING_POINTS_SCANNED = "seeding.points_scanned";
+    /** Counter: points visited by D^2 draws in {@code Seeding}; each draw stops at the drawn point, so at most n. */
+    public static final String SEEDING_DRAW_POINTS_SCANNED = "seeding.draw_points_scanned";
 
     /** Span around one uniform-sampling compress call. */
     public static final String UNIFORM_COMPRESS = "uniform.compress";
@@ -82,6 +89,8 @@ public final class MetricNames {
     public static final String UNIFORM_PASSTHROUGH = "uniform.passthrough";
     /** Distribution: distinct points in a uniform-sampling output. */
     public static final String UNIFORM_OUTPUT_POINTS = "uniform.output_points";
+    /** Counter: points read by uniform sampling (one pass over the input plus the distinct output rows). */
+    public static final String UNIFORM_POINTS_SCANNED = "uniform.points_scanned";
 
     /** Span around one sensitivity-sampling compress call (includes seeding). */
     public static final String SENSITIVITY_COMPRESS = "sensitivity.compress";
@@ -93,6 +102,11 @@ public final class MetricNames {
     public static final String SENSITIVITY_TOTAL = "sensitivity.total";
     /** Counter: calls whose seeding had zero cost, so only the per-cluster mass term was used. */
     public static final String SENSITIVITY_ZERO_COST_SEEDINGS = "sensitivity.zero_cost_seedings";
+    /**
+     * Counter: points read by sensitivity sampling after seeding (the bound pass plus the distinct output rows; one
+     * more pass when the clustering lacks per-cluster totals).
+     */
+    public static final String SENSITIVITY_POINTS_SCANNED = "sensitivity.points_scanned";
 
     /** Span around one mean-coreset compress call (includes clustering). */
     public static final String MEAN_COMPRESS = "mean.compress";

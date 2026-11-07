@@ -13,12 +13,22 @@ public final class Clustering {
     final int[] assignment;
     final double[] squaredDistances;
     private final double cost;
+    // Per-center sum of positive weights and of w * squaredDistance, or null when not supplied.
+    final double[] clusterWeights;
+    final double[] clusterCosts;
 
     Clustering(List<SparseVector> centers, int[] assignment, double[] squaredDistances, double cost) {
+        this(centers, assignment, squaredDistances, cost, null, null);
+    }
+
+    Clustering(List<SparseVector> centers, int[] assignment, double[] squaredDistances, double cost,
+               double[] clusterWeights, double[] clusterCosts) {
         this.centers = List.copyOf(centers);
         this.assignment = assignment;
         this.squaredDistances = squaredDistances;
         this.cost = cost;
+        this.clusterWeights = clusterWeights;
+        this.clusterCosts = clusterCosts;
     }
 
     public List<SparseVector> centers() {

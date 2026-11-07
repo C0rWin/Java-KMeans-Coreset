@@ -1,13 +1,168 @@
 package io.github.c0rwin.coreset.core.sampling;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.SplittableRandom;
 import org.junit.jupiter.api.Test;
 
 class AliasSamplerTest {
+
+    /** Vose's construction with two explicit stack arrays, as before the worklists moved into the alias table. */
+    private static Object[] referenceTables(double[] weights) {
+        final int n = weights.length;
+        double max = 0.0;
+        int argMax = -1;
+        for (int i = 0; i < n; i++) {
+            if (weights[i] > max) {
+                max = weights[i];
+                argMax = i;
+            }
+        }
+        double sum = 0.0;
+        for (double w : weights) {
+            sum += w / max;
+        }
+        final double scale = n / sum;
+        double[] prob = new double[n];
+        int[] alias = new int[n];
+        int[] small = new int[n];
+        int[] large = new int[n];
+        int ns = 0;
+        int nl = 0;
+        for (int i = 0; i < n; i++) {
+            double p = weights[i] / max * scale;
+            prob[i] = p;
+            if (p < 1.0) {
+                small[ns++] = i;
+            } else {
+                large[nl++] = i;
+            }
+        }
+        while (ns > 0 && nl > 0) {
+            int s = small[--ns];
+            int l = large[--nl];
+            alias[s] = l;
+            double rest = (prob[l] + prob[s]) - 1.0;
+            prob[l] = rest;
+            if (rest < 1.0) {
+                small[ns++] = l;
+            } else {
+                large[nl++] = l;
+            }
+        }
+        while (nl > 0) {
+            int l = large[--nl];
+            prob[l] = 1.0;
+            alias[l] = l;
+        }
+        while (ns > 0) {
+            int s = small[--ns];
+            if (weights[s] > 0.0) {
+                prob[s] = 1.0;
+                alias[s] = s;
+            } else {
+                prob[s] = 0.0;
+                alias[s] = argMax;
+            }
+        }
+        return new Object[] {prob, alias};
+    }
+
+    private static Object field(AliasSampler s, String name) throws ReflectiveOperationException {
+        Field f = AliasSampler.class.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(s);
+    }
+
+    /**
+     * The in-place construction must give exactly the reference tables (zero probabilities may differ only in sign,
+     * which no draw can see), including underflowing and exactly cancelling weights.
+     */
+    @Test
+    void tablesMatchTheTwoStackConstruction() throws ReflectiveOperationException {
+        List<double[]> cases = new ArrayList<>();
+        cases.add(new double[] {1, 1, 0, 0});
+        cases.add(new double[] {1, 1, 1, 0});
+        cases.add(new double[] {0, 3, 0, 1, 0});
+        cases.add(new double[] {1e-320, 1e300, 1.0, 0.0, 5e-324});
+        cases.add(new double[] {Double.MAX_VALUE, Double.MAX_VALUE, 0.0});
+        cases.add(new double[] {-0.0, 2.0, -0.0});
+        SplittableRandom rnd = new SplittableRandom(31);
+        for (int t = 0; t < 400; t++) {
+            double[] w = new double[1 + rnd.nextInt(60)];
+            for (int i = 0; i < w.length; i++) {
+                w[i] = switch (t % 4) {
+                    case 0 -> rnd.nextInt(4); // small integers: exact sums, frequent exact cancellations
+                    case 1 -> rnd.nextInt(3) == 0 ? 0.0 : Math.pow(1.0 - rnd.nextDouble(), -1.5);
+                    case 2 -> 2.5;
+                    default -> rnd.nextInt(5) == 0 ? 1e-310 * rnd.nextDouble() : rnd.nextDouble() * 1e290;
+                };
+            }
+            w[rnd.nextInt(w.length)] = 1.0 + rnd.nextInt(3);
+            cases.add(w);
+        }
+        for (double[] w : cases) {
+            double[] before = w.clone();
+            Object[] ref = referenceTables(w);
+            AliasSampler s = AliasSampler.of(w);
+            assertArrayEquals(before, w, "of must not modify its argument");
+            double[] prob = (double[]) field(s, "prob");
+            double[] refProb = (double[]) ref[0];
+            for (int i = 0; i < w.length; i++) {
+                assertTrue(prob[i] == refProb[i], Arrays.toString(w) + " prob " + i);
+            }
+            assertArrayEquals((int[]) ref[1], (int[]) field(s, "alias"), Arrays.toString(w));
+        }
+    }
+
+    @Test
+    void sortedDrawsAreTheSortedSequenceOfNext() {
+        double[] w = {0.5, 0, 3, 1, 7, 0.25};
+        AliasSampler s = AliasSampler.of(w);
+        SplittableRandom a = new SplittableRandom(32);
+        SplittableRandom b = new SplittableRandom(32);
+        int[] expected = new int[5000];
+        for (int j = 0; j < expected.length; j++) {
+            expected[j] = s.next(a);
+        }
+        Arrays.sort(expected);
+        assertArrayEquals(expected, s.sortedDraws(expected.length, b));
+        assertEquals(a.nextLong(), b.nextLong());
+        assertEquals(0, s.sortedDraws(0, b).length);
+    }
+
+    /** The equal-weight shortcut must replay an actual sampler bit for bit and leave the generator in the same state. */
+    @Test
+    void sortedUniformDrawsReplayAnEqualWeightSampler() {
+        for (int n : new int[] {1, 2, 7, 1000}) {
+            for (double weight : new double[] {1.0, 0.1, 3e-300, 7e300}) {
+                double[] w = new double[n];
+                Arrays.fill(w, weight);
+                SplittableRandom a = new SplittableRandom(n * 31L);
+                SplittableRandom b = new SplittableRandom(n * 31L);
+                assertArrayEquals(AliasSampler.of(w).sortedDraws(3000, a), AliasSampler.sortedUniformDraws(n, 3000, b),
+                        "n=" + n + " w=" + weight);
+                assertEquals(a.nextLong(), b.nextLong());
+            }
+        }
+        assertThrows(IllegalArgumentException.class, () -> AliasSampler.sortedUniformDraws(0, 1, new SplittableRandom()));
+    }
+
+    @Test
+    void ofOwnedReusesTheGivenArrays() throws ReflectiveOperationException {
+        double[] w = {1, 0, 2};
+        int[] alias = new int[3];
+        AliasSampler s = AliasSampler.ofOwned(w, alias);
+        assertTrue(field(s, "prob") == w && field(s, "alias") == alias);
+        assertThrows(IllegalArgumentException.class, () -> AliasSampler.ofOwned(new double[] {1, 2}, new int[1]));
+    }
 
     /** Asserts each count is within 6 standard deviations of its binomial mean (a correct sampler fails w.p. < 1e-8). */
     private static void assertFrequencies(double[] weights, int[] counts, int m) {

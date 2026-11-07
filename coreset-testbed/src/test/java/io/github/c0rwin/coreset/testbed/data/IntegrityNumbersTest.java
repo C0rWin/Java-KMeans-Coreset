@@ -40,7 +40,7 @@ class IntegrityNumbersTest {
 
         IntegrityCheck.Report viaSummary = IntegrityCheck.check(ds.moments(), c);
         assertEquals(0.5 / 4.0, viaSummary.weightRelErr(), 1e-12);
-        assertEquals(1.0 / Math.sqrt(20.0), viaSummary.firstMomentRelErr(), 1e-12); // |(0,-1)| / |(2,4)|
+        assertEquals(1.0 / Math.sqrt(48.0), viaSummary.firstMomentRelErr(), 1e-12); // |(0,-1)| / sqrt(W * E)
         assertEquals(3.0 / 12.0, viaSummary.secondMomentRelErr(), 1e-12);
         assertEquals(0, viaSummary.negativeWeights());
         assertEquals(0, viaSummary.nonFinite());
