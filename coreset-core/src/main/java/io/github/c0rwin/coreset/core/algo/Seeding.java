@@ -135,6 +135,7 @@ public abstract class Seeding {
                 }
             }
             double[] keys = new double[activeCount];
+            double[] keyWeights = new double[activeCount];
             int rounds = 0;
             while (activeCount > 0) {
                 rounds++;
@@ -149,24 +150,12 @@ public abstract class Seeding {
                 double activeWeight = 0.0;
                 for (int i = 0; i < n; i++) {
                     if (active[i]) {
-                        keys[a++] = d2[i];
+                        keys[a] = d2[i];
+                        keyWeights[a++] = w[i];
                         activeWeight += w[i];
                     }
                 }
-                Arrays.sort(keys, 0, a);
-                double target = removeFraction * activeWeight;
-                // Smallest distance threshold whose closed ball holds at least the target weight.
-                int lo = 0;
-                int hi = a - 1;
-                while (lo < hi) {
-                    int mid = (lo + hi) >>> 1;
-                    if (weightWithin(keys[mid], active, d2, w) >= target) {
-                        hi = mid;
-                    } else {
-                        lo = mid + 1;
-                    }
-                }
-                double threshold = keys[lo];
+                double threshold = weightedThreshold(keys, keyWeights, a, removeFraction * activeWeight);
                 for (int i = 0; i < n; i++) {
                     if (active[i] && d2[i] <= threshold) {
                         active[i] = false;
@@ -178,20 +167,89 @@ public abstract class Seeding {
             return s.toClustering();
         }
 
-        private static double weightWithin(double threshold, boolean[] active, double[] d2, double[] w) {
-            double sum = 0.0;
-            for (int i = 0; i < d2.length; i++) {
-                if (active[i] && d2[i] <= threshold) {
-                    sum += w[i];
-                }
-            }
-            return sum;
-        }
-
         @Override
         public String toString() {
             return "bicriteria(removeFraction=" + removeFraction + ")";
         }
+    }
+
+    /**
+     * Smallest key t among {@code keys[0, a)} whose closed ball holds weight {@code >= target}, i.e. the weighted
+     * {@code target} quantile, found by weighted quickselect with a three-way partition (reorders both arrays):
+     * expected O(a). After {@code 2 log2(a) + 8} partitions the rest is sorted, so the worst case is O(a log a).
+     */
+    static double weightedThreshold(double[] keys, double[] weights, int a, double target) {
+        int lo = 0;
+        int hi = a;
+        double largest = keys[0];
+        for (int i = 1; i < a; i++) {
+            largest = Math.max(largest, keys[i]);
+        }
+        int budget = 2 * (32 - Integer.numberOfLeadingZeros(a)) + 8;
+        while (hi - lo > 1) {
+            if (budget-- == 0) {
+                return sortedThreshold(keys, weights, lo, hi, target);
+            }
+            double pivot = medianOfThree(keys[lo], keys[(lo + hi) >>> 1], keys[hi - 1]);
+            int lt = lo;
+            int gt = hi;
+            double less = 0.0;
+            double equal = 0.0;
+            for (int i = lo; i < gt; ) {
+                double key = keys[i];
+                if (key < pivot) {
+                    less += weights[i];
+                    swap(keys, weights, lt++, i++);
+                } else if (key > pivot) {
+                    swap(keys, weights, i, --gt);
+                } else {
+                    equal += weights[i++];
+                }
+            }
+            if (less >= target) {
+                hi = lt;
+            } else if (less + equal >= target) {
+                return pivot;
+            } else {
+                target -= less + equal;
+                lo = gt;
+            }
+        }
+        return hi > lo ? keys[lo] : largest; // empty only when rounding left target above the total
+    }
+
+    /** The same threshold on {@code [lo, hi)} by sorting a copy of the keys and binary-searching: O(len log len). */
+    static double sortedThreshold(double[] keys, double[] weights, int lo, int hi, double target) {
+        double[] sorted = Arrays.copyOfRange(keys, lo, hi);
+        Arrays.sort(sorted);
+        int l = 0;
+        int h = sorted.length - 1;
+        while (l < h) {
+            int mid = (l + h) >>> 1;
+            double within = 0.0;
+            for (int i = lo; i < hi; i++) {
+                within += keys[i] <= sorted[mid] ? weights[i] : 0.0;
+            }
+            if (within >= target) {
+                h = mid;
+            } else {
+                l = mid + 1;
+            }
+        }
+        return sorted[l];
+    }
+
+    private static double medianOfThree(double x, double y, double z) {
+        return Math.max(Math.min(x, y), Math.min(Math.max(x, y), z));
+    }
+
+    private static void swap(double[] keys, double[] weights, int i, int j) {
+        double k = keys[i];
+        keys[i] = keys[j];
+        keys[j] = k;
+        double w = weights[i];
+        weights[i] = weights[j];
+        weights[j] = w;
     }
 
     /** D^2 seeding state: every point's distance to, and index of, its nearest chosen center. */

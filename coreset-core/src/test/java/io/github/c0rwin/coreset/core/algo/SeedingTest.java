@@ -125,6 +125,35 @@ class SeedingTest {
     }
 
     @Test
+    void weightedThresholdIsTheSmallestQualifyingKey() {
+        SplittableRandom rnd = new SplittableRandom(12);
+        for (int t = 0; t < 300; t++) {
+            int a = 1 + rnd.nextInt(200);
+            double[] keys = new double[a];
+            double[] weights = new double[a];
+            double total = 0.0;
+            for (int i = 0; i < a; i++) {
+                keys[i] = rnd.nextInt(t % 2 == 0 ? 5 : 1000); // many ties on even trials
+                weights[i] = t % 3 == 0 ? 1.0 : 0.5 + rnd.nextInt(4);
+                total += weights[i];
+            }
+            double target = (0.05 + 0.9 * rnd.nextDouble()) * total;
+            double expected = Double.POSITIVE_INFINITY;
+            for (int c = 0; c < a; c++) {
+                double within = 0.0;
+                for (int i = 0; i < a; i++) {
+                    within += keys[i] <= keys[c] ? weights[i] : 0.0;
+                }
+                if (within >= target) {
+                    expected = Math.min(expected, keys[c]);
+                }
+            }
+            assertEquals(expected, Seeding.sortedThreshold(keys.clone(), weights.clone(), 0, a, target), "trial " + t);
+            assertEquals(expected, Seeding.weightedThreshold(keys, weights, a, target), "trial " + t);
+        }
+    }
+
+    @Test
     void centersAreDistinctPositiveWeightInputPoints() {
         List<WeightedPoint> pts = new ArrayList<>();
         for (int i = 0; i < 30; i++) {
