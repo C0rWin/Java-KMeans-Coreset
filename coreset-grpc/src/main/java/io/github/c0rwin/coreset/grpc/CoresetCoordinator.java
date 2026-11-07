@@ -191,17 +191,19 @@ public final class CoresetCoordinator implements AutoCloseable {
     }
 
     /**
-     * Optionally compresses the gathered coreset once more, then runs weighted k-means++ and Lloyd on it.
+     * Optionally compresses the gathered coreset once more, then keeps the cheapest of {@code restarts} runs of
+     * weighted k-means++ and Lloyd on it ({@link WeightedLloyd#bestOf}); one run often stops in a poor local optimum.
      *
      * @param finalCompress algorithm for the final reduction, or {@code null} to cluster the union directly
+     * @throws IllegalArgumentException if {@code restarts < 1}
      */
-    public static KMeansResult cluster(Coreset coreset, int k, int maxIterations, long seed,
+    public static KMeansResult cluster(Coreset coreset, int k, int maxIterations, int restarts, long seed,
                                        CoresetAlgorithm finalCompress) {
         SplittableRandom rng = new SplittableRandom(seed);
         SplittableRandom compressRng = rng.split();
         SplittableRandom lloydRng = rng.split(); // independent of whether a final compression runs
         Coreset input = finalCompress == null ? coreset : finalCompress.compress(coreset, compressRng);
-        return WeightedLloyd.cluster(input.points(), k, maxIterations, lloydRng);
+        return WeightedLloyd.bestOf(input.points(), k, maxIterations, restarts, lloydRng, MetricsSink.NOOP);
     }
 
     /** Cost of {@code centers} on the union of the nodes' session coresets (offsets included), summed node-side. */

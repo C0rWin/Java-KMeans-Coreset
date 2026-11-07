@@ -313,4 +313,34 @@ class WeightedLloydTest {
         a[0] = 99;
         assertTrue(r.assignment()[0] != 99);
     }
+
+    @Test
+    void bestOfNeverLosesToAnyRestartWithTheSameDerivedSeeds() {
+        double[][] means = new double[12][];
+        for (int i = 0; i < means.length; i++) {
+            means[i] = new double[] {10.0 * (i % 4), 10.0 * (i / 4)};
+        }
+        List<WeightedPoint> pts = blobs(means, 30, 1.5, 31);
+        int restarts = 8;
+        RecordingMetrics metrics = new RecordingMetrics();
+        KMeansResult best = WeightedLloyd.bestOf(pts, 12, 30, restarts, new SplittableRandom(32), metrics);
+
+        SplittableRandom derive = new SplittableRandom(32);
+        double min = Double.POSITIVE_INFINITY;
+        double max = 0.0;
+        for (int i = 0; i < restarts; i++) {
+            KMeansResult single = WeightedLloyd.cluster(pts, 12, 30, new SplittableRandom(derive.nextLong()));
+            assertTrue(best.cost() <= single.cost(), "restart " + i + ": " + single.cost() + " < " + best.cost());
+            min = Math.min(min, single.cost());
+            max = Math.max(max, single.cost());
+        }
+        assertEquals(min, best.cost());
+        assertTrue(max > min, "fixture should have restarts landing in different local optima");
+        assertEquals(Cost.cost(pts, best.centers()), best.cost(), 1e-9 * best.cost());
+        MetricsSnapshot snap = metrics.snapshot();
+        assertEquals(restarts, snap.distributions().get(MetricNames.LLOYD_RESTART_COST).count());
+        assertEquals(1, snap.distributions().get(MetricNames.LLOYD_BEST_OF + MetricNames.WALL_NS_SUFFIX).count());
+        assertThrows(IllegalArgumentException.class,
+                () -> WeightedLloyd.bestOf(pts, 2, 5, 0, new SplittableRandom(1), MetricsSink.NOOP));
+    }
 }

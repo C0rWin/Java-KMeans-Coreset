@@ -77,9 +77,9 @@ class CoresetCoordinatorTest {
             }
             assertEquals(weight, snap.coreset().totalWeight());
 
-            KMeansResult km = CoresetCoordinator.cluster(snap.coreset(), 3, 20, 5L, null);
+            KMeansResult km = CoresetCoordinator.cluster(snap.coreset(), 3, 20, 4, 5L, null);
             assertEquals(3, km.centers().size());
-            KMeansResult again = CoresetCoordinator.cluster(snap.coreset(), 3, 20, 5L, TestAlgorithms.IDENTITY);
+            KMeansResult again = CoresetCoordinator.cluster(snap.coreset(), 3, 20, 4, 5L, TestAlgorithms.IDENTITY);
             assertEquals(km.centers(), again.centers()); // seeded and deterministic
 
             double expected = Cost.cost(snap.coreset(), km.centers());

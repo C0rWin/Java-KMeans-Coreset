@@ -47,6 +47,9 @@ The project consists of the following modules:
    coreset k-means evaluated on the full data, and a checkpointed Structured
    Streaming sink. See [docs/engines.md](docs/engines.md) for this and the
    other engine mappings.
+8. **coreset-testbed** - evaluation testbed: datasets, offline/stream/distributed
+   runs, per-run validity reports (distortion, integrity, cost, memory) and
+   aggregated tables; see [docs/benchmarks/README.md](docs/benchmarks/README.md).
 
 
 APIs
@@ -348,6 +351,10 @@ How to run
    java -jar coreset-coordinator.jar --nodes localhost:7070 \
      --input points.csv --algorithm <id> --param key=value --k 32 --batch-size 1000
    ```
+
+   The coordinator keeps the cheapest of `--restarts` (default 10) k-means++ and
+   Lloyd runs on the gathered coreset, since a single run often ends in a poor
+   local optimum.
 
    Each node serves the standard `grpc.health.v1.Health` service and Prometheus
    metrics at `http://127.0.0.1:9464/metrics`.
