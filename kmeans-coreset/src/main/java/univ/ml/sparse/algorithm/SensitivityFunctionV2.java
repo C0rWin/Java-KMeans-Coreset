@@ -8,6 +8,6 @@ public class SensitivityFunctionV2 extends  SensitivityFunction {
 
     @Override
     public double sensitivity(SparseWeightableVector point, double dist, double clusterWeight, double totalVariance) {
-        return 8d / clusterWeight + 2d * dist / totalVariance;
+        return 8d * point.getWeight() / clusterWeight + 2d * dist / totalVariance;
     }
 }
