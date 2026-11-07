@@ -3,6 +3,7 @@ package io.github.c0rwin.coreset.bench;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.SplittableRandom;
 
@@ -43,7 +44,7 @@ public final class Workloads {
         }
         int[] idx = new int[nnz];
         double[] val = new double[nnz];
-        java.util.HashSet<Integer> chosen = new java.util.HashSet<>(nnz * 2);
+        HashSet<Integer> chosen = new HashSet<>(nnz * 2);
         int w = 0;
         for (int j = dim - nnz; j < dim; j++) {
             int t = rng.nextInt(j + 1);

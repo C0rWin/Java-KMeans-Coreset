@@ -2,6 +2,7 @@ package io.github.c0rwin.coreset.bench.jmh;
 
 import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import io.github.c0rwin.coreset.core.metrics.Span;
+import java.lang.management.ManagementFactory;
 import java.util.SplittableRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
@@ -119,4 +120,21 @@ public class MetricsBenchmark {
             // empty body: measures the probe and record overhead alone
         }
     }
+
+    /** The thread CPU clock a span reads twice; on macOS this is a Mach {@code thread_info} call. */
+    @Benchmark
+    @Threads(1)
+    public long threadCpuTimeProbe() {
+        return THREADS.getCurrentThreadCpuTime();
+    }
+
+    /** The allocation counter a span reads twice. */
+    @Benchmark
+    @Threads(1)
+    public long allocatedBytesProbe() {
+        return THREADS.getCurrentThreadAllocatedBytes();
+    }
+
+    private static final com.sun.management.ThreadMXBean THREADS =
+            (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
 }
