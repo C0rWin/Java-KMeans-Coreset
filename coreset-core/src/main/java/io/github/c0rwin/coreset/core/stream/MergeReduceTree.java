@@ -42,20 +42,26 @@ public final class MergeReduceTree {
         this.metrics = Objects.requireNonNull(metrics, "metrics");
     }
 
-    /** Inserts a batch coreset at level 0 and carries merges upward. */
+    /**
+     * Inserts a batch coreset at level 0 and carries merges upward. If a compression throws (or returns null, which
+     * fails with {@link IllegalStateException}), the levels and counters are left as before the call, so no batch is
+     * lost; only the generator may have advanced.
+     */
     public void add(Coreset batchCoreset) {
         Objects.requireNonNull(batchCoreset, "batchCoreset");
         try (Span ignored = metrics.span(MetricNames.MRTREE_ADD)) {
             Coreset carry = batchCoreset;
             int level = 0;
-            int chain = 0;
             while (level < levels.size() && levels.get(level) != null) {
                 carry = merge(levels.get(level), carry, level);
-                levels.set(level, null);
-                occupied--;
                 level++;
-                chain++;
             }
+            // Every merge succeeded: only now release the levels the carry absorbed.
+            for (int i = 0; i < level; i++) {
+                levels.set(i, null);
+            }
+            occupied -= level;
+            final int chain = level;
             if (level == levels.size()) {
                 levels.add(carry);
             } else {
@@ -74,6 +80,9 @@ public final class MergeReduceTree {
         try (Span ignored = metrics.span(MetricNames.MRTREE_MERGE)) {
             Coreset union = Coreset.union(older, newer);
             Coreset merged = algorithm.compress(union, rng, metrics);
+            if (merged == null) {
+                throw new IllegalStateException("algorithm " + algorithm + " returned null at level " + level);
+            }
             if (metrics != MetricsSink.NOOP) {
                 metrics.count(MetricNames.MRTREE_MERGES, 1);
                 metrics.count(MetricNames.mrtreeLevelMerges(level), 1);
@@ -131,6 +140,9 @@ public final class MergeReduceTree {
                 return snapshot;
             }
             Coreset compressed = algorithm.compress(snapshot, rng, metrics);
+            if (compressed == null) {
+                throw new IllegalStateException("algorithm " + algorithm + " returned null for the snapshot");
+            }
             if (metrics != MetricsSink.NOOP) {
                 metrics.record(MetricNames.MRTREE_COMPRESSED_SNAPSHOT_POINTS, compressed.size());
                 metrics.record(MetricNames.MRTREE_COMPRESSED_SNAPSHOT_BYTES, compressed.estimatedBytes());
