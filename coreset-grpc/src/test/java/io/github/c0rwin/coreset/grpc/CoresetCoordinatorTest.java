@@ -96,6 +96,27 @@ class CoresetCoordinatorTest {
     }
 
     @Test
+    void consecutiveIngestRunsIntoOneKeptSessionBothLand() throws Exception {
+        try (InProcessCluster cluster = new InProcessCluster(2, Map.of(), 16);
+             CoresetCoordinator coordinator = new CoresetCoordinator(cluster.channels, options(8))) {
+            coordinator.createSession("kept", new SessionSpec("merge-equal", Map.of(), 3L, 2, 8));
+            double weight = 0;
+            for (int run = 0; run < 2; run++) {
+                try (IngestStream stream = coordinator.openIngest("kept")) {
+                    weight += ingestAll(stream, new SplittableRandom(10 + run), 20, new ArrayList<>());
+                    stream.flush(WAIT);
+                    assertEquals(20, stream.acceptedBatches(), "run " + run);
+                    assertEquals(0, stream.duplicateAcks(), "run " + run);
+                }
+            }
+            GatheredSnapshot snap = coordinator.gather("kept", WAIT);
+            assertTrue(snap.complete());
+            assertEquals(40, snap.appliedBatches());
+            assertEquals(weight, snap.coreset().totalWeight(), 1e-9 * weight);
+        }
+    }
+
+    @Test
     void busyNodesAreRetriedWithTheSameSeqUntilAccepted() throws Exception {
         TestAlgorithms.Gated gated = new TestAlgorithms.Gated(TestAlgorithms.IDENTITY);
         try (InProcessCluster cluster = new InProcessCluster(1, Map.of("gated", gated), 16);
