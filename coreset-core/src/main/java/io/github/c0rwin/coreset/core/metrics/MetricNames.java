@@ -53,6 +53,44 @@ public final class MetricNames {
     /** Distribution: estimated heap bytes of a compressed snapshot. */
     public static final String MRTREE_COMPRESSED_SNAPSHOT_BYTES = "mrtree.compressed_snapshot.estimated_bytes";
 
+    /** Span around one {@code Seeding.cluster} call (seeding plus optional Lloyd refinement). */
+    public static final String SEEDING_CLUSTER = "seeding.cluster";
+    /** Counter: squared-distance evaluations performed by D^2 seeding inside {@code Seeding} (excludes Lloyd). */
+    public static final String SEEDING_DISTANCE_EVALUATIONS = "seeding.distance_evaluations";
+    /** Distribution: centers returned by one seeding call. */
+    public static final String SEEDING_CENTERS = "seeding.centers";
+    /** Distribution: sample-and-remove rounds performed by one bicriteria seeding call. */
+    public static final String SEEDING_BICRITERIA_ROUNDS = "seeding.bicriteria.rounds";
+
+    /** Span around one uniform-sampling compress call. */
+    public static final String UNIFORM_COMPRESS = "uniform.compress";
+    /** Counter: uniform calls that returned the input unchanged because it had at most m points. */
+    public static final String UNIFORM_PASSTHROUGH = "uniform.passthrough";
+    /** Distribution: distinct points in a uniform-sampling output. */
+    public static final String UNIFORM_OUTPUT_POINTS = "uniform.output_points";
+
+    /** Span around one sensitivity-sampling compress call (includes seeding). */
+    public static final String SENSITIVITY_COMPRESS = "sensitivity.compress";
+    /** Counter: sensitivity calls that returned the input unchanged because it had at most m points. */
+    public static final String SENSITIVITY_PASSTHROUGH = "sensitivity.passthrough";
+    /** Distribution: distinct points in a sensitivity-sampling output. */
+    public static final String SENSITIVITY_OUTPUT_POINTS = "sensitivity.output_points";
+    /** Distribution: actual total sensitivity {@code S = sum_p s_p} used to normalise the sampling distribution. */
+    public static final String SENSITIVITY_TOTAL = "sensitivity.total";
+    /** Counter: calls whose seeding had zero cost, so only the per-cluster mass term was used. */
+    public static final String SENSITIVITY_ZERO_COST_SEEDINGS = "sensitivity.zero_cost_seedings";
+
+    /** Span around one mean-coreset compress call (includes clustering). */
+    public static final String MEAN_COMPRESS = "mean.compress";
+    /** Counter: mean-coreset calls that returned the input unchanged because it had at most m points. */
+    public static final String MEAN_PASSTHROUGH = "mean.passthrough";
+    /** Distribution: points (non-empty clusters) in a mean-coreset output. */
+    public static final String MEAN_OUTPUT_POINTS = "mean.output_points";
+    /** Distribution: additive cost {@code sum_i cost(P_i, mean_i)} added to the offset by one call. */
+    public static final String MEAN_ADDED_OFFSET = "mean.added_offset";
+    /** Distribution: number of means m chosen by the adaptive search. */
+    public static final String MEAN_ADAPTIVE_M = "mean.adaptive.m";
+
     private static final String MRTREE_LEVEL_PREFIX = "mrtree.level.";
 
     /** Counter: merges whose inputs lived at {@code level} (result is carried to {@code level + 1}). */
