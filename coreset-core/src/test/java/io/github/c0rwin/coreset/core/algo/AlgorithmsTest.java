@@ -50,6 +50,27 @@ class AlgorithmsTest {
                 () -> Algorithms.create("mean", Map.of("k", "2", "eps", "0.1")));
     }
 
+    /** Review H4: a remote caller must not be able to ask for 2^31 centers, draws or Lloyd steps. */
+    @Test
+    void rejectsParametersAboveTheDefaultLimits() {
+        assertMessage("m must be <= 1000000", () -> Algorithms.create("uniform", Map.of("m", "1000001")));
+        assertMessage("m must be <= 1000000",
+                () -> Algorithms.create("sensitivity", Map.of("k", "2", "m", "2147483647")));
+        assertMessage("k must be <= 100000",
+                () -> Algorithms.create("sensitivity", Map.of("k", "100001", "m", "5")));
+        assertMessage("lloydIterations must be <= 1000", () -> Algorithms.create("sensitivity",
+                Map.of("k", "2", "m", "5", "lloydIterations", "2147483647")));
+        assertMessage("m must be <= 1000000", () -> Algorithms.create("mean", Map.of("m", "1000001")));
+        assertMessage("lloydIterations must be <= 1000",
+                () -> Algorithms.create("mean", Map.of("m", "5", "lloydIterations", "1001")));
+        assertMessage("maxM must be <= 1000000",
+                () -> Algorithms.create("mean", Map.of("k", "2", "eps", "0.1", "maxM", "1000001")));
+        assertMessage("k must be <= 100000",
+                () -> Algorithms.create("mean", Map.of("k", "100001", "eps", "0.1", "maxM", "5")));
+        // The limits themselves are accepted.
+        Algorithms.create("sensitivity", Map.of("k", "100000", "m", "1000000", "lloydIterations", "1000"));
+    }
+
     private static void assertMessage(String expected, org.junit.jupiter.api.function.Executable call) {
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, call);
         assertTrue(e.getMessage().contains(expected), e.getMessage());
