@@ -20,8 +20,10 @@ public final class MetricNames {
 
     /** Span around one k-means++ seeding call. */
     public static final String KMEANSPP_SEED = "kmeanspp.seed";
-    /** Counter: squared-distance evaluations performed by k-means++ seeding. */
+    /** Counter: point-to-candidate squared distances k-means++ seeding computed. */
     public static final String KMEANSPP_DISTANCE_EVALUATIONS = "kmeanspp.distance_evaluations";
+    /** Counter: point-to-candidate distances greedy seeding skipped because the triangle inequality ruled them out. */
+    public static final String KMEANSPP_PRUNED_DISTANCES = "kmeanspp.pruned_distances";
 
     /** Span around one weighted Lloyd call (includes seeding when seeding is performed). */
     public static final String LLOYD_CLUSTER = "lloyd.cluster";

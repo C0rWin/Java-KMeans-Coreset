@@ -297,7 +297,8 @@ class WeightedLloydTest {
 
         int trials = KMeansPlusPlus.defaultLocalTrials(k); // greedy seeding: see KMeansPlusPlusTest
         assertEquals((long) n + (long) n * (k - 1) * (trials + 1),
-                s.counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS));
+                s.counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS)
+                        + s.counters().get(MetricNames.KMEANSPP_PRUNED_DISTANCES));
         assertEquals((long) n * k * (r.iterations() + 1), s.counters().get(MetricNames.LLOYD_DISTANCE_EVALUATIONS));
         assertEquals(r.iterations() + 1, s.distributions().get(MetricNames.LLOYD_ITERATION_COST).count());
         assertEquals(r.iterations(), s.distributions().get(MetricNames.LLOYD_ITERATIONS).max());

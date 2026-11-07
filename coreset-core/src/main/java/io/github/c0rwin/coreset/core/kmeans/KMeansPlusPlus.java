@@ -56,8 +56,10 @@ public final class KMeansPlusPlus {
      * input (as views of its rows). Zero-weight points are never chosen. With {@code localTrials = 1} (plain D^2)
      * performs {@code n * (c - 1)} distance evaluations when {@code c = k} centers are returned and {@code n * c} when
      * the input runs out of distinct points first, where {@code n} is the number of positive-weight points; a greedy
-     * step with {@code L} trials costs {@code (L + 1) n} (L candidates in one fused pass, then the kept one), plus
-     * {@code n} for the first center. On sparse input a distance costs O(nnz(point)) lookups
+     * step with {@code L} trials costs at most {@code (L + 1) n} (L candidates in one fused pass, then the kept one),
+     * plus {@code n} for the first center. Greedy steps skip a point's distance to a candidate when the triangle
+     * inequality, with a margin above rounding, proves it cannot beat the point's current {@code D}; the result is
+     * bit-identical to evaluating them all. On sparse input a distance costs O(nnz(point)) lookups
      * ({@link SparseVector#scatterPays}, {@link RowCandidates}). The segments are streamed in order, so the result does
      * not depend on how the rows are segmented.
      *
@@ -66,6 +68,12 @@ public final class KMeansPlusPlus {
      */
     public static List<SparseVector> seed(PointSet points, int k, int localTrials, RandomGenerator rng,
                                           MetricsSink metrics) {
+        return seed(points, k, localTrials, rng, metrics, true);
+    }
+
+    /** {@code prune == false} evaluates every greedy distance (tests compare it with the pruned run). */
+    static List<SparseVector> seed(PointSet points, int k, int localTrials, RandomGenerator rng, MetricsSink metrics,
+                                   boolean prune) {
         if (k < 1) {
             throw new IllegalArgumentException("k must be >= 1: " + k);
         }
@@ -78,6 +86,7 @@ public final class KMeansPlusPlus {
             int n = 0;
             double totalWeight = 0.0;
             double moment = 0.0;
+            int maxNnz = 0;
             for (int t = 0; t < segments; t++) {
                 PointBlock b = points.segment(t);
                 for (int i = 0, rows = b.size(); i < rows; i++) {
@@ -86,6 +95,7 @@ public final class KMeansPlusPlus {
                     if (w > 0.0) {
                         n++;
                         totalWeight += w;
+                        maxNnz = Math.max(maxNnz, b.nnz(i));
                     }
                 }
             }
@@ -110,7 +120,8 @@ public final class KMeansPlusPlus {
             int last = rows[sample(weights, totalWeight, rng)];
             centers.add(points.vector(last));
             if (localTrials > 1) {
-                greedy(points, k, localTrials, last, rows, weights, centers, rng, metrics);
+                greedy(points, k, localTrials, last, rows, weights, centers, rng, metrics,
+                        prune ? Bounds.relativeError(2L * maxNnz) : Double.NaN);
                 return centers;
             }
 
@@ -163,32 +174,168 @@ public final class KMeansPlusPlus {
     /**
      * Greedy steps after the first center {@code first}: each draws {@code trials} candidates by D^2, evaluates them
      * together in one pass over the positive-weight points and keeps the one with the smallest potential (ties: the
-     * earliest draw); a second pass folds its distances into {@code D^2}. O(n + trials) memory besides the input.
+     * earliest draw); a second pass folds its distances into {@code D^2}. With a usable {@code relativeError} (see
+     * {@link Bounds}) both passes skip the distances the triangle inequality rules out. O(n + k * trials) memory
+     * besides the input.
      */
     private static void greedy(PointSet points, int k, int trials, int first, int[] rows, double[] weights,
-                               List<SparseVector> centers, RandomGenerator rng, MetricsSink metrics) {
-        final int n = rows.length;
-        boolean map = SparseVector.scatterPays(points.dim(), points.size(), points.storedEntries());
-        RowCandidates cand = new RowCandidates(points.dim(), trials, map);
-        double[] minD2 = new double[n];
-        Arrays.fill(minD2, Double.POSITIVE_INFINITY);
-        double[] score = new double[n];
-        double[] d = new double[trials];
+                               List<SparseVector> centers, RandomGenerator rng, MetricsSink metrics,
+                               double relativeError) {
+        Greedy g = new Greedy(points, trials, rows, weights, relativeError);
+        addCandidate(points, g.cand, first);
+        double total = g.absorb(-1);
+        g.addCenter(first);
         double[] potential = new double[trials];
         double[] draws = new double[trials];
         int[] picks = new int[trials];
         int[] order = new int[trials];
-        addCandidate(points, cand, first);
-        double total = absorb(points, cand, weights, minD2, score, d);
-        long evaluations = n;
         while (centers.size() < k && total != 0.0) { // zero: every positive-weight point sits on a center
             Guards.checkInterrupted("k-means++ seeding");
-            drawMany(score, total, rng, draws, order, picks);
-            cand.clear();
+            drawMany(g.score, total, rng, draws, order, picks);
+            g.cand.clear();
             for (int t = 0; t < trials; t++) {
-                addCandidate(points, cand, rows[picks[t]]);
+                addCandidate(points, g.cand, rows[picks[t]]);
             }
+            g.thresholds(picks);
+            g.potentials(potential);
+            int best = 0;
+            for (int t = 1; t < trials; t++) {
+                if (potential[t] < potential[best]) {
+                    best = t;
+                }
+            }
+            int chosen = rows[picks[best]];
+            centers.add(points.vector(chosen));
+            g.cand.clear();
+            addCandidate(points, g.cand, chosen);
+            total = g.absorb(best);
+            g.addCenter(chosen);
+        }
+        metrics.count(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS, g.evaluations);
+        metrics.count(MetricNames.KMEANSPP_PRUNED_DISTANCES, g.pruned);
+    }
+
+    private static void addCandidate(PointSet points, RowCandidates cand, int row) {
+        int s = points.segmentOf(row);
+        cand.add(points.segment(s), row - points.start(s));
+    }
+
+    /**
+     * Greedy seeding state. A point p with {@code D(p)^2 = minD2} at center {@code a = nearest[p]} cannot get closer to
+     * candidate c when {@code d(a, c) >= 2 D(p)}: then {@code d(p, c) >= d(a, c) - D(p) >= D(p)}. The test runs on
+     * squared distances, {@code minD2 <= thr[a][c] = d(a, c)^2 / (4 (1 + 8 err))}; the factor covers every computed
+     * distance being off by the relative error {@code err}, so a skipped distance always computes to at least
+     * {@code minD2} and leaves {@code min(minD2, d)} and the strict comparisons unchanged.
+     */
+    private static final class Greedy {
+        final PointSet points;
+        final int trials;
+        final int[] rows;
+        final double[] weights;
+        final RowCandidates cand;
+        final double[] minD2;
+        final double[] score;
+        final double[] d;
+        final boolean prune;
+        final double shrink;
+        final int[] nearest; // index of the center giving minD2, when pruning
+        PointBlock[] centerBlock = new PointBlock[8];
+        int[] centerRow = new int[8];
+        double[] thr; // [center * trials + candidate]
+        int centerCount;
+        long evaluations;
+        long pruned;
+        boolean bounding; // the bounds are worth their cost on this input lately
+        boolean stepBounded; // the current step uses them (thr is filled)
+        int idleSteps;
+
+        Greedy(PointSet points, int trials, int[] rows, double[] weights, double relativeError) {
+            this.points = points;
+            this.trials = trials;
+            this.rows = rows;
+            this.weights = weights;
+            boolean map = SparseVector.scatterPays(points.dim(), points.size(), points.storedEntries());
+            this.cand = new RowCandidates(points.dim(), trials, map);
+            this.minD2 = new double[rows.length];
+            Arrays.fill(minD2, Double.POSITIVE_INFINITY);
+            this.score = new double[rows.length];
+            this.d = new double[trials];
+            this.prune = Bounds.usable(relativeError) && trials < Integer.SIZE; // false for NaN; masks are ints
+            this.shrink = prune ? 1.0 / (4.0 * (1.0 + 8.0 * relativeError)) : 0.0;
+            this.nearest = prune ? new int[rows.length] : null;
+            this.thr = prune ? new double[8 * trials] : null;
+            this.bounding = prune;
+        }
+
+        void addCenter(int row) {
+            if (centerCount == centerRow.length) {
+                centerBlock = Arrays.copyOf(centerBlock, 2 * centerCount);
+                centerRow = Arrays.copyOf(centerRow, 2 * centerCount);
+                if (prune) {
+                    thr = Arrays.copyOf(thr, 2 * centerCount * trials);
+                }
+            }
+            int s = points.segmentOf(row);
+            centerBlock[centerCount] = points.segment(s);
+            centerRow[centerCount] = row - points.start(s);
+            centerCount++;
+        }
+
+        /**
+         * Decides whether this step uses the bounds and if so fills {@code thr} for every center and the candidates
+         * {@code rows[picks[t]]}: O(centers * trials) merges. A step that skipped under 1/8 of its distances turns the
+         * bounds off (their bookkeeping would cost more than it saves) until a probe every fourth step.
+         */
+        void thresholds(int[] picks) {
+            if (prune && !bounding && ++idleSteps >= 4) {
+                bounding = true;
+            }
+            stepBounded = bounding;
+            if (!stepBounded) {
+                return;
+            }
+            for (int t = 0; t < trials; t++) {
+                int row = rows[picks[t]];
+                int s = points.segmentOf(row);
+                PointBlock cb = points.segment(s);
+                int ci = row - points.start(s);
+                for (int c = 0; c < centerCount; c++) {
+                    double cc = centerBlock[c].squaredDistance(centerRow[c], cb, ci);
+                    thr[c * trials + t] = cc < Double.POSITIVE_INFINITY ? cc * shrink : -1.0;
+                }
+            }
+        }
+
+        /** Whether {@code m} is outside the underflow range where relative error bounds fail. */
+        private static boolean prunable(double m) {
+            return m == 0.0 || m >= Bounds.TINY_SQUARED;
+        }
+
+        /** {@code potential[t] = sum_p w_p min(minD2_p, d(p, candidate t)^2)}, in point order. */
+        void potentials(double[] potential) {
             Arrays.fill(potential, 0.0);
+            long all = (long) rows.length * trials;
+            if (!stepBounded) {
+                fullPotentials(potential);
+                evaluations += all;
+                return;
+            }
+            long computed = boundedPotentials(potential);
+            evaluations += computed;
+            pruned += all - computed;
+            if (8 * (all - computed) < all) {
+                bounding = false;
+                idleSteps = 0;
+            }
+        }
+
+        /** Kept apart from {@link #boundedPotentials} so each hot loop stays small enough to compile well. */
+        private void fullPotentials(double[] potential) {
+            final int trials = this.trials;
+            final double[] minD2 = this.minD2;
+            final double[] weights = this.weights;
+            final double[] d = this.d;
+            final RowCandidates cand = this.cand;
             for (int s = 0, q = 0; s < points.segmentCount(); s++) {
                 PointBlock b = points.segment(s);
                 for (int i = 0, r = b.size(); i < r; i++) {
@@ -203,46 +350,92 @@ public final class KMeansPlusPlus {
                     }
                 }
             }
-            int best = 0;
-            for (int t = 1; t < trials; t++) {
-                if (potential[t] < potential[best]) {
-                    best = t;
-                }
-            }
-            int chosen = rows[picks[best]];
-            centers.add(points.vector(chosen));
-            cand.clear();
-            addCandidate(points, cand, chosen);
-            total = absorb(points, cand, weights, minD2, score, d);
-            evaluations += (long) n * (trials + 1);
         }
-        metrics.count(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS, evaluations);
-    }
 
-    private static void addCandidate(PointSet points, RowCandidates cand, int row) {
-        int s = points.segmentOf(row);
-        cand.add(points.segment(s), row - points.start(s));
-    }
-
-    /** Folds the distances to the single candidate into {@code minD2}; refreshes {@code score} and returns its sum. */
-    private static double absorb(PointSet points, RowCandidates cand, double[] weights, double[] minD2,
-                                 double[] score, double[] d) {
-        double total = 0.0;
-        for (int s = 0, q = 0; s < points.segmentCount(); s++) {
-            PointBlock b = points.segment(s);
-            for (int i = 0, r = b.size(); i < r; i++) {
-                if (b.weight(i) > 0.0) {
-                    cand.squaredDistances(b, i, d);
-                    if (d[0] < minD2[q]) {
-                        minD2[q] = d[0];
+        /** The potentials with the bounds of the current step; returns the distances computed. */
+        private long boundedPotentials(double[] potential) {
+            final int trials = this.trials;
+            final double[] minD2 = this.minD2;
+            final double[] weights = this.weights;
+            final double[] d = this.d;
+            final int[] nearest = this.nearest;
+            final double[] thr = this.thr;
+            final RowCandidates cand = this.cand;
+            final int all = (1 << trials) - 1;
+            long computed = 0;
+            for (int s = 0, q = 0; s < points.segmentCount(); s++) {
+                PointBlock b = points.segment(s);
+                for (int i = 0, r = b.size(); i < r; i++) {
+                    if (b.weight(i) > 0.0) {
+                        double w = weights[q];
+                        double m = minD2[q];
+                        int mask = all;
+                        if (prunable(m)) {
+                            mask = 0;
+                            for (int t = 0, base = nearest[q] * trials; t < trials; t++) {
+                                mask |= m > thr[base + t] ? 1 << t : 0;
+                            }
+                        }
+                        if (mask == 0) {
+                            for (int t = 0; t < trials; t++) {
+                                potential[t] += w * m;
+                            }
+                        } else {
+                            computed += cand.squaredDistances(b, i, d, mask);
+                            for (int t = 0; t < trials; t++) {
+                                potential[t] += w * ((mask & (1 << t)) != 0 ? Math.min(m, d[t]) : m);
+                            }
+                        }
+                        q++;
                     }
-                    score[q] = weights[q] * minD2[q];
-                    total += score[q];
-                    q++;
                 }
             }
+            return computed;
         }
-        return total;
+
+        /**
+         * Folds the distances to the single candidate in {@code cand} (candidate {@code best} of the last
+         * {@link #thresholds}, or -1 for no bound) into {@code minD2}, the new center getting index
+         * {@code centerCount}; refreshes {@code score} and returns its sum.
+         */
+        double absorb(int best) {
+            final double[] minD2 = this.minD2;
+            final double[] weights = this.weights;
+            final double[] score = this.score;
+            final double[] d = this.d;
+            final int[] nearest = this.nearest;
+            final double[] thr = this.thr;
+            final RowCandidates cand = this.cand;
+            final boolean bounded = best >= 0 && stepBounded;
+            final int trials = this.trials;
+            final int index = centerCount;
+            long computed = 0;
+            double total = 0.0;
+            for (int s = 0, q = 0; s < points.segmentCount(); s++) {
+                PointBlock b = points.segment(s);
+                for (int i = 0, r = b.size(); i < r; i++) {
+                    if (b.weight(i) > 0.0) {
+                        double m = minD2[q];
+                        if (!bounded || !prunable(m) || m > thr[nearest[q] * trials + best]) {
+                            cand.squaredDistances(b, i, d);
+                            computed++;
+                            if (d[0] < m) {
+                                minD2[q] = d[0];
+                                if (nearest != null) {
+                                    nearest[q] = index;
+                                }
+                            }
+                        }
+                        score[q] = weights[q] * minD2[q];
+                        total += score[q];
+                        q++;
+                    }
+                }
+            }
+            evaluations += computed;
+            pruned += rows.length - computed;
+            return total;
+        }
     }
 
     /**

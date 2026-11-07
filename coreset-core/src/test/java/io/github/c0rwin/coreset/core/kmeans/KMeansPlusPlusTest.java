@@ -105,13 +105,21 @@ class KMeansPlusPlusTest {
         assertEquals(1, m.snapshot().distributions().get(MetricNames.KMEANSPP_SEED + MetricNames.WALL_NS_SUFFIX)
                 .count());
 
-        // Greedy: n for the first center, then L candidates in one pass plus the kept one per step.
+        // Greedy: n for the first center, then L candidates in one pass plus the kept one per step, each either
+        // computed or pruned; without pruning all are computed.
         RecordingMetrics g = new RecordingMetrics();
         int trials = KMeansPlusPlus.defaultLocalTrials(k);
         assertEquals(3, trials);
         assertEquals(k, KMeansPlusPlus.seed(pts, k, new SplittableRandom(8), g).size());
-        assertEquals((long) n + (long) n * (k - 1) * (trials + 1),
-                g.snapshot().counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS));
+        long greedyFormula = (long) n + (long) n * (k - 1) * (trials + 1);
+        Map<String, Long> gc = g.snapshot().counters();
+        assertEquals(greedyFormula, gc.get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS)
+                + gc.get(MetricNames.KMEANSPP_PRUNED_DISTANCES));
+        RecordingMetrics u = new RecordingMetrics();
+        assertEquals(KMeansPlusPlus.seed(pts, k, new SplittableRandom(8)),
+                KMeansPlusPlus.seed(set, k, trials, new SplittableRandom(8), u, false));
+        assertEquals(greedyFormula, u.snapshot().counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS));
+        assertEquals(0L, u.snapshot().counters().get(MetricNames.KMEANSPP_PRUNED_DISTANCES));
 
         // Runs out of distinct points: one update pass per chosen center.
         RecordingMetrics m2 = new RecordingMetrics();
@@ -119,6 +127,58 @@ class KMeansPlusPlusTest {
         assertEquals(2, KMeansPlusPlus.seed(PointSet.of(PointBlock.of(dup)), 5, 1, new SplittableRandom(9), m2).size());
         assertEquals(3L * 2, m2.snapshot().counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS));
         assertEquals(2, KMeansPlusPlus.seed(dup, 5, new SplittableRandom(9)).size());
+    }
+
+    /**
+     * Triangle pruning changes nothing: same centers as evaluating every distance, on dense and sparse (coordinate
+     * map) input, with duplicates (D = 0), zero weights and several segments; on separated clusters it skips most
+     * distances.
+     */
+    @Test
+    void prunedGreedySeedingIsBitIdenticalAndSkipsMostDistances() {
+        for (boolean sparse : new boolean[] {false, true}) {
+            SplittableRandom rnd = new SplittableRandom(sparse ? 31 : 30);
+            int dim = sparse ? 5000 : 6;
+            List<WeightedPoint> pts = new ArrayList<>();
+            for (int c = 0; c < 25; c++) {
+                double[] mean = new double[dim];
+                int[] support = new int[6];
+                for (int j = 0; j < support.length; j++) {
+                    support[j] = sparse ? rnd.nextInt(dim) : j;
+                    mean[support[j]] = 200 * rnd.nextDouble() - 100;
+                }
+                for (int i = 0; i < 80; i++) {
+                    double[] x = new double[dim];
+                    for (int j : support) {
+                        x[j] = mean[j] + rnd.nextGaussian();
+                    }
+                    double w = i % 17 == 0 ? 0.0 : 0.5 + rnd.nextDouble();
+                    pts.add(new WeightedPoint(SparseVector.dense(x), w)); // keeps only the non-zeros
+                    if (i % 9 == 0) {
+                        pts.add(pts.get(pts.size() - 1)); // exact duplicate
+                    }
+                }
+            }
+            PointBlock block = PointBlock.of(pts);
+            int half = block.size() / 2;
+            PointSet split = PointSet.concat(List.of(PointSet.of(block.slice(0, half)),
+                    PointSet.of(block.slice(half, block.size()))));
+            long pruned = 0;
+            long computed = 0;
+            for (int seed = 0; seed < 6; seed++) {
+                for (int k : new int[] {2, 25, 60}) {
+                    RecordingMetrics m = new RecordingMetrics();
+                    List<SparseVector> fast = KMeansPlusPlus.seed(split, k, new SplittableRandom(seed), m);
+                    List<SparseVector> full = KMeansPlusPlus.seed(PointSet.of(block), k,
+                            KMeansPlusPlus.defaultLocalTrials(k), new SplittableRandom(seed), MetricsSink.NOOP,
+                            false);
+                    assertEquals(full, fast, "sparse=" + sparse + " seed=" + seed + " k=" + k);
+                    pruned += m.snapshot().counters().get(MetricNames.KMEANSPP_PRUNED_DISTANCES);
+                    computed += m.snapshot().counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS);
+                }
+            }
+            assertTrue(pruned > computed, "sparse=" + sparse + " pruned " + pruned + " computed " + computed);
+        }
     }
 
     @Test

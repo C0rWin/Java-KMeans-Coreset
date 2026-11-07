@@ -82,6 +82,30 @@ public final class RowCandidates {
         count = 0;
     }
 
+    /**
+     * Squared distances from row {@code i} of {@code p} to at least the candidates {@code t < 32} whose bit
+     * {@code 1 << t} is set in {@code mask}, written to {@code out[t]} bit-identically to the unmasked call; returns how
+     * many were computed. With a coordinate map a non-zero mask computes all of them, since the fused pass costs about
+     * the same; without one only the selected candidates are merged and the other entries of {@code out} stay unchanged.
+     */
+    public int squaredDistances(PointBlock p, int i, double[] out, int mask) {
+        int selected = count >= Integer.SIZE ? mask : mask & ((1 << count) - 1);
+        if (slot != null) {
+            if (selected == 0) {
+                return 0;
+            }
+            squaredDistances(p, i, out);
+            return count;
+        }
+        int computed = 0;
+        for (int bits = selected; bits != 0; bits &= bits - 1) {
+            int t = Integer.numberOfTrailingZeros(bits);
+            out[t] = p.squaredDistance(i, blocks[t], rows[t]);
+            computed++;
+        }
+        return computed;
+    }
+
     /** {@code out[t]} = squared distance from row {@code i} of {@code p} to candidate {@code t}, for every candidate. */
     public void squaredDistances(PointBlock p, int i, double[] out) {
         final int n = count;

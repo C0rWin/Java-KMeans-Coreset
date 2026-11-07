@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.SplittableRandom;
 import org.junit.jupiter.api.Test;
@@ -64,6 +65,33 @@ class RowCandidatesTest {
                 }
             }
             assertThrows(IllegalStateException.class, () -> c.add(b, 1));
+        }
+    }
+
+    @Test
+    void maskedDistancesEqualTheFullPass() {
+        PointBlock b = rows(3);
+        for (boolean map : new boolean[] {true, false}) {
+            RowCandidates c = new RowCandidates(300, 5, map);
+            for (int t = 0; t < 5; t++) {
+                c.add(b, (11 * t) % b.size());
+            }
+            double[] full = new double[5];
+            double[] out = new double[5];
+            for (int i = 0; i < b.size(); i++) {
+                c.squaredDistances(b, i, full);
+                for (int mask = 0; mask < 32; mask++) {
+                    Arrays.fill(out, -1.0);
+                    int computed = c.squaredDistances(b, i, out, mask | 0xffffffe0); // bits above size() are ignored
+                    boolean all = map && mask != 0; // with a map one fused pass computes every candidate
+                    assertEquals(all ? 5 : Integer.bitCount(mask), computed);
+                    for (int t = 0; t < 5; t++) {
+                        double expected = all || (mask & (1 << t)) != 0 ? full[t] : -1.0;
+                        assertEquals(Double.doubleToLongBits(expected), Double.doubleToLongBits(out[t]),
+                                "map=" + map + " point " + i + " mask " + mask);
+                    }
+                }
+            }
         }
     }
 }
