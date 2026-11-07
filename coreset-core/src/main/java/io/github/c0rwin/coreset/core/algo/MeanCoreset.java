@@ -2,14 +2,12 @@ package io.github.c0rwin.coreset.core.algo;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
-import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
 import io.github.c0rwin.coreset.core.kmeans.WeightedLloyd;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.Span;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.random.RandomGenerator;
 
@@ -20,8 +18,10 @@ import java.util.random.RandomGenerator;
  * cost(P, Q)} for every Q, and total weight, first moment and {@code offset + sum w ||p||^2} are preserved exactly.
  * Inputs with at most m points are returned unchanged.
  *
- * <p>Time: Lloyd, O(n m d (iterations + 1)), plus one O(n d) pass for the means and phi; the adaptive variant runs
- * Lloyd for m = 1, k, k^2, ... up to maxM. The only randomness is the Lloyd seeding. Stateless and thread-safe.
+ * <p>Time: Lloyd, O(n m nnz (iterations + 1)), plus {@link WeightedLloyd#meansOf} for the means and phi (two passes
+ * and a sort of each part's stored entries); the adaptive variant runs Lloyd for m = 1, k, k^2, ... up to maxM.
+ * Memory follows the stored entries, never m * dim for high-dimensional sparse input. The only randomness is the
+ * Lloyd seeding. Stateless and thread-safe.
  */
 public final class MeanCoreset implements CoresetAlgorithm {
 
@@ -84,7 +84,9 @@ public final class MeanCoreset implements CoresetAlgorithm {
                 metrics.count(MetricNames.MEAN_PASSTHROUGH, 1);
                 return input;
             }
-            Coreset out = means(input, partition.assignment(), partition.centers().size(), metrics);
+            Coreset means = WeightedLloyd.meansOf(points, partition.assignment(), partition.centers().size());
+            metrics.record(MetricNames.MEAN_ADDED_OFFSET, means.offset());
+            Coreset out = new Coreset(means.points(), input.offset() + means.offset());
             metrics.record(MetricNames.MEAN_OUTPUT_POINTS, out.size());
             return out;
         }
@@ -116,49 +118,6 @@ public final class MeanCoreset implements CoresetAlgorithm {
         }
         metrics.record(MetricNames.MEAN_ADAPTIVE_M, t);
         return current;
-    }
-
-    /** Replaces each part by its weighted mean and adds the parts' cost around their means to the offset. */
-    private static Coreset means(Coreset input, int[] assignment, int parts, MetricsSink metrics) {
-        List<WeightedPoint> points = input.points();
-        final int n = points.size();
-        final int dim = points.get(0).vector().dim();
-        double[][] sums = new double[parts][];
-        double[] mass = new double[parts];
-        for (int i = 0; i < n; i++) {
-            WeightedPoint p = points.get(i);
-            double w = p.weight();
-            if (w > 0.0) {
-                int j = assignment[i];
-                if (sums[j] == null) {
-                    sums[j] = new double[dim];
-                }
-                p.vector().addTo(sums[j], w);
-                mass[j] += w;
-            }
-        }
-        SparseVector[] mean = new SparseVector[parts];
-        List<WeightedPoint> out = new ArrayList<>(parts);
-        for (int j = 0; j < parts; j++) {
-            if (mass[j] > 0.0) {
-                double[] s = sums[j];
-                double inv = 1.0 / mass[j];
-                for (int d = 0; d < dim; d++) {
-                    s[d] *= inv;
-                }
-                mean[j] = SparseVector.dense(s);
-                out.add(new WeightedPoint(mean[j], mass[j]));
-            }
-        }
-        double phi = 0.0;
-        for (int i = 0; i < n; i++) {
-            WeightedPoint p = points.get(i);
-            if (p.weight() > 0.0) {
-                phi += p.weight() * p.vector().squaredDistance(mean[assignment[i]]);
-            }
-        }
-        metrics.record(MetricNames.MEAN_ADDED_OFFSET, phi);
-        return new Coreset(out, input.offset() + phi);
     }
 
     @Override

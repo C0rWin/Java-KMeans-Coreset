@@ -103,6 +103,95 @@ class WeightedLloydTest {
         }
     }
 
+    /** Review F4: sparse and dense centers must give the same result, bit for bit, wherever both apply. */
+    @Test
+    void sparseAndDenseCentersGiveIdenticalResults() {
+        List<List<WeightedPoint>> inputs = new ArrayList<>();
+        inputs.add(blobs(new double[][] {{0, 0, 0}, {20, 0, 0}, {0, 20, 0}, {0, 0, 20}}, 50, 3.0, 31));
+        inputs.add(twoClusters(1e9, 400));
+        SplittableRandom rnd = new SplittableRandom(32);
+        List<WeightedPoint> sparse = new ArrayList<>();
+        for (int i = 0; i < 600; i++) {
+            int[] idx = {i % 7, 7 + rnd.nextInt(40), 7 + rnd.nextInt(40)};
+            double[] val = {1.0 + rnd.nextDouble(), rnd.nextGaussian(), rnd.nextGaussian()};
+            sparse.add(new WeightedPoint(SparseVector.of(50, idx, val), i % 11 == 0 ? 0.0 : 0.5 + rnd.nextDouble()));
+        }
+        inputs.add(sparse);
+        for (int t = 0; t < inputs.size(); t++) {
+            List<WeightedPoint> pts = inputs.get(t);
+            for (int k : new int[] {1, 4, 25}) {
+                List<SparseVector> seeds = KMeansPlusPlus.seed(pts, k, new SplittableRandom(33 + k));
+                double[] denseDist = new double[pts.size()];
+                double[] sparseDist = new double[pts.size()];
+                KMeansResult dense =
+                        WeightedLloyd.run(pts, seeds, 30, MetricsSink.NOOP, Centroids.Layout.DENSE, denseDist);
+                KMeansResult sparseCenters =
+                        WeightedLloyd.run(pts, seeds, 30, MetricsSink.NOOP, Centroids.Layout.SPARSE, sparseDist);
+                assertEquals(dense, sparseCenters, "input " + t + ", k=" + k);
+                assertArrayEquals(denseDist, sparseDist);
+            }
+        }
+        // A far-away initial center owns nothing and is reseeded, in both layouts alike.
+        List<WeightedPoint> pts = List.of(wp(1, 0, 0), wp(1, 1, 0), wp(1, 10, 0), wp(1, 11, 0));
+        List<SparseVector> seeds = List.of(v(5, 0), v(1e6, 1e6));
+        assertEquals(WeightedLloyd.run(pts, seeds, 20, MetricsSink.NOOP, Centroids.Layout.DENSE, null),
+                WeightedLloyd.run(pts, seeds, 20, MetricsSink.NOOP, Centroids.Layout.SPARSE, null));
+    }
+
+    @Test
+    void refineReportsTheFinalSquaredDistances() {
+        List<WeightedPoint> pts = blobs(new double[][] {{0, 0}, {10, 0}}, 30, 1.0, 34);
+        double[] dist = new double[pts.size()];
+        KMeansResult r = WeightedLloyd.refine(pts, List.of(v(1, 1), v(9, -1)), 10, MetricsSink.NOOP, dist);
+        int[] a = r.assignment();
+        for (int i = 0; i < pts.size(); i++) {
+            assertEquals(pts.get(i).vector().squaredDistance(r.centers().get(a[i])), dist[i], 1e-12);
+        }
+        assertThrows(IllegalArgumentException.class,
+                () -> WeightedLloyd.refine(pts, List.of(v(0, 0)), 1, MetricsSink.NOOP, new double[1]));
+    }
+
+    @Test
+    void layoutFollowsCellsVersusStoredEntries() {
+        assertEquals(Centroids.Layout.DENSE, Centroids.layoutFor(1000, 1000, 10));
+        assertEquals(Centroids.Layout.DENSE, Centroids.layoutFor(20, 1_000_000, 10_000_000));
+        assertEquals(Centroids.Layout.SPARSE, Centroids.layoutFor(20, 1_000_000, 1_000_000));
+        assertEquals(Centroids.Layout.SPARSE, Centroids.layoutFor(1000, 10_000_000, 25_000));
+    }
+
+    /** meansOf against a dense reference: means, part weights, and phi from exact distances. */
+    @Test
+    void meansOfMatchesDenseReference() {
+        List<WeightedPoint> pts = twoClusters(1e9, 300);
+        int[] assignment = new int[pts.size()];
+        for (int i = 0; i < assignment.length; i++) {
+            assignment[i] = i % 3 == 0 ? 2 : i % 2; // part 3 stays empty and is dropped
+        }
+        var c = WeightedLloyd.meansOf(pts, assignment, 4);
+        assertEquals(3, c.size());
+        double phi = 0.0;
+        for (int j = 0; j < 3; j++) {
+            double[] sum = new double[2];
+            double w = 0.0;
+            for (int i = 0; i < pts.size(); i++) {
+                if (assignment[i] == j) {
+                    pts.get(i).vector().addTo(sum, pts.get(i).weight());
+                    w += pts.get(i).weight();
+                }
+            }
+            double[] mean = {sum[0] / w, sum[1] / w};
+            assertEquals(SparseVector.dense(mean), c.points().get(j).vector());
+            assertEquals(w, c.points().get(j).weight());
+            for (int i = 0; i < pts.size(); i++) {
+                if (assignment[i] == j) {
+                    phi += pts.get(i).weight() * pts.get(i).vector().squaredDistance(c.points().get(j).vector());
+                }
+            }
+        }
+        assertEquals(phi, c.offset(), 1e-9 * phi);
+        assertThrows(IllegalArgumentException.class, () -> WeightedLloyd.meansOf(pts, new int[pts.size()], 0));
+    }
+
     @Test
     void weightTwoPointEqualsTwoCopies() {
         SplittableRandom rnd = new SplittableRandom(13);

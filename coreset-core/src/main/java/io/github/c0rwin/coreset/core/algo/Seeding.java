@@ -102,16 +102,9 @@ public abstract class Seeding {
             if (lloydIterations == 0) {
                 return s.toClustering();
             }
-            KMeansResult r = WeightedLloyd.refine(points, s.centers, lloydIterations, metrics);
-            List<SparseVector> centers = r.centers();
-            int[] assignment = r.assignment();
             double[] sq = new double[s.n];
-            double cost = 0.0;
-            for (int i = 0; i < s.n; i++) {
-                sq[i] = s.vectors[i].squaredDistance(centers.get(assignment[i]));
-                cost += s.weights[i] * sq[i];
-            }
-            return new Clustering(centers, assignment, sq, cost);
+            KMeansResult r = WeightedLloyd.refine(points, s.centers, lloydIterations, metrics, sq);
+            return new Clustering(r.centers(), r.assignment(), sq, r.cost());
         }
 
         @Override
