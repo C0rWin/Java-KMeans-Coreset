@@ -86,6 +86,41 @@ class SensitivityCoresetTest {
         assertEquals(50, total);
     }
 
+    /**
+     * Review F2: k = 1, 100 points at 0 and one at 1. When k-means++ seeds at the outlier, B = {1} and cost(B) = 100,
+     * yet Q = {0} gives the outlier sensitivity 1 / cost(P, {0}) = 1. Its s_p, read back as q_p * S from a sample
+     * that drew it, must not be below that.
+     */
+    @Test
+    void outlierSeedingStillUpperBoundsTheOutliersSensitivity() {
+        List<WeightedPoint> pts = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            pts.add(point(1.0, 0.0));
+        }
+        pts.add(point(1.0, 1.0));
+        Coreset p = Coreset.of(pts);
+        SparseVector outlier = SparseVector.dense(new double[] {1.0});
+        double trueSensitivityLowerBound = 1.0 / Cost.cost(p, List.of(SparseVector.dense(new double[] {0.0})));
+        SensitivityCoreset algo = new SensitivityCoreset(1, 100, Seeding.kMeansPlusPlus(0));
+        for (long seed = 0; seed < 100_000; seed++) {
+            Clustering b = Seeding.kMeansPlusPlus(0).cluster(pts, 1, new SplittableRandom(seed), MetricsSink.NOOP);
+            if (!b.centers().get(0).equals(outlier)) {
+                continue;
+            }
+            // compress draws the same seeding first, then samples from the same generator.
+            SampledCoreset s = algo.compressWithProvenance(p, new SplittableRandom(seed), MetricsSink.NOOP);
+            int j = s.coreset().points().stream().map(WeightedPoint::vector).toList().indexOf(outlier);
+            if (j < 0) {
+                continue;
+            }
+            double sOutlier = s.probabilities()[j] * s.totalSensitivity();
+            assertTrue(sOutlier >= trueSensitivityLowerBound,
+                    "seed " + seed + ": s_outlier = " + sOutlier + " < " + trueSensitivityLowerBound);
+            return;
+        }
+        throw new AssertionError("no seed drew the outlier both as center and as sample");
+    }
+
     /** cost(B) = 0 (every point on a center): only the mass term is used, so S = 8 * clusters and nothing is NaN. */
     @Test
     void zeroSeedingCostUsesMassTermOnly() {
