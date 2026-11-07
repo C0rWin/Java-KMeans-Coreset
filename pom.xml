@@ -18,6 +18,7 @@
   </licenses>
 
   <modules>
+    <module>coreset-core</module>
     <module>kmeans-coreset</module>
     <module>coreset-communication</module>
     <module>coreset-server</module>
