@@ -1,6 +1,7 @@
 package univ.ml.sparse;
 
 import java.io.Serializable;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
@@ -78,6 +79,21 @@ public class SparseWeightableVector extends OpenMapRealVector implements SparseS
     @Override
     public RealVector getVector() {
         return this;
+    }
+
+    /**
+     * Non-zero coordinates by index, read from the stored entries in O(nnz) rather than O(dimension).
+     */
+    public Map<Integer, Double> getNonZeroEntries() {
+        final Map<Integer, Double> entries = new HashMap<>();
+        final Iterator<Entry> it = sparseIterator();
+        while (it.hasNext()) {
+            final Entry entry = it.next();
+            if (entry.getValue() != 0) {
+                entries.put(entry.getIndex(), entry.getValue());
+            }
+        }
+        return entries;
     }
 
     @Override
