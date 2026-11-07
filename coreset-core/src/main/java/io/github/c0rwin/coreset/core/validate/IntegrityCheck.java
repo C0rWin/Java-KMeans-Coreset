@@ -18,8 +18,14 @@ public final class IntegrityCheck {
     }
 
     /**
-     * Relative errors are {@code |coreset - input| / |input|} (vector norm for the first moment); when the input value
-     * is 0 the absolute error is reported instead.
+     * Relative errors are {@code |coreset - input| / |input|} for the total weight and the second moment; when the
+     * input value is 0 the absolute error is reported instead.
+     *
+     * <p>The first moment is normalised by its natural scale {@code sqrt(W * E)} instead of its own norm, where W is
+     * the input weight and {@code E = offset + sum w ||p||^2} its second moment. By Cauchy-Schwarz
+     * {@code |sum w p| <= sqrt(W * E)}, so the value is at most the plain relative error, and it stays meaningful for
+     * data centered at the origin, where {@code sum w p} is near 0. It reads as the error of the weighted mean in
+     * units of the input's RMS norm.
      *
      * @param negativeWeights coreset points with negative weight; 0 while {@code WeightedPoint} rejects them, kept so
      *                        the report matches the validity-report schema
@@ -37,16 +43,16 @@ public final class IntegrityCheck {
         Moments in = moments(input.pointSet(), inFirst);
         Moments out = moments(coreset.pointSet(), outFirst);
         double diff = 0.0;
-        double ref = 0.0;
         for (int d = 0; d < dim; d++) {
             double e = outFirst[d] - inFirst[d];
             diff += e * e;
-            ref += inFirst[d] * inFirst[d];
         }
+        double inSecond = input.offset() + in.second;
+        double scale = Math.sqrt(in.weight) * Math.sqrt(inSecond); // two roots: the product may overflow
         return new Report(
                 relErr(out.weight, in.weight),
-                ref > 0.0 ? Math.sqrt(diff / ref) : Math.sqrt(diff),
-                relErr(coreset.offset() + out.second, input.offset() + in.second),
+                scale > 0.0 ? Math.sqrt(diff) / scale : Math.sqrt(diff),
+                relErr(coreset.offset() + out.second, inSecond),
                 out.negative, out.nonFinite);
     }
 
