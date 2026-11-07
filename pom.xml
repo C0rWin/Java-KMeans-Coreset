@@ -24,6 +24,7 @@
     <module>coreset-server</module>
     <module>coreset-node</module>
     <module>coreset-grpc</module>
+    <module>coreset-spark</module>
   </modules>
 
   <properties>

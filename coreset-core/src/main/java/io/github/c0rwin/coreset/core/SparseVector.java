@@ -1,5 +1,9 @@
 package io.github.c0rwin.coreset.core;
 
+import java.io.InvalidObjectException;
+import java.io.ObjectInputStream;
+import java.io.Serial;
+import java.io.Serializable;
 import java.util.Arrays;
 
 /**
@@ -7,8 +11,14 @@ import java.util.Arrays;
  *
  * <p>Equality is value-based: two vectors are equal iff they have the same dimension and the same non-zero entries.
  * Instances are safe to share between threads.
+ *
+ * <p>Java serialization goes through a proxy that is rebuilt with {@link #of}, so a deserialized vector satisfies the
+ * same invariants as a constructed one.
  */
-public final class SparseVector {
+public final class SparseVector implements Serializable {
+
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     /** Memory model used by {@link #estimatedBytes()}: 64-bit HotSpot, compressed oops, 8-byte alignment. */
     static final int OBJECT_HEADER_BYTES = 12;
@@ -358,5 +368,29 @@ public final class SparseVector {
             sb.append(indices[k]).append('=').append(values[k]);
         }
         return sb.append("}]").toString();
+    }
+
+    @Serial
+    private Object writeReplace() {
+        return new SerializedForm(dim, indices, values);
+    }
+
+    @Serial
+    private void readObject(ObjectInputStream in) throws InvalidObjectException {
+        throw new InvalidObjectException("SparseVector is deserialized only through its serialized form");
+    }
+
+    private record SerializedForm(int dim, int[] indices, double[] values) implements Serializable {
+
+        @Serial
+        private Object readResolve() throws InvalidObjectException {
+            try {
+                return SparseVector.of(dim, indices, values);
+            } catch (IllegalArgumentException | NullPointerException e) {
+                InvalidObjectException ex = new InvalidObjectException("invalid SparseVector: " + e.getMessage());
+                ex.initCause(e);
+                throw ex;
+            }
+        }
     }
 }

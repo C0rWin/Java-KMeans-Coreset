@@ -1,9 +1,13 @@
 package io.github.c0rwin.coreset.core;
 
+import java.io.Serializable;
 import java.util.Objects;
 
-/** A point with a non-negative, finite multiplicity used by weighted k-means and coresets. */
-public record WeightedPoint(SparseVector vector, double weight) {
+/**
+ * A point with a non-negative, finite multiplicity used by weighted k-means and coresets. Serializable so engines can
+ * ship it with their default serializer; deserialization re-runs the canonical constructor's checks.
+ */
+public record WeightedPoint(SparseVector vector, double weight) implements Serializable {
 
     public WeightedPoint {
         Objects.requireNonNull(vector, "vector");

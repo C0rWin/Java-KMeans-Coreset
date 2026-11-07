@@ -4,6 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InvalidObjectException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -74,5 +81,44 @@ class CoresetTest {
         // header 12 + ref 4 + double 8 = 24
         assertEquals(24 + p.vector().estimatedBytes(), p.estimatedBytes());
         assertEquals(small.estimatedBytes() + 2 * p.estimatedBytes() + 8, large.estimatedBytes());
+    }
+
+    private static byte[] serialize(Object o) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ObjectOutputStream out = new ObjectOutputStream(bytes)) {
+            out.writeObject(o);
+        }
+        return bytes.toByteArray();
+    }
+
+    private static Object deserialize(byte[] b) throws IOException, ClassNotFoundException {
+        try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(b))) {
+            return in.readObject();
+        }
+    }
+
+    @Test
+    void javaSerializationRoundTripsCoresets() throws Exception {
+        Coreset c = new Coreset(List.of(wp(1.5, 0, 2, 0, -3), wp(0.25, 1, 0, 0, 0),
+                new WeightedPoint(SparseVector.of(4, new int[0], new double[0]), 2)), 0.75);
+        Coreset back = (Coreset) deserialize(serialize(c));
+        assertEquals(c, back);
+        assertEquals(c.points().get(0).vector().hashCode(), back.points().get(0).vector().hashCode());
+    }
+
+    @Test
+    void deserializationRevalidatesSparseVectors() throws Exception {
+        double marker = 1.2345678901234567;
+        byte[] b = serialize(SparseVector.of(3, new int[] {1}, new double[] {marker}));
+        byte[] pattern = ByteBuffer.allocate(8).putDouble(marker).array();
+        int at = -1;
+        for (int i = 0; i + 8 <= b.length && at < 0; i++) {
+            if (ByteBuffer.wrap(b, i, 8).equals(ByteBuffer.wrap(pattern))) {
+                at = i;
+            }
+        }
+        assertTrue(at >= 0);
+        ByteBuffer.wrap(b, at, 8).putDouble(Double.NaN);
+        assertThrows(InvalidObjectException.class, () -> deserialize(b));
     }
 }

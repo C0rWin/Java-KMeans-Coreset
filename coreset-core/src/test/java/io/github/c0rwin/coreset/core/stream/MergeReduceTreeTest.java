@@ -230,4 +230,51 @@ class MergeReduceTreeTest {
         assertThrows(UnsupportedOperationException.class, () -> three.remove(0));
         assertEquals(List.of(), new MergeReduceTree(IDENTITY, new SplittableRandom(12)).levelsView());
     }
+
+    @Test
+    void restoredTreeContinuesBitIdentically() {
+        SplittableRandom rnd = new SplittableRandom(13);
+        List<Coreset> batches = new ArrayList<>();
+        for (int b = 0; b < 23; b++) {
+            batches.add(batch(rnd, 6));
+        }
+        MergeReduceTree full = new MergeReduceTree(HALVING, MergeRandomness.derived(42, 7), MetricsSink.NOOP);
+        batches.forEach(full::add);
+
+        MergeReduceTree first = new MergeReduceTree(HALVING, MergeRandomness.derived(42, 7), MetricsSink.NOOP);
+        batches.subList(0, 11).forEach(first::add);
+        MergeReduceTree resumed = MergeReduceTree.restore(HALVING, MergeRandomness.derived(42, 7), MetricsSink.NOOP,
+                first.levelsView(), first.batchesAdded());
+        assertEquals(first.levelsView(), resumed.levelsView());
+        batches.subList(11, 23).forEach(resumed::add);
+
+        assertEquals(full.levelsView(), resumed.levelsView());
+        assertEquals(full.batchesAdded(), resumed.batchesAdded());
+        assertEquals(full.compressedSnapshot(), resumed.compressedSnapshot());
+        assertEquals(full.compressedSnapshot(), full.compressedSnapshot()); // derived generators carry no state
+    }
+
+    @Test
+    void derivedRandomnessDependsOnEveryCoordinate() {
+        long base = MergeRandomness.derive(1, 2, 3, 4);
+        assertEquals(base, MergeRandomness.derive(1, 2, 3, 4));
+        assertTrue(base != MergeRandomness.derive(0, 2, 3, 4));
+        assertTrue(base != MergeRandomness.derive(1, 0, 3, 4));
+        assertTrue(base != MergeRandomness.derive(1, 2, 0, 4));
+        assertTrue(base != MergeRandomness.derive(1, 2, 3, 0));
+        assertTrue(base != MergeRandomness.derive(1, 2, 4, 3)); // not symmetric in level and sequence
+    }
+
+    @Test
+    void restoreRejectsLevelsInconsistentWithBatchCount() {
+        Coreset c = batch(new SplittableRandom(14), 2);
+        MergeRandomness r = MergeRandomness.derived(1, 1);
+        assertThrows(IllegalArgumentException.class,
+                () -> MergeReduceTree.restore(IDENTITY, r, MetricsSink.NOOP, List.of(c), 3));
+        assertThrows(IllegalArgumentException.class,
+                () -> MergeReduceTree.restore(IDENTITY, r, MetricsSink.NOOP, List.of(), -1));
+        MergeReduceTree restored = MergeReduceTree.restore(IDENTITY, r, MetricsSink.NOOP, List.of(c, c), 5);
+        assertEquals(2, restored.levels());
+        assertEquals(5, restored.batchesAdded());
+    }
 }

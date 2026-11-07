@@ -42,6 +42,11 @@ The project consists of the following modules:
    idempotent (seq-deduplicated) ingest, backpressure and snapshots.
 6. **coreset-grpc** - gRPC service, coordinator client library, Prometheus
    metrics and the `coreset-node` / `coreset-coordinator` command-line tools.
+7. **coreset-spark** - Spark 4.0 adapter (`provided` Spark dependencies):
+   distributed coreset builds over RDDs/Datasets with per-build metrics,
+   coreset k-means evaluated on the full data, and a checkpointed Structured
+   Streaming sink. See [docs/engines.md](docs/engines.md) for this and the
+   other engine mappings.
 
 
 APIs
