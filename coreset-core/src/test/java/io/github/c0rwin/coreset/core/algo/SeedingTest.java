@@ -11,7 +11,10 @@ import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.kmeans.WeightedLloyd;
+import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
+import io.github.c0rwin.coreset.core.metrics.MetricsSnapshot;
+import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -65,6 +68,11 @@ class SeedingTest {
         List<List<WeightedPoint>> inputs = new ArrayList<>();
         inputs.add(TestData.mixture(2000, 5, 2, false, 9).points());
         inputs.add(TestData.mixture(2000, 5, 3, true, 10).points());
+        List<WeightedPoint> zeros = new ArrayList<>(TestData.mixture(1500, 4, 2, true, 16).points());
+        for (int i = 0; i < zeros.size(); i += 3) {
+            zeros.set(i, new WeightedPoint(zeros.get(i).vector(), 0.0));
+        }
+        inputs.add(zeros);
         List<WeightedPoint> ties = new ArrayList<>();
         for (int i = 0; i < 900; i++) {
             ties.add(point(1.0 + i % 3, i % 30, (i / 30) % 4));
@@ -158,8 +166,37 @@ class SeedingTest {
                 }
             }
             assertEquals(expected, Seeding.sortedThreshold(keys.clone(), weights.clone(), 0, a, target), "trial " + t);
+            for (int budget = 0; budget < 4; budget++) { // sorting fallback after 0..3 partitions
+                assertEquals(expected, Seeding.weightedThreshold(keys.clone(), weights.clone(), a, target, budget),
+                        "trial " + t + " budget " + budget);
+            }
             assertEquals(expected, Seeding.weightedThreshold(keys, weights, a, target), "trial " + t);
         }
+    }
+
+    /**
+     * Guard: bicriteria reads the points once, once per center (the last center of a round also gathers the
+     * threshold keys), once per round to remove points (none after a round that ends with every active point on a
+     * center), and once for the final clustering. kmeans++ needs no per-round passes.
+     */
+    @Test
+    void seedingPassesAreCounted() {
+        List<WeightedPoint> pts = TestData.mixture(3000, 5, 3, true, 13).points();
+        long n = pts.size();
+        for (Seeding s : List.of(Seeding.bicriteria(), Seeding.bicriteria(0.25))) {
+            RecordingMetrics m = new RecordingMetrics();
+            Clustering c = s.cluster(pts, 5, new SplittableRandom(14), m);
+            MetricsSnapshot snap = m.snapshot();
+            long rounds = (long) snap.distributions().get(MetricNames.SEEDING_BICRITERIA_ROUNDS).max();
+            long centers = c.centers().size();
+            long scanned = snap.counters().get(MetricNames.SEEDING_POINTS_SCANNED);
+            assertTrue(scanned == n * (2 + centers + rounds) || scanned == n * (1 + centers + rounds),
+                    s + ": " + scanned / n + " passes for " + centers + " centers, " + rounds + " rounds");
+            assertTrue(snap.counters().get(MetricNames.SEEDING_DRAW_POINTS_SCANNED) <= n * centers);
+        }
+        RecordingMetrics m = new RecordingMetrics();
+        Clustering c = Seeding.kMeansPlusPlus(0).cluster(pts, 5, new SplittableRandom(15), m);
+        assertEquals(n * (2 + c.centers().size()), m.snapshot().counters().get(MetricNames.SEEDING_POINTS_SCANNED));
     }
 
     @Test
