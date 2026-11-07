@@ -6,9 +6,9 @@ import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Compact, bit-exact binary form of coresets, used for partial coresets shipped between Spark stages, for Kryo and
@@ -25,8 +25,9 @@ import java.util.Objects;
  * </pre>
  *
  * <p>Encoding sizes the output exactly (one read of the index arrays), then writes it in one pass into a single
- * allocation. Decoding validates lengths against the remaining input before allocating and rebuilds vectors through
- * {@link SparseVector#of}, so malformed input fails with {@link IllegalArgumentException}.
+ * allocation. Decoding validates lengths against the remaining input before allocating and hands the freshly decoded
+ * arrays to {@link SparseVector#ofOwned} (no further copy), so malformed input fails with
+ * {@link IllegalArgumentException}.
  */
 public final class CoresetCodec {
 
@@ -77,10 +78,10 @@ public final class CoresetCodec {
         Reader r = new Reader(bytes, offset, offset + length);
         double off = r.f64();
         int n = r.length(9); // weight + nnz at least
-        List<WeightedPoint> points = new ArrayList<>(n);
-        r.points(points, n);
+        Coreset.Builder points = Coreset.builder(n);
+        r.points(points::add, n);
         r.end();
-        return new Coreset(points, off);
+        return points.build(off);
     }
 
     /**
@@ -90,7 +91,7 @@ public final class CoresetCodec {
     static double decodeInto(byte[] bytes, List<WeightedPoint> out) {
         Reader r = new Reader(bytes, 0, bytes.length);
         double offset = r.f64();
-        r.points(out, r.length(9));
+        r.points(out::add, r.length(9));
         r.end();
         return offset;
     }
@@ -237,15 +238,15 @@ public final class CoresetCodec {
             return n;
         }
 
-        /** The dim header (when {@code n > 0}) and {@code n} points, appended to {@code out}. */
-        void points(List<WeightedPoint> out, int n) {
+        /** The dim header (when {@code n > 0}) and {@code n} points, passed to {@code out} in order. */
+        void points(Consumer<WeightedPoint> out, int n) {
             if (n == 0) {
                 return;
             }
             int dim = varint();
             for (int i = 0; i < n; i++) {
                 double weight = f64();
-                out.add(new WeightedPoint(body(dim), weight));
+                out.accept(new WeightedPoint(body(dim), weight));
             }
         }
 
@@ -267,7 +268,7 @@ public final class CoresetCodec {
                 val[k] = Double.longBitsToDouble((long) LONGS.get(buf, pos));
                 pos += 8;
             }
-            return SparseVector.of(dim, idx, val);
+            return SparseVector.ofOwned(dim, idx, val);
         }
 
         void end() {

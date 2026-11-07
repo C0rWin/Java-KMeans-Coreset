@@ -171,23 +171,14 @@ public final class CoresetCoordinator implements AutoCloseable {
         }
         List<SnapshotResponse> responses = awaitAll(calls);
         List<NodeSnapshot> snaps = new ArrayList<>(responses.size());
-        int total = 0;
-        double offset = 0.0;
+        List<Coreset> parts = new ArrayList<>(responses.size());
         for (SnapshotResponse r : responses) {
             NodeSnapshot s = ProtoCodec.fromProto(r, options.maxDim());
             snaps.add(s);
-            total = Math.addExact(total, s.coreset().size());
-            offset += s.coreset().offset();
+            parts.add(s.coreset());
         }
-        // One pre-sized concatenation instead of pairwise unions, which copied everything gathered so far per node.
-        WeightedPoint[] all = new WeightedPoint[total];
-        int at = 0;
-        for (NodeSnapshot s : snaps) {
-            for (WeightedPoint p : s.coreset().points()) {
-                all[at++] = p;
-            }
-        }
-        return new GatheredSnapshot(new Coreset(List.of(all), offset), snaps);
+        // One concatenation instead of pairwise unions, which copied everything gathered so far per node.
+        return new GatheredSnapshot(Coreset.union(parts), snaps);
     }
 
     /**

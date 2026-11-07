@@ -1,8 +1,11 @@
 package io.github.c0rwin.coreset.core;
 
+import java.io.Serial;
 import java.io.Serializable;
-import java.util.ArrayList;
+import java.util.AbstractList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.RandomAccess;
 
 /**
  * Weighted point set summarising a larger input for k-means: for any centers {@code C},
@@ -15,18 +18,12 @@ import java.util.List;
 public record Coreset(List<WeightedPoint> points, double offset) implements Serializable {
 
     public Coreset {
-        points = List.copyOf(points);
+        if (!(points instanceof PointArray)) { // built by Builder, which already checked every point
+            points = List.copyOf(points);
+            checkDimensions(points);
+        }
         if (!Double.isFinite(offset) || offset < 0.0) {
             throw new IllegalArgumentException("offset must be finite and >= 0: " + offset);
-        }
-        if (!points.isEmpty()) {
-            int dim = points.get(0).vector().dim();
-            for (int i = 1; i < points.size(); i++) {
-                if (points.get(i).vector().dim() != dim) {
-                    throw new IllegalArgumentException(
-                            "point " + i + " has dim " + points.get(i).vector().dim() + ", expected " + dim);
-                }
-            }
         }
     }
 
@@ -34,12 +31,34 @@ public record Coreset(List<WeightedPoint> points, double offset) implements Seri
         return new Coreset(points, 0.0);
     }
 
-    /** Concatenates points (a's first) and adds offsets. */
+    /** Concatenates points (a's first) and adds offsets; one allocation for the result's points. */
     public static Coreset union(Coreset a, Coreset b) {
-        List<WeightedPoint> all = new ArrayList<>(a.points.size() + b.points.size());
-        all.addAll(a.points);
-        all.addAll(b.points);
-        return new Coreset(all, a.offset + b.offset);
+        return union(List.of(a, b));
+    }
+
+    /**
+     * Concatenates the points of all coresets in order and adds their offsets; one allocation for the result's
+     * points, and no per-point checks beyond one dimension comparison per coreset.
+     *
+     * @throws IllegalArgumentException if two non-empty coresets differ in dimension
+     */
+    public static Coreset union(List<Coreset> parts) {
+        int total = 0;
+        double offset = 0.0;
+        for (Coreset c : parts) {
+            total = Math.addExact(total, c.size());
+            offset += c.offset;
+        }
+        Builder b = new Builder(total);
+        for (Coreset c : parts) {
+            b.addAll(c);
+        }
+        return b.build(offset);
+    }
+
+    /** Builder that collects points into one exactly sized array (when the expected size is right). */
+    public static Builder builder(int expectedSize) {
+        return new Builder(expectedSize);
     }
 
     public double totalWeight() {
@@ -71,5 +90,112 @@ public record Coreset(List<WeightedPoint> points, double offset) implements Seri
             total += p.estimatedBytes();
         }
         return total;
+    }
+
+    private static void checkDimensions(List<WeightedPoint> points) {
+        if (!points.isEmpty()) {
+            int dim = points.get(0).vector().dim();
+            for (int i = 1; i < points.size(); i++) {
+                if (points.get(i).vector().dim() != dim) {
+                    throw new IllegalArgumentException(
+                            "point " + i + " has dim " + points.get(i).vector().dim() + ", expected " + dim);
+                }
+            }
+        }
+    }
+
+    /** Collects points, checking each one's dimension as it is added. Not thread-safe; build at most once. */
+    public static final class Builder {
+        private WeightedPoint[] points;
+        private int size;
+        private int dim = -1;
+
+        private Builder(int expectedSize) {
+            if (expectedSize < 0) {
+                throw new IllegalArgumentException("expectedSize must be >= 0: " + expectedSize);
+            }
+            points = new WeightedPoint[expectedSize];
+        }
+
+        /** @throws IllegalArgumentException if {@code p}'s dimension differs from the points added before */
+        public Builder add(WeightedPoint p) {
+            int d = p.vector().dim();
+            if (dim < 0) {
+                dim = d;
+            } else if (d != dim) {
+                throw new IllegalArgumentException("point " + size + " has dim " + d + ", expected " + dim);
+            }
+            ensure(1);
+            points[size++] = p;
+            return this;
+        }
+
+        public Builder add(SparseVector v, double weight) {
+            return add(new WeightedPoint(v, weight));
+        }
+
+        /** Appends every point of {@code c}, which is consistent already: one dimension check in total. */
+        public Builder addAll(Coreset c) {
+            List<WeightedPoint> src = c.points;
+            int n = src.size();
+            if (n == 0) {
+                return this;
+            }
+            int d = src.get(0).vector().dim();
+            if (dim < 0) {
+                dim = d;
+            } else if (d != dim) {
+                throw new IllegalArgumentException("coreset has dim " + d + ", expected " + dim);
+            }
+            ensure(n);
+            if (src instanceof PointArray a) {
+                System.arraycopy(a.points, 0, points, size, n);
+            } else {
+                for (int i = 0; i < n; i++) {
+                    points[size + i] = src.get(i);
+                }
+            }
+            size += n;
+            return this;
+        }
+
+        public Coreset build(double offset) {
+            WeightedPoint[] out = size == points.length ? points : Arrays.copyOf(points, size);
+            points = null;
+            return new Coreset(new PointArray(out), offset);
+        }
+
+        private void ensure(int extra) {
+            if (points == null) {
+                throw new IllegalStateException("already built");
+            }
+            if (points.length - size < extra) {
+                points = Arrays.copyOf(points, Math.max(Math.addExact(size, extra), 2 * points.length));
+            }
+        }
+    }
+
+    /** Immutable list over an array no one else references. Serialised as a plain list, so it is re-checked. */
+    private static final class PointArray extends AbstractList<WeightedPoint> implements RandomAccess, Serializable {
+        private final WeightedPoint[] points;
+
+        PointArray(WeightedPoint[] points) {
+            this.points = points;
+        }
+
+        @Override
+        public WeightedPoint get(int index) {
+            return points[index];
+        }
+
+        @Override
+        public int size() {
+            return points.length;
+        }
+
+        @Serial
+        private Object writeReplace() {
+            return Arrays.asList(points.clone());
+        }
     }
 }

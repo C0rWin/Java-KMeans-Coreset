@@ -255,8 +255,7 @@ final class Session {
             accepted += w.accepted();
         }
         double acceptedW = acceptedWeight.sum();
-        // The union is built here, on demand, rather than on every insertion: one reference copy into a pre-sized
-        // array, plus the one List.of makes (Coreset keeps an immutable list as is).
+        // The union is built here, on demand, rather than on every insertion, as one allocation.
         long size = 0;
         for (Coreset c : parts) {
             size += c.size();
@@ -265,16 +264,7 @@ final class Session {
             throw new NodeLimitException("snapshot of session " + Messages.bounded(id) + " has " + size
                     + " points, above the limit of " + limits.maxSnapshotPoints());
         }
-        WeightedPoint[] points = new WeightedPoint[(int) size];
-        int at = 0;
-        double offset = 0.0;
-        for (Coreset c : parts) {
-            for (WeightedPoint p : c.points()) {
-                points[at++] = p;
-            }
-            offset += c.offset();
-        }
-        Coreset coreset = new Coreset(List.of(points), offset);
+        Coreset coreset = Coreset.union(parts);
         if (metrics != MetricsSink.NOOP) {
             metrics.record(NodeMetricNames.SNAPSHOT_POINTS, coreset.size());
             if ((snapshots.getAndIncrement() & (BYTES_SAMPLE_EVERY - 1)) == 0) {

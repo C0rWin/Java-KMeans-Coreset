@@ -59,6 +59,21 @@ public final class SparseVector implements Serializable {
      *     value (or a sum of duplicates) is not finite
      */
     public static SparseVector of(int dim, int[] indices, double[] values) {
+        return build(dim, indices, values, false);
+    }
+
+    /**
+     * {@link #of} that takes ownership of both arrays instead of copying them: the caller must not read or write them
+     * afterwards. Validation and canonicalisation are the same; input that is already sorted, duplicate-free and
+     * zero-free is wrapped as is. Meant for decoders that build fresh arrays per vector.
+     *
+     * @throws IllegalArgumentException as {@link #of}
+     */
+    public static SparseVector ofOwned(int dim, int[] indices, double[] values) {
+        return build(dim, indices, values, true);
+    }
+
+    private static SparseVector build(int dim, int[] indices, double[] values, boolean owned) {
         if (dim < 0) {
             throw new IllegalArgumentException("dim must be >= 0: " + dim);
         }
@@ -83,8 +98,8 @@ public final class SparseVector implements Serializable {
         int[] idx;
         double[] val;
         if (sorted) {
-            idx = indices.clone();
-            val = values.clone();
+            idx = owned ? indices : indices.clone();
+            val = owned ? values : values.clone();
         } else {
             // (index, position) packed into a long gives a stable primitive sort without boxing.
             long[] keys = new long[n];

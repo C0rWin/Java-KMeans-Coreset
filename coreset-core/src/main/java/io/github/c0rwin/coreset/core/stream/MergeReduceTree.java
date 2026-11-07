@@ -2,7 +2,6 @@ package io.github.c0rwin.coreset.core.stream;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
-import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.Span;
@@ -133,23 +132,9 @@ public final class MergeReduceTree {
         }
     }
 
-    /** Union of all levels without further compression; an empty tree yields an empty coreset. */
+    /** Union of all levels without further compression (one allocation); an empty tree yields an empty coreset. */
     public Coreset snapshot() {
-        int size = 0;
-        double offset = 0.0;
-        for (Coreset c : levels) {
-            if (c != null) {
-                size += c.size();
-                offset += c.offset();
-            }
-        }
-        List<WeightedPoint> points = new ArrayList<>(size);
-        for (Coreset c : levels) {
-            if (c != null) {
-                points.addAll(c.points());
-            }
-        }
-        Coreset snapshot = new Coreset(points, offset);
+        Coreset snapshot = Coreset.union(levelsView());
         if (metrics != MetricsSink.NOOP) {
             metrics.record(MetricNames.MRTREE_SNAPSHOT_POINTS, snapshot.size());
             metrics.record(MetricNames.MRTREE_SNAPSHOT_BYTES, snapshot.estimatedBytes());

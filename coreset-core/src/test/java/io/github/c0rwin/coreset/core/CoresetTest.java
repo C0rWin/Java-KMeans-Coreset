@@ -74,6 +74,50 @@ class CoresetTest {
     }
 
     @Test
+    void unionOfManyConcatenatesInOrderAndChecksDimensions() {
+        Coreset a = new Coreset(List.of(wp(1, 1, 0)), 1.0);
+        Coreset b = Coreset.of(List.of());
+        Coreset c = new Coreset(List.of(wp(2, 0, 1), wp(3, 1, 1)), 0.5);
+        Coreset u = Coreset.union(List.of(a, b, c));
+        assertEquals(List.of(wp(1, 1, 0), wp(2, 0, 1), wp(3, 1, 1)), u.points());
+        assertEquals(1.5, u.offset());
+        assertEquals(Coreset.union(Coreset.union(a, b), c), u);
+        Coreset d3 = Coreset.of(List.of(wp(1, 1, 2, 3)));
+        assertThrows(IllegalArgumentException.class, () -> Coreset.union(List.of(a, b, d3)));
+    }
+
+    @Test
+    void builderChecksDimensionsAndBuildsOnce() {
+        Coreset.Builder b = Coreset.builder(1).add(wp(1, 1, 2)).add(SparseVector.dense(new double[] {3, 4}), 2.0);
+        assertThrows(IllegalArgumentException.class, () -> b.add(wp(1, 1, 2, 3)));
+        Coreset c = b.build(0.5);
+        assertEquals(new Coreset(List.of(wp(1, 1, 2), wp(2, 3, 4)), 0.5), c);
+        assertThrows(IllegalStateException.class, () -> b.add(wp(1, 1, 2)));
+        assertThrows(UnsupportedOperationException.class, () -> c.points().set(0, wp(1, 1, 2)));
+    }
+
+    /** Guard: a union allocates its point array once (the old path copied it twice). */
+    @Test
+    void unionAllocatesThePointArrayOnce() {
+        List<WeightedPoint> pts = new ArrayList<>();
+        for (int i = 0; i < 20_000; i++) {
+            pts.add(wp(1, i, 1));
+        }
+        Coreset a = Coreset.of(pts.subList(0, 10_000));
+        Coreset b = Coreset.of(pts.subList(10_000, 20_000));
+        long array = Allocations.bytes(() -> new Object[20_000]);
+        long union = Allocations.bytes(() -> Coreset.union(a, b));
+        assertTrue(union <= array + 256, "union allocated " + union + " bytes, one array is " + array);
+    }
+
+    @Test
+    void builtCoresetsSerialiseAndRevalidate() throws Exception {
+        Coreset c = Coreset.union(new Coreset(List.of(wp(1, 1, 2)), 0.5), Coreset.of(List.of(wp(2, 3, 4))));
+        Coreset back = (Coreset) deserialize(serialize(c));
+        assertEquals(c, back);
+    }
+
+    @Test
     void estimatedBytesGrowsWithContent() {
         Coreset small = Coreset.of(List.of(wp(1, 1, 2)));
         Coreset large = Coreset.of(List.of(wp(1, 1, 2), wp(1, 3, 4), wp(1, 5, 6)));

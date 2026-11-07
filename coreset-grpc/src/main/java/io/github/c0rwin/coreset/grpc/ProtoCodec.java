@@ -34,7 +34,7 @@ public final class ProtoCodec {
 
     /**
      * Decodes one vector. The dimension is checked against {@code maxDim} before anything is allocated; the packed
-     * arrays are copied once here (and once more by {@code SparseVector.of}, which owns its arrays).
+     * arrays are copied once, into arrays the vector then owns ({@code SparseVector.ofOwned}).
      *
      * @throws IllegalArgumentException if the message is not a valid vector or its dimension exceeds {@code maxDim}
      */
@@ -54,7 +54,7 @@ public final class ProtoCodec {
             idx[k] = v.getIndices(k);
             val[k] = v.getValues(k);
         }
-        return SparseVector.of(dim, idx, val);
+        return SparseVector.ofOwned(dim, idx, val);
     }
 
     public static io.github.c0rwin.coreset.grpc.proto.WeightedPoint toProto(WeightedPoint p) {
@@ -116,8 +116,14 @@ public final class ProtoCodec {
                 .build();
     }
 
+    /** Decodes straight into the coreset's own storage: no intermediate list. */
     public static Coreset fromProto(io.github.c0rwin.coreset.grpc.proto.Coreset c, int maxDim) {
-        return new Coreset(pointsFromProto(c.getPointsList(), maxDim), c.getOffset());
+        int n = c.getPointsCount();
+        Coreset.Builder b = Coreset.builder(n);
+        for (int i = 0; i < n; i++) {
+            b.add(fromProto(c.getPoints(i), maxDim));
+        }
+        return b.build(c.getOffset());
     }
 
     public static io.github.c0rwin.coreset.grpc.proto.SessionSpec toProto(SessionSpec s) {

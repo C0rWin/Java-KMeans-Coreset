@@ -39,6 +39,36 @@ class SparseVectorTest {
     }
 
     @Test
+    void ofOwnedCanonicalisesAndValidatesLikeOf() {
+        int[][] indices = {{1, 3}, {3, 1, 3}, {2, 0, 4}, {1, 2}};
+        double[][] values = {{2.0, 4.0}, {1.0, 2.0, -1.0}, {0.0, 5.0, 6.0}, {0.0, 0.0}};
+        for (int t = 0; t < indices.length; t++) {
+            assertEquals(SparseVector.of(5, indices[t], values[t]),
+                    SparseVector.ofOwned(5, indices[t].clone(), values[t].clone()));
+        }
+        assertThrows(IllegalArgumentException.class, () -> SparseVector.ofOwned(3, new int[] {3}, new double[] {1}));
+        assertThrows(IllegalArgumentException.class, () -> SparseVector.ofOwned(3, new int[] {0}, new double[] {
+            Double.NaN}));
+        assertThrows(IllegalArgumentException.class, () -> SparseVector.ofOwned(3, new int[] {0, 1}, new double[] {1}));
+    }
+
+    /** Guard: decoders hand over fresh arrays, so a canonical vector must not be copied again. */
+    @Test
+    void ofOwnedDoesNotCopyCanonicalArrays() {
+        int n = 10_000;
+        int[] idx = new int[n];
+        double[] val = new double[n];
+        for (int k = 0; k < n; k++) {
+            idx[k] = 2 * k;
+            val[k] = k + 1.0;
+        }
+        long owned = Allocations.bytes(() -> SparseVector.ofOwned(2 * n, idx, val));
+        long copied = Allocations.bytes(() -> SparseVector.of(2 * n, idx, val));
+        assertTrue(owned < 256, "ofOwned allocated " + owned + " bytes");
+        assertTrue(copied >= 12L * n, "of allocated " + copied + " bytes");
+    }
+
+    @Test
     void ofValidatesBoundsLengthsAndFiniteness() {
         assertThrows(IllegalArgumentException.class, () -> SparseVector.of(3, new int[] {3}, new double[] {1}));
         assertThrows(IllegalArgumentException.class, () -> SparseVector.of(3, new int[] {-1}, new double[] {1}));
