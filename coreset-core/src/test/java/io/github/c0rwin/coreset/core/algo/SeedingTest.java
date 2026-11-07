@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.core.algo;
 
 import static io.github.c0rwin.coreset.core.algo.TestData.point;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -53,6 +54,74 @@ class SeedingTest {
         assertTrue(c.centers().size() >= 4 && c.centers().size() <= 4 * 13, "centers " + c.centers().size());
         double lloyd = WeightedLloyd.cluster(data.points(), 4, 50, new SplittableRandom(5)).cost();
         assertTrue(c.cost() <= lloyd, "bicriteria " + c.cost() + " vs lloyd(k) " + lloyd);
+    }
+
+    /**
+     * Review L4 guard: bicriteria must keep choosing, per round, the smallest distance threshold whose closed ball
+     * holds the target weight. Compares against a direct scan of that definition, on data with many tied distances.
+     */
+    @Test
+    void bicriteriaMatchesTheDirectThresholdDefinition() {
+        List<List<WeightedPoint>> inputs = new ArrayList<>();
+        inputs.add(TestData.mixture(2000, 5, 2, false, 9).points());
+        inputs.add(TestData.mixture(2000, 5, 3, true, 10).points());
+        List<WeightedPoint> ties = new ArrayList<>();
+        for (int i = 0; i < 900; i++) {
+            ties.add(point(1.0 + i % 3, i % 30, (i / 30) % 4));
+        }
+        inputs.add(ties);
+        for (List<WeightedPoint> pts : inputs) {
+            for (double fraction : new double[] {0.5, 0.25, 0.9}) {
+                Clustering fast = Seeding.bicriteria(fraction).cluster(pts, 4, new SplittableRandom(11), MetricsSink.NOOP);
+                Clustering direct = directBicriteria(pts, 4, fraction, new SplittableRandom(11));
+                assertEquals(direct.centers(), fast.centers(), "fraction " + fraction);
+                assertArrayEquals(direct.assignment(), fast.assignment());
+            }
+        }
+    }
+
+    /** Bicriteria with the threshold found by scanning all active points for every candidate. */
+    private static Clustering directBicriteria(List<WeightedPoint> pts, int k, double fraction, SplittableRandom rng) {
+        Seeding.D2 s = new Seeding.D2(pts);
+        boolean[] active = new boolean[s.n];
+        int activeCount = 0;
+        for (int i = 0; i < s.n; i++) {
+            active[i] = s.weights[i] > 0.0;
+            activeCount += active[i] ? 1 : 0;
+        }
+        while (activeCount > 0) {
+            for (int r = 0; r < k; r++) {
+                double total = s.centers.isEmpty() ? s.fillWeightMass(active) : s.fillD2Mass(active);
+                if (total == 0.0) {
+                    break;
+                }
+                s.add(Seeding.D2.draw(s.mass, total, rng));
+            }
+            double activeWeight = 0.0;
+            for (int i = 0; i < s.n; i++) {
+                activeWeight += active[i] ? s.weights[i] : 0.0;
+            }
+            double threshold = Double.POSITIVE_INFINITY;
+            for (int c = 0; c < s.n; c++) {
+                if (!active[c] || s.minD2[c] >= threshold) {
+                    continue;
+                }
+                double within = 0.0;
+                for (int i = 0; i < s.n; i++) {
+                    within += active[i] && s.minD2[i] <= s.minD2[c] ? s.weights[i] : 0.0;
+                }
+                if (within >= fraction * activeWeight) {
+                    threshold = s.minD2[c];
+                }
+            }
+            for (int i = 0; i < s.n; i++) {
+                if (active[i] && s.minD2[i] <= threshold) {
+                    active[i] = false;
+                    activeCount--;
+                }
+            }
+        }
+        return s.toClustering();
     }
 
     @Test
