@@ -4,14 +4,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
+import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.SplittableRandom;
 import org.junit.jupiter.api.Test;
 
@@ -93,16 +99,26 @@ class KMeansPlusPlusTest {
         pts.add(wp(0, 9, 9, 9)); // zero weight: not part of n
         RecordingMetrics m = new RecordingMetrics();
         int k = 5;
-        assertEquals(k, KMeansPlusPlus.seed(pts, k, new SplittableRandom(8), m).size());
+        PointSet set = PointSet.of(PointBlock.of(pts));
+        assertEquals(k, KMeansPlusPlus.seed(set, k, 1, new SplittableRandom(8), m).size());
         assertEquals((long) n * (k - 1), m.snapshot().counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS));
         assertEquals(1, m.snapshot().distributions().get(MetricNames.KMEANSPP_SEED + MetricNames.WALL_NS_SUFFIX)
                 .count());
 
+        // Greedy: n for the first center, then L candidates in one pass plus the kept one per step.
+        RecordingMetrics g = new RecordingMetrics();
+        int trials = KMeansPlusPlus.defaultLocalTrials(k);
+        assertEquals(3, trials);
+        assertEquals(k, KMeansPlusPlus.seed(pts, k, new SplittableRandom(8), g).size());
+        assertEquals((long) n + (long) n * (k - 1) * (trials + 1),
+                g.snapshot().counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS));
+
         // Runs out of distinct points: one update pass per chosen center.
         RecordingMetrics m2 = new RecordingMetrics();
         List<WeightedPoint> dup = List.of(wp(1, 1), wp(1, 1), wp(1, 2));
-        assertEquals(2, KMeansPlusPlus.seed(dup, 5, new SplittableRandom(9), m2).size());
+        assertEquals(2, KMeansPlusPlus.seed(PointSet.of(PointBlock.of(dup)), 5, 1, new SplittableRandom(9), m2).size());
         assertEquals(3L * 2, m2.snapshot().counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS));
+        assertEquals(2, KMeansPlusPlus.seed(dup, 5, new SplittableRandom(9)).size());
     }
 
     @Test
@@ -114,6 +130,58 @@ class KMeansPlusPlusTest {
         }
         assertEquals(KMeansPlusPlus.seed(pts, 7, new SplittableRandom(11)),
                 KMeansPlusPlus.seed(pts, 7, new SplittableRandom(11)));
+    }
+
+    /**
+     * Why greedy is the default: on 20 well-separated clusters of geometric sizes (25% down to 0.26%), plain D^2
+     * seeding leaves some cluster without a seed in most runs, while greedy seeding covers all of them.
+     */
+    @Test
+    void greedySeedingCoversSmallWellSeparatedClusters() {
+        int k = 20;
+        int d = 20;
+        SplittableRandom rnd = new SplittableRandom(7);
+        double[][] means = new double[k][d];
+        for (double[] mean : means) {
+            for (int j = 0; j < d; j++) {
+                mean[j] = (2 * rnd.nextDouble() - 1) * 60.0;
+            }
+        }
+        double ratio = Math.pow(0.0026 / 0.25, 1.0 / (k - 1));
+        double norm = (1 - Math.pow(ratio, k)) / (1 - ratio);
+        List<WeightedPoint> pts = new ArrayList<>();
+        Map<SparseVector, Integer> label = new HashMap<>();
+        int n = 4000;
+        for (int c = 0; c < k; c++) {
+            long count = c == k - 1 ? n - pts.size() : Math.round(n * Math.pow(ratio, c) / norm);
+            for (int t = 0; t < count; t++) {
+                double[] v = new double[d];
+                for (int j = 0; j < d; j++) {
+                    v[j] = means[c][j] + rnd.nextGaussian();
+                }
+                SparseVector p = SparseVector.dense(v);
+                pts.add(new WeightedPoint(p, 1.0));
+                label.put(p, c);
+            }
+        }
+        PointSet set = PointSet.of(PointBlock.of(pts));
+        int greedy = 0;
+        int plain = 0;
+        for (int run = 0; run < 10; run++) {
+            greedy += covered(label, k, KMeansPlusPlus.seed(set, k, new SplittableRandom(100 + run), MetricsSink.NOOP));
+            plain += covered(label, k,
+                    KMeansPlusPlus.seed(set, k, 1, new SplittableRandom(100 + run), MetricsSink.NOOP));
+        }
+        assertTrue(greedy >= 9, "greedy covered every cluster in " + greedy + "/10 runs");
+        assertTrue(plain <= 5, "plain D^2 covered every cluster in " + plain + "/10 runs");
+    }
+
+    private static int covered(Map<SparseVector, Integer> label, int k, List<SparseVector> seeds) {
+        Set<Integer> hit = new HashSet<>();
+        for (SparseVector s : seeds) {
+            hit.add(label.get(s));
+        }
+        return hit.size() == k ? 1 : 0;
     }
 
     @Test

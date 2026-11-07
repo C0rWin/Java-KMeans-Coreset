@@ -337,6 +337,12 @@ public final class PointBlock implements Serializable {
                 o.values, o.offsets[o.base + j], o.offsets[o.base + j + 1], o.norms[o.base + j]);
     }
 
+    /** {@code sum of c^2} over the entries of row {@code j} outside the support of row {@code i} of {@code p}. */
+    double offSupport(int j, PointBlock p, int i) {
+        return Kernels.offSupportSparse(p.indices, p.offsets[p.base + i], p.offsets[p.base + i + 1], indices, values,
+                offsets[base + j], offsets[base + j + 1]);
+    }
+
     /** {@code scratch[c] = value} for every entry of row {@code j}; {@link #clearRow} undoes it. */
     public void scatterRow(int j, double[] scratch) {
         checkDim(scratch.length);

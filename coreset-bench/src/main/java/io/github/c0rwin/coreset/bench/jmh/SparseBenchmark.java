@@ -60,16 +60,23 @@ public class SparseBenchmark {
     @Setup
     public void setup() {
         input = Coreset.of(Workloads.sparseMixture(n, DIM, NNZ, k, 11L));
-        seeds = KMeansPlusPlus.seed(input.pointSet(), k, new SplittableRandom(12), MetricsSink.NOOP);
+        seeds = KMeansPlusPlus.seed(input.pointSet(), k, 1, new SplittableRandom(12), MetricsSink.NOOP);
         sensitivity = new SensitivityCoreset(k, 1000, Seeding.kMeansPlusPlus(0));
         uniform = new UniformCoreset(1000);
         mean = new MeanCoreset(100, 3);
         rng = new SplittableRandom(13);
     }
 
+    /** Default (greedy) seeding. */
     @Benchmark
     public List<SparseVector> kmeansppSeed() {
         return KMeansPlusPlus.seed(input.pointSet(), k, rng, MetricsSink.NOOP);
+    }
+
+    /** Plain D^2 seeding (one trial per step). */
+    @Benchmark
+    public List<SparseVector> kmeansppSeedPlain() {
+        return KMeansPlusPlus.seed(input.pointSet(), k, 1, rng, MetricsSink.NOOP);
     }
 
     @Benchmark

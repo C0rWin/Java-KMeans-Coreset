@@ -52,13 +52,20 @@ public class KMeansBenchmark {
     @Setup
     public void setup() {
         points = PointSet.of(PointBlock.of(Workloads.gaussianMixture(n, d, k, 1L)));
-        seeds = KMeansPlusPlus.seed(points, k, new SplittableRandom(2), MetricsSink.NOOP);
+        seeds = KMeansPlusPlus.seed(points, k, 1, new SplittableRandom(2), MetricsSink.NOOP); // fixed Lloyd start
         rng = new SplittableRandom(3);
     }
 
+    /** Default (greedy) seeding. */
     @Benchmark
     public List<SparseVector> seed() {
         return KMeansPlusPlus.seed(points, k, rng, MetricsSink.NOOP);
+    }
+
+    /** Plain D^2 seeding (one trial per step). */
+    @Benchmark
+    public List<SparseVector> seedPlain() {
+        return KMeansPlusPlus.seed(points, k, 1, rng, MetricsSink.NOOP);
     }
 
     @Benchmark

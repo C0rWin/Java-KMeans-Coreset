@@ -295,7 +295,9 @@ class WeightedLloydTest {
         KMeansResult r = WeightedLloyd.cluster(pts, k, 30, new SplittableRandom(21), m);
         MetricsSnapshot s = m.snapshot();
 
-        assertEquals((long) n * (k - 1), s.counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS));
+        int trials = KMeansPlusPlus.defaultLocalTrials(k); // greedy seeding: see KMeansPlusPlusTest
+        assertEquals((long) n + (long) n * (k - 1) * (trials + 1),
+                s.counters().get(MetricNames.KMEANSPP_DISTANCE_EVALUATIONS));
         assertEquals((long) n * k * (r.iterations() + 1), s.counters().get(MetricNames.LLOYD_DISTANCE_EVALUATIONS));
         assertEquals(r.iterations() + 1, s.distributions().get(MetricNames.LLOYD_ITERATION_COST).count());
         assertEquals(r.iterations(), s.distributions().get(MetricNames.LLOYD_ITERATIONS).max());
@@ -326,7 +328,8 @@ class WeightedLloydTest {
         for (int i = 0; i < means.length; i++) {
             means[i] = new double[] {10.0 * (i % 4), 10.0 * (i / 4)};
         }
-        List<WeightedPoint> pts = blobs(means, 30, 1.5, 31);
+        // Overlapping blobs: greedy seeding solves well-separated ones in every restart.
+        List<WeightedPoint> pts = blobs(means, 30, 6.0, 31);
         int restarts = 8;
         RecordingMetrics metrics = new RecordingMetrics();
         KMeansResult best = WeightedLloyd.bestOf(pts, 12, 30, restarts, new SplittableRandom(32), metrics);
