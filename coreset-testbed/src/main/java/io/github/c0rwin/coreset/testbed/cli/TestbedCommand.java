@@ -3,6 +3,7 @@ package io.github.c0rwin.coreset.testbed.cli;
 import io.github.c0rwin.coreset.node.ServiceLoaderAlgorithmResolver;
 import io.github.c0rwin.coreset.testbed.data.Datasets;
 import io.github.c0rwin.coreset.testbed.data.PublicDataset;
+import io.github.c0rwin.coreset.testbed.faults.FaultsCommand;
 import io.github.c0rwin.coreset.testbed.report.Json;
 import io.github.c0rwin.coreset.testbed.report.ValidityReport;
 import io.github.c0rwin.coreset.testbed.run.OutputDirectory;
@@ -31,7 +32,7 @@ import picocli.CommandLine.Spec;
 @Command(name = "coreset-testbed", mixinStandardHelpOptions = true,
         description = "Evaluates coreset algorithms and writes one validity report per run.",
         subcommands = {TestbedCommand.Run.class, TestbedCommand.Suite.class, TestbedCommand.Aggregate.class,
-                TestbedCommand.DatasetsCommand.class})
+                TestbedCommand.DatasetsCommand.class, FaultsCommand.class})
 public final class TestbedCommand implements Runnable {
 
     @Spec
