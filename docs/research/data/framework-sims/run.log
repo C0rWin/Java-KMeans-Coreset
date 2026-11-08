@@ -1,0 +1,35 @@
+[    0.0s] A: start
+[    0.0s] instance: n=20000 d=5 components=10 k=10 (0.0 s)
+[    0.8s] VERDICT A1 HT floor: PASS | m=100000: ratio 0.8751 [0.8747, 0.8755], sd 0.0045; P[|ratio-1|>0.1] = 1.000; mean-ratio CI covers 0.875 in 7/7 cells
+[    0.8s] VERDICT A1 RC rate: PASS | slope of log RMS on log M' = -0.505 [-0.515, -0.495] over m = 100..100000
+[    3.2s] VERDICT A2 header copies: PASS | adjacent 0.08281 [0.08265, 0.08297] (pred 0.08281); spaced 1.004e-03 [9.859e-04, 1.022e-03] (pred 1.0005e-03); ratio 82x
+[    5.9s] VERDICT A3 header in every packet: PASS | 0/200000 trials differ from the reliable-header decoder; P[fail] 0.0014 vs 0.0014; 3 adjacent header packets: P[fail] 0.0834
+[    5.9s] A: done in 5.9 s
+[    5.9s] B: start
+[    6.8s] VERDICT B1 pair plateau: PASS | m=100000: X_A RC -0.1999; X_A midpoint HT -0.1999; X_B RC +0.1999; X_B midpoint HT +0.2000;
+[    6.8s] VERDICT B1 pair same law: PASS | RC estimate at m=1000, X_A vs X_B: KS p = 0.933, AD p = 0.694
+[    7.3s] VERDICT B2 RC limit: PASS | m=100000: mean 0.4937 [0.4906, 0.4967], sd 0.0492; RMS distance to 0.4926 falls with slope -0.502 [-0.510, -0.492] in log m
+[    7.3s] VERDICT B2 midpoint limit: PASS | m=100000: mean 0.2007 [0.1983, 0.2032], sd 0.0394; RMS distance to 0.2000 falls with slope -0.501 [-0.510, -0.492] in log m
+[    7.3s] VERDICT B2 known p / per-class: PASS | m=100000: mean err known +0.0006 [-0.0014, +0.0027], per-class +0.0007 [-0.0012, +0.0026]; RMS slope known -0.501 [-0.510, -0.492], per-class -0.504 [-0.512, -0.495]
+[    7.5s] VERDICT B3 mixture bias: PASS | largest predicted |bias| 0.0773; measured vs predicted max |z| = 2.43 over 4 m x 8 queries x 2 decoders
+[    7.5s] VERDICT B3 per-class removes bias: PASS | per-class and known-p max |mean err|/se = 1.91 (m >= 2000); RMS slope of max_Q error -0.502 [-0.513, -0.490]
+[    7.5s] B: done in 1.6 s
+[    7.5s] C: start
+[   28.2s] VERDICT C1 normal approximation: PASS | 0.0356 [0.0356, 0.0357] (+5.2%) and 0.0593 [0.0591, 0.0597] (+9.8%) vs 0.0338 and 0.0540
+[   28.2s] VERDICT C1 Markov bound: PASS | upper CI 0.0357 <= 0.0969 and 0.0597 <= 0.1325 (slack x2.7, x2.2)
+[   28.2s] VERDICT C1 Cantelli bound: PASS | 0.0357 <= 0.145; 1.45 >= 1 is vacuous
+[   28.2s] VERDICT C1 growth: PASS | ratio 1.669 [1.657, 1.678]
+[   47.7s] VERDICT C2 identical given M': PASS | min p over random-packing arms, Bernoulli/sorted and the 3 pairs = 0.2605
+[   47.7s] VERDICT C2 sorted + block: PASS | min p of the 4 tests vs loss-free = 0.00e+00; mean err Q0 -0.0829 vs +0.0001
+[   47.7s] VERDICT C2 sorted + bursts: PASS | min p of the 4 tests vs loss-free = 0.00e+00; sd err Q0 0.02104 vs 0.01316
+[   47.7s] C: done in 40.2 s
+[   47.7s] D: start
+[   49.7s] VERDICT D1 forwarding price: PASS | delivered fraction 0.5040 [0.5037, 0.5042] vs 0.5040 (|z| = 0.30)
+[   49.7s] VERDICT D1 forwarding accuracy: PASS | min p over 3 pairs x 2 metrics x (KS, AD) = 0.0276
+[   51.2s] VERDICT D2 resampling accuracy: PASS | per-run composition violated in 0/1200 runs; q95 root error <= prod(1 + q95 eps_l) - 1 at all L: true; RMS grows with slope 0.238 [0.203, 0.274] in log L
+[   51.2s] VERDICT D2 resampling loss: PASS | max |z| of the per-edge delivered fraction against 0.8 over depths = 0.90
+[   51.2s] VERDICT D2 forwarding price: PASS | mean square of max_Q error vs loss-free m=2000 (RMS 0.0614): max |z| over depths = 1.00
+[   51.2s] D: done in 3.5 s
+[   51.2s] E: start
+[   51.8s] VERDICT E k-median scaling: PASS | z=1: Q0 0.505 [0.486, 0.525], max_Q 0.502 [0.491, 0.512]; z=2: Q0 0.506 [0.486, 0.526], max_Q 0.510 [0.499, 0.520];
+[   51.8s] E: done in 0.6 s

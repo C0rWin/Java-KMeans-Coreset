@@ -53,6 +53,8 @@ The project consists of the following modules:
    aggregated tables; see [docs/benchmarks/README.md](docs/benchmarks/README.md).
    `coreset-testbed faults` injects node loss, packet erasure, stragglers and
    tree failures; see [docs/research/fault-tolerance-experiments.md](docs/research/fault-tolerance-experiments.md).
+   `coreset-testbed framework` simulates the predictions of the general loss-invariance framework; see
+   [docs/research/framework-simulations.md](docs/research/framework-simulations.md).
 7. **coreset-bench** - JMH benchmarks of the kernels, the node/gRPC ingestion
    and end-to-end harnesses and JFR profiling, driven by `coreset-bench/run-benchmarks.sh`; see
    [docs/performance.md](docs/performance.md).
