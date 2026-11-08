@@ -68,7 +68,8 @@ public final class CoresetNodeServer implements AutoCloseable {
         CoresetNodeGrpcService service = new CoresetNodeGrpcService(node, cached(() -> stats.snapshot().toJson()),
                 CoresetNodeGrpcService.Config.defaults()
                         .withBlocking(options.blockingThreads(), options.blockingQueue())
-                        .withSessionIdsInStats(security.authenticatesCallers()));
+                        .withSessionIdsInStats(security.authenticatesCallers()),
+                PeerChannels.netty(options.peerSecurity(), options.maxInboundMessageBytes()));
         HealthStatusManager health = new HealthStatusManager();
         ExecutorService handlers = Executors.newFixedThreadPool(options.handlerThreads(), daemonThreads());
         List<ServerInterceptor> interceptors = new ArrayList<>(2);

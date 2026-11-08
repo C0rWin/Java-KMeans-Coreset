@@ -9,6 +9,9 @@ final class Seeds {
     private static final long GOLDEN = 0x9E3779B97F4A7C15L;
     private static final long TREE_SALT = 0x5DEECE66DL;
     private static final long PARTITION_SALT = 0x2545F4914F6CDD1DL;
+    private static final long MESSAGE_SHARED_SALT = 0x6A09E667F3BCC909L;
+    private static final long MESSAGE_DRAW_SALT = 0xBB67AE8584CAA73BL;
+    private static final long MESSAGE_PACK_SALT = 0x3C6EF372FE94F82BL;
 
     private Seeds() {
     }
@@ -45,5 +48,23 @@ final class Seeds {
             out[i] = root.split();
         }
         return out;
+    }
+
+    /**
+     * Message randomness every replica of one partition shares: the sensitivity seeding (hence q) or the cell
+     * partition, so replicas holding the same summary agree on it.
+     */
+    static RandomGenerator messageShared(long partitionSeed) {
+        return new SplittableRandom(mix64(partitionSeed ^ MESSAGE_SHARED_SALT));
+    }
+
+    /** The draws of sampling stream {@code stream}; distinct streams sample independently (thm:rateless). */
+    static RandomGenerator messageDraws(long partitionSeed, long stream) {
+        return new SplittableRandom(mix64(partitionSeed ^ MESSAGE_DRAW_SALT ^ mix64(stream * GOLDEN + 3)));
+    }
+
+    /** The record order of stream {@code stream}: independent of the draws, so packing is draw-oblivious. */
+    static RandomGenerator messagePacking(long partitionSeed, long stream) {
+        return new SplittableRandom(mix64(partitionSeed ^ MESSAGE_PACK_SALT ^ mix64(stream * GOLDEN + 5)));
     }
 }

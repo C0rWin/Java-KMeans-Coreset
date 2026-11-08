@@ -9,32 +9,45 @@ import io.github.c0rwin.coreset.grpc.proto.CloseSessionResponse;
 import io.github.c0rwin.coreset.grpc.proto.CoresetNodeServiceGrpc;
 import io.github.c0rwin.coreset.grpc.proto.CreateSessionRequest;
 import io.github.c0rwin.coreset.grpc.proto.CreateSessionResponse;
+import io.github.c0rwin.coreset.grpc.proto.MessageHeader;
+import io.github.c0rwin.coreset.grpc.proto.Packet;
 import io.github.c0rwin.coreset.grpc.proto.PartialCostRequest;
 import io.github.c0rwin.coreset.grpc.proto.PartialCostResponse;
+import io.github.c0rwin.coreset.grpc.proto.ReplicateRequest;
+import io.github.c0rwin.coreset.grpc.proto.ReplicateResponse;
+import io.github.c0rwin.coreset.grpc.proto.SnapshotChunk;
 import io.github.c0rwin.coreset.grpc.proto.SnapshotRequest;
 import io.github.c0rwin.coreset.grpc.proto.SnapshotResponse;
+import io.github.c0rwin.coreset.grpc.proto.SnapshotStreamRequest;
 import io.github.c0rwin.coreset.grpc.proto.StatsRequest;
 import io.github.c0rwin.coreset.grpc.proto.StatsResponse;
+import io.github.c0rwin.coreset.grpc.proto.StoreReplicaResponse;
 import io.github.c0rwin.coreset.node.CoresetNode;
 import io.github.c0rwin.coreset.node.IngestResult;
 import io.github.c0rwin.coreset.node.Messages;
 import io.github.c0rwin.coreset.node.NodeLimitException;
 import io.github.c0rwin.coreset.node.NodeLimits;
+import io.github.c0rwin.coreset.node.NodeMessage;
 import io.github.c0rwin.coreset.node.PartialCost;
 import io.github.c0rwin.coreset.node.SessionFailedException;
 import io.github.c0rwin.coreset.node.UnknownSessionException;
 import io.grpc.Context;
+import io.grpc.Deadline;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -95,6 +108,10 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
     }
 
     private static final int MAX_BUSY_SHIFT = 6;
+    /** Peers one Replicate call may copy to. */
+    static final int MAX_PEERS = 64;
+    /** Replication deadline when the caller set none. */
+    static final Duration REPLICATION_DEADLINE = Duration.ofSeconds(60);
 
     private final CoresetNode node;
     private final NodeLimits limits;
@@ -103,9 +120,19 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
     private final long busyReadDelayNanos;
     private final ScheduledExecutorService scheduler;
     private final ThreadPoolExecutor blocking;
+    private final PeerChannels peers;
 
-    /** @param statsJson source of {@code StatsResponse.metrics_json} */
+    /** A node that cannot replicate to peers; see the four-argument constructor. */
     public CoresetNodeGrpcService(CoresetNode node, Supplier<String> statsJson, Config config) {
+        this(node, statsJson, config, PeerChannels.none());
+    }
+
+    /**
+     * @param statsJson source of {@code StatsResponse.metrics_json}
+     * @param peers     channels for {@code Replicate}; closed with this service
+     */
+    public CoresetNodeGrpcService(CoresetNode node, Supplier<String> statsJson, Config config, PeerChannels peers) {
+        this.peers = Objects.requireNonNull(peers, "peers");
         this.node = Objects.requireNonNull(node, "node");
         this.limits = node.limits();
         this.statsJson = Objects.requireNonNull(statsJson, "statsJson");
@@ -205,27 +232,189 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
     @Override
     public void snapshot(SnapshotRequest request, StreamObserver<SnapshotResponse> response) {
         offload(response, () -> {
-            long ms = request.getAwaitAppliedMs(); // uint64: values above 2^63 arrive negative
-            if (ms != 0) {
-                long cap = limits.maxAwait().toMillis();
-                Duration wait = Duration.ofMillis(ms < 0 || ms > cap ? cap : ms);
-                Context ctx = Context.current();
-                Thread waiter = Thread.currentThread();
-                Context.CancellationListener wake = c -> LockSupport.unpark(waiter);
-                ctx.addListener(wake, Runnable::run);
-                try {
-                    node.awaitApplied(request.getSessionId(), wait, ctx::isCancelled);
-                } catch (SessionFailedException e) {
-                    // Reported through the snapshot's state and failure fields.
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw Status.CANCELLED.withDescription("interrupted").asRuntimeException();
-                } finally {
-                    ctx.removeListener(wake);
-                }
-            }
+            awaitApplied(request.getSessionId(), request.getAwaitAppliedMs());
             return ProtoCodec.toProto(node.snapshot(request.getSessionId()));
         });
+    }
+
+    /**
+     * Waits for applied batches if {@code ms != 0} (capped by the node limit); a failed session is not an error
+     * here, the reply reports it.
+     */
+    private void awaitApplied(String sessionId, long ms) {
+        if (ms == 0) { // uint64: values above 2^63 arrive negative
+            return;
+        }
+        long cap = limits.maxAwait().toMillis();
+        Duration wait = Duration.ofMillis(ms < 0 || ms > cap ? cap : ms);
+        Context ctx = Context.current();
+        Thread waiter = Thread.currentThread();
+        Context.CancellationListener wake = c -> LockSupport.unpark(waiter);
+        ctx.addListener(wake, Runnable::run);
+        try {
+            node.awaitApplied(sessionId, wait, ctx::isCancelled);
+        } catch (SessionFailedException e) {
+            // Reported through the reply.
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw Status.CANCELLED.withDescription("interrupted").asRuntimeException();
+        } finally {
+            ctx.removeListener(wake);
+        }
+    }
+
+    /**
+     * Streams the session's message: the reliable header, then each packet in seq order unless only the header was
+     * asked for. With {@code replica} the stored copy of {@code owner}'s message is served instead.
+     */
+    @Override
+    public void snapshotStream(SnapshotStreamRequest request, StreamObserver<SnapshotChunk> response) {
+        ServerCallStreamObserver<SnapshotChunk> call = (ServerCallStreamObserver<SnapshotChunk>) response;
+        offloadCall(response, () -> streaming(response, () -> {
+            String id = request.getSessionId();
+            NodeMessage m;
+            if (request.getReplica()) {
+                m = node.replica(id, request.getOwner());
+                if (m == null) {
+                    throw Status.NOT_FOUND.withDescription("no replica of node " + Long.toUnsignedString(
+                            request.getOwner()) + " in session " + Messages.bounded(id)).asRuntimeException();
+                }
+            } else {
+                awaitApplied(id, request.getAwaitAppliedMs());
+                m = node.message(id, request.getStream());
+            }
+            call.onNext(SnapshotChunk.newBuilder()
+                    .setHeader(MessageCodec.header(m, request.getOwner(), request.getReplica())).build());
+            if (!request.getHeaderOnly()) {
+                for (int p = 0, n = m.packets(); p < n && !call.isCancelled(); p++) {
+                    call.onNext(SnapshotChunk.newBuilder().setPacket(MessageCodec.packet(m, p)).build());
+                }
+            }
+            call.onCompleted();
+        }));
+    }
+
+    /**
+     * Freezes this node's message and stores it on every peer, all copies in flight at once; answers once every peer
+     * answered or the call's deadline (default {@link #REPLICATION_DEADLINE}) passed.
+     */
+    @Override
+    public void replicate(ReplicateRequest request, StreamObserver<ReplicateResponse> response) {
+        offload(response, () -> {
+            if (request.getPeersCount() > MAX_PEERS) {
+                throw new IllegalArgumentException(request.getPeersCount() + " peers exceed " + MAX_PEERS);
+            }
+            String id = request.getSessionId();
+            awaitApplied(id, request.getAwaitAppliedMs());
+            NodeMessage m = node.freeze(id, request.getStream());
+            SnapshotChunk header = SnapshotChunk.newBuilder()
+                    .setHeader(MessageCodec.header(m, request.getOwner(), false).setSessionId(id)).build();
+            SnapshotChunk[] packets = new SnapshotChunk[m.packets()];
+            for (int p = 0; p < packets.length; p++) { // encoded once for all peers
+                packets[p] = SnapshotChunk.newBuilder().setPacket(MessageCodec.packet(m, p)).build();
+            }
+            Deadline deadline = Context.current().getDeadline();
+            if (deadline == null) {
+                deadline = Deadline.after(REPLICATION_DEADLINE.toNanos(), TimeUnit.NANOSECONDS);
+            }
+            CountDownLatch done = new CountDownLatch(request.getPeersCount());
+            Queue<String> failed = new ConcurrentLinkedQueue<>();
+            for (String peer : request.getPeersList()) {
+                StreamObserver<SnapshotChunk> out = CoresetNodeServiceGrpc.newStub(peers.channel(peer))
+                        .withDeadline(deadline)
+                        .storeReplica(new StreamObserver<>() {
+                            @Override
+                            public void onNext(StoreReplicaResponse r) {
+                            }
+
+                            @Override
+                            public void onError(Throwable t) {
+                                failed.add(Messages.bounded(peer + ": " + StatusText.of(t)));
+                                done.countDown();
+                            }
+
+                            @Override
+                            public void onCompleted() {
+                                done.countDown();
+                            }
+                        });
+                out.onNext(header);
+                for (SnapshotChunk p : packets) {
+                    out.onNext(p);
+                }
+                out.onCompleted();
+            }
+            try {
+                if (!done.await(deadline.timeRemaining(TimeUnit.NANOSECONDS), TimeUnit.NANOSECONDS)) {
+                    throw Status.DEADLINE_EXCEEDED.withDescription("peers did not confirm in time").asRuntimeException();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw Status.CANCELLED.withDescription("interrupted").asRuntimeException();
+            }
+            return ReplicateResponse.newBuilder()
+                    .setStored(request.getPeersCount() - failed.size())
+                    .setRecords(m.recordCount())
+                    .addAllFailedPeers(failed)
+                    .build();
+        });
+    }
+
+    /** Receives another node's message (header with session id, then every packet) and keeps it as a replica. */
+    @Override
+    public StreamObserver<SnapshotChunk> storeReplica(StreamObserver<StoreReplicaResponse> response) {
+        return new StreamObserver<>() {
+            private MessageHeader header; // inbound callbacks are serialised by gRPC
+            private final List<Packet> packets = new ArrayList<>();
+            private boolean rejected;
+
+            @Override
+            public void onNext(SnapshotChunk chunk) {
+                if (rejected) {
+                    return;
+                }
+                if (chunk.hasHeader() && header == null) {
+                    header = chunk.getHeader();
+                    // Bounded before any packet is buffered; uint32 above 2^31 arrives negative.
+                    if (header.getPackets() < 0 || header.getRecords() < 0
+                            || header.getRecords() > limits.maxSnapshotPoints()) {
+                        reject("replica of " + Integer.toUnsignedString(header.getRecords())
+                                + " records exceeds the limit of " + limits.maxSnapshotPoints());
+                    }
+                } else if (chunk.hasPacket() && header != null && packets.size() < header.getPackets()) {
+                    packets.add(chunk.getPacket());
+                } else {
+                    reject("expected one header, then at most its packet count of packets");
+                }
+            }
+
+            private void reject(String why) {
+                rejected = true;
+                packets.clear();
+                response.onError(Status.INVALID_ARGUMENT.withDescription(why).asRuntimeException());
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                packets.clear();
+            }
+
+            @Override
+            public void onCompleted() {
+                if (rejected) {
+                    return;
+                }
+                if (header == null) {
+                    reject("no header");
+                    return;
+                }
+                offload(response, () -> {
+                    NodeMessage m = MessageCodec.decode(header, packets, limits.maxDim(), limits.maxSnapshotPoints());
+                    node.storeReplica(header.getSessionId(), header.getOwner(), m);
+                    return StoreReplicaResponse.newBuilder().setRecords(m.recordCount()).build();
+                });
+            }
+        };
     }
 
     @Override
@@ -271,8 +460,13 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
 
     /** Runs {@code handler} on the blocking executor with the caller's context (deadline, cancellation). */
     private <T> void offload(StreamObserver<T> response, Handler<T> handler) {
+        offloadCall(response, () -> unary(response, handler));
+    }
+
+    /** Runs {@code body}, which completes {@code response} itself, on the blocking executor. */
+    private void offloadCall(StreamObserver<?> response, Runnable body) {
         try {
-            blocking.execute(Context.current().wrap(() -> unary(response, handler)));
+            blocking.execute(Context.current().wrap(body));
         } catch (RejectedExecutionException e) {
             response.onError(Status.RESOURCE_EXHAUSTED.withDescription("node busy: too many blocking calls queued")
                     .asRuntimeException());
@@ -283,44 +477,58 @@ public final class CoresetNodeGrpcService extends CoresetNodeServiceGrpc.Coreset
         T result;
         try {
             result = handler.handle();
-        } catch (StatusRuntimeException e) {
-            response.onError(e);
-            return;
-        } catch (UnknownSessionException e) {
-            response.onError(status(Status.NOT_FOUND, e));
-            return;
-        } catch (IllegalArgumentException e) {
-            response.onError(status(Status.INVALID_ARGUMENT, e));
-            return;
-        } catch (CancellationException e) {
-            response.onError(status(Status.CANCELLED, e));
-            return;
-        } catch (IllegalStateException e) {
-            response.onError(status(Status.FAILED_PRECONDITION, e));
-            return;
-        } catch (NodeLimitException e) {
-            response.onError(status(Status.RESOURCE_EXHAUSTED, e));
-            return;
-        } catch (OutOfMemoryError e) {
-            // The request is dropped and its garbage reclaimable; the node keeps serving other sessions.
-            response.onError(Status.RESOURCE_EXHAUSTED.withDescription("out of memory").asRuntimeException());
-            return;
-        } catch (RuntimeException e) {
-            response.onError(Status.INTERNAL.withDescription("internal error").withCause(e).asRuntimeException());
+        } catch (RuntimeException | OutOfMemoryError e) {
+            response.onError(statusOf(e));
             return;
         }
         response.onNext(result);
         response.onCompleted();
     }
 
+    /** Streams through {@code body}; a failure before or while streaming ends the call with its status. */
+    private static void streaming(StreamObserver<?> response, Runnable body) {
+        try {
+            body.run();
+        } catch (RuntimeException | OutOfMemoryError e) {
+            response.onError(statusOf(e));
+        }
+    }
+
+    private static StatusRuntimeException statusOf(Throwable e) {
+        if (e instanceof StatusRuntimeException s) {
+            return s;
+        }
+        if (e instanceof UnknownSessionException) {
+            return status(Status.NOT_FOUND, e);
+        }
+        if (e instanceof IllegalArgumentException) {
+            return status(Status.INVALID_ARGUMENT, e);
+        }
+        if (e instanceof CancellationException) {
+            return status(Status.CANCELLED, e);
+        }
+        if (e instanceof IllegalStateException) {
+            return status(Status.FAILED_PRECONDITION, e);
+        }
+        if (e instanceof NodeLimitException) {
+            return status(Status.RESOURCE_EXHAUSTED, e);
+        }
+        if (e instanceof OutOfMemoryError) {
+            // The request is dropped and its garbage reclaimable; the node keeps serving other sessions.
+            return Status.RESOURCE_EXHAUSTED.withDescription("out of memory").asRuntimeException();
+        }
+        return Status.INTERNAL.withDescription("internal error").withCause(e).asRuntimeException();
+    }
+
     private static StatusRuntimeException status(Status status, Throwable e) {
         return status.withDescription(Messages.bounded(e.getMessage())).asRuntimeException();
     }
 
-    /** Stops the backoff scheduler and the blocking executor; the node is owned by the caller. */
+    /** Stops the backoff scheduler and the blocking executor and closes the peer channels; the node is the caller's. */
     @Override
     public void close() {
         scheduler.shutdownNow();
         blocking.shutdownNow();
+        peers.close();
     }
 }

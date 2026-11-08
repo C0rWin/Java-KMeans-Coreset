@@ -3,6 +3,7 @@ package io.github.c0rwin.coreset.grpc.cli;
 import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
+import io.github.c0rwin.coreset.grpc.ClientSecurity;
 import io.github.c0rwin.coreset.grpc.CoresetNodeServer;
 import io.github.c0rwin.coreset.grpc.MetricsHttpServer;
 import io.github.c0rwin.coreset.grpc.MicrometerMetricsSink;
@@ -63,6 +64,16 @@ public final class NodeCommand implements Callable<Integer> {
     @Option(names = "--auth-token-file",
             description = "File holding a shared token every call must present as 'authorization: Bearer <token>'.")
     Path authTokenFile;
+
+    @Option(names = "--peer-tls-ca", description = "PEM CAs trusted for peer certificates when storing replicas; "
+            + "enables TLS to peers. The auth token, if any, is presented to peers too.")
+    Path peerTlsCa;
+
+    @Option(names = "--peer-tls-cert", description = "PEM client certificate chain for mutual TLS to peers.")
+    Path peerTlsCert;
+
+    @Option(names = "--peer-tls-key", description = "PEM PKCS#8 private key of --peer-tls-cert.")
+    Path peerTlsKey;
 
     @Option(names = "--handler-threads", defaultValue = "0",
             description = "gRPC callback threads (0 = max(4, 2 x cores)). Default: ${DEFAULT-VALUE}")
@@ -192,7 +203,8 @@ public final class NodeCommand implements Callable<Integer> {
                 .security(new ServerSecurity(tlsCert, tlsKey, tlsClientCa, token))
                 .maxConnectionIdle(Duration.ofMillis(maxConnectionIdleMs))
                 .maxConnectionAge(Duration.ofMillis(maxConnectionAgeMs))
-                .maxConnectionAgeGrace(Duration.ofMillis(maxConnectionAgeGraceMs));
+                .maxConnectionAgeGrace(Duration.ofMillis(maxConnectionAgeGraceMs))
+                .peerSecurity(new ClientSecurity(peerTlsCa, peerTlsCert, peerTlsKey, token));
         if (handlerThreads > 0) {
             b.handlerThreads(handlerThreads);
         }
