@@ -1,0 +1,82 @@
+[    0.0s] F1: start
+[    6.1s] instance zipf: n=200000 d=20 k=20 smax/S=4.28e-05 S=92.0 smallest cluster=1030 (6.0 s)
+[   13.8s] F1 raw zipf done
+[   16.5s] instance zipf-100k: n=100000 d=20 k=20 smax/S=0.000173 S=92.0 smallest cluster=515 (2.8 s)
+[   16.7s] F1 raw zipf-100k done
+[   27.9s] instance zipf-400k: n=400000 d=20 k=20 smax/S=2.13e-05 S=92.0 smallest cluster=2060 (11.2 s)
+[   28.7s] F1 raw zipf-400k done
+[   36.2s] instance zipf-heavy: n=200000 d=20 k=20 smax/S=0.000489 S=92.0 smallest cluster=125 (7.5 s)
+[   36.6s] F1 raw zipf-heavy done
+[   42.4s] instance esa22: n=100000 d=50 k=10 smax/S=1.97e-05 S=52.0 smallest cluster=10000 (5.8 s)
+[   42.6s] F1 raw esa22 done
+[   57.9s] F1 pipeline zipf random done
+[   79.5s] F1 pipeline zipf cluster-sorted done
+[  100.1s] F1 pipeline zipf zipf-sizes done
+[  107.7s] F1 replication zipf-heavy done
+[  115.7s] F1 replication zipf done
+[  121.1s] F1 replication esa22 done
+[  121.1s] VERDICT F1/A1 shape: FAIL | mean|r| ratio phi 1/2 : 1/8 = 2.59 vs 3.50 (linear in sqrt(phi)/(1-phi)) and 2.65 (sqrt(phi/(1-phi))); per-candidate RMS / sqrt(phi kappa_pt/(1-phi)) = 0.99-1.02
+[  121.1s] VERDICT F1/A1 N-independence: FAIL | c = 0.248, 0.326, 0.316 at N = 100k, 200k, 400k (max/min 1.316; s_max is the max of the k-means++ bound, N s_max/S = 17.3, 8.6, 8.5); with kappa_pt in place of s_max the calibration is 0.991, 1.001, 1.017
+[  121.1s] VERDICT F1/A0 equal parts: PASS | max |downstream(ht-size) - downstream(none)| = 8.4e-14 (random parts)
+[  121.1s] VERDICT F1/A0 zipf-sizes: FAIL (downstream) / PASS (cost estimate) | downstream identical across decoders (max |diff| 1.0e-13: one global factor cannot move the argmin); cost estimate differs: mean|r| none 0.096, ht-prior 0.093, ht-size 0.001 at f=0.1
+[  121.1s] VERDICT F1/A1 downstream: PASS | sensitivity m=500/node: mean 1.0022 (p90 1.0025, max 1.0027) vs 1.0019 without loss (loss adds +0.0003)
+[  121.1s] VERDICT F1/A1' cluster-sorted: PASS | P[downstream > 2] = 0.73 overall vs P[a lost node held >= 90% of a cluster] = 0.76; P[> 2 | whole cluster lost] = 0.96, P[> 2 | not] = 0.00 (450 runs)
+[  121.1s] VERDICT F1/A2 ESA'22: FAIL | input-order partition, phi=1/8: median distortion 1.0091 without replication, 1.0088 with tau=1e-3 (4355 of 100000 points above tau; mean s_p = S/N = 0.00052, so the bound flags no structure), vs 1.0004 on a random partition
+[  121.2s] VERDICT F1/A2 storage: PASS | extra copies N=100000: 25295; N=200000: 24288; N=400000: 16029;  bound 276000
+[  121.2s] F1: done in 121.2 s
+[  121.2s] F2: start
+[  134.0s] F2 n=16 random done
+[  144.7s] F2 n=16 cluster-sorted done
+[  146.0s] F2 n=64 random done
+[  146.0s] VERDICT F2/A3 loss rate: PASS | 20/20 cells (random partition, >= 30 expected losses) within 20% of f^(r+1)
+[  146.0s] VERDICT F2/A3 error: PASS | mean-square loss perturbation r(Q) - r_no-loss(Q) / phi/(1-phi) (kappa_pt + r0^2) = 1.00 (pooled over f and n)
+[  146.0s] F2: done in 24.8 s
+[  146.0s] F3: start
+[  159.8s] F3 sample zipf done
+[  161.0s] F3 sample zipf-heavy done
+[  180.6s] F3 sample esa22 done
+[  182.6s] F3 sweep zipf done
+[  184.4s] F3 sweep zipf-heavy done
+[  185.5s] F3 sweep esa22 done
+[  189.7s] instance zipf-outliers: n=200050 d=20 k=20 smax/S=0.0435 S=92.0 smallest cluster=1 (4.3 s)
+[  191.4s] F3 sweep zipf-outliers done
+[  207.8s] F3 mean zipf done
+[  225.1s] F3 mean zipf-heavy done
+[  225.2s] VERDICT F3/B1 slope: PASS | zipf m=1000 per-draw: slope 0.563 (95% CI 0.463..0.655), excess ratio rho=0.5:0 = 1.458
+[  225.2s] VERDICT F3/C3 rateless link: PASS | slope 0.114 (CI -0.022..0.251); packets sent at rho=0.5: 2000 for m=1000
+[  225.2s] VERDICT F3/B1 bursts: PASS (m' spread) / FAIL (distortion spread) | rho=0.3, burst 20: mean excess GE/Bernoulli = 1.022; sd(distortion) 0.0486 vs 0.0538; sd(m') 79 vs 16
+[  225.2s] VERDICT F3/B1 sorted+bursts: PASS | rho=0.3, burst 20, 8 draws/packet: p99 excess sorted 6.993 vs random packing 0.251 (x27.9); max 8.544 vs 1.429; total-loss runs (no packet arrived) 0 of 100 for both
+[  225.2s] VERDICT F3/B2 plateau: PASS | zipf-outliers rho=0.3, Q* = max kappa_pt: erasure RMS m=2000->8000 shrinks x0.76 merged vs x0.55 split (sqrt(m ratio) = 0.50); merged RMS at m=8000 0.0837 vs floor 0.0773 (full B2 formula 0.0855)
+[  225.2s] VERDICT F3/B2 balanced: PASS | zipf rho=0.3 m=1000: merged/split erasure RMS for Q* = 0.979
+[  225.2s] VERDICT F3/B4 global offset: FAIL | largest |measured - predicted| = 0.88 (zipf rho=0.01: 0.00 vs 0.00; zipf rho=0.05: 0.00 vs 0.00; zipf rho=0.1: 0.00 vs 0.00; zipf rho=0.2: 0.00 vs 0.00; zipf rho=0.3: 0.01 vs 0.00; zipf rho=0.5: 0.88 vs 0.00; zipf-heavy rho=0.01: 0.00 vs 0.00; zipf-heavy rho=0.05: 0.00 vs 0.00; zipf-heavy rho=0.1: 0.00 vs 0.00; zipf-heavy rho=0.2: 0.00 vs 0.00; zipf-heavy rho=0.3: 0.01 vs 0.00; zipf-heavy rho=0.5: 0.58 vs 0.00; )
+[  225.2s] VERDICT F3/B4 CF triples: PASS (missing mass remains) / INCONCLUSIVE (offset bias: realized-mass rescaling alone already matches CF) | zipf rho=0.3, mean excess distortion: cf / global offset without rescaling = 0.30, cf / global offset with realized-mass rescaling = 1.001; p99 excess cf / split = 4.3
+[  225.2s] VERDICT F3/B4 split: PASS | rho <= 0.3, eta = 0.1: worst (p99 distortion - no-loss) / sqrt(rho eta/(1-rho)) = 0.41
+[  225.2s] VERDICT F3/B4 replicate: PASS | worst P[distortion > 2] over rho = 0.000
+[  225.2s] VERDICT F3/B4 FEC: PASS | fraction of runs equal to no loss (to 1e-6) >= 0.980 (target 1 - delta = 0.99); overhead in the table
+[  225.3s] F3: done in 79.3 s
+[  225.3s] F4: start
+[  315.6s] F4 random done
+[  409.5s] F4 cluster-sorted done
+[  409.5s] VERDICT F4/C2 FR bytes: PASS | s=1: FR 3886 pts vs uncoded 7553 (ratio 0.514, g/n = 0.500); s=2: FR 2453 pts vs uncoded 7553 (ratio 0.325, g/n = 0.313); s=3: FR 1971 pts vs uncoded 7553 (ratio 0.261, g/n = 0.250); 
+[  409.5s] VERDICT F4/C2 FR distortion: PASS | s=1: FR 1.0537 vs offline-g 1.0444 (diff 0.0093, 2se 0.0079); s=2: FR 1.0597 vs offline-g 1.0590 (diff 0.0007, 2se 0.0096); s=3: FR 1.0678 vs offline-g 1.0766 (diff -0.0088, 2se 0.0143); no FR group lost under any <= s straggler set
+[  409.5s] VERDICT F4/C3 rateless bytes: PASS | s=2, no stragglers: per-node bytes mu=1 99110, mu=2 50130 (x0.51), mu=4 25202 (x0.25)
+[  409.5s] VERDICT F4/C3 degradation: PASS | s=1 mu=2: group MS x1.13 at m'/m=0.86 (B1: x1.17); s=1 mu=4: group MS x1.26 at m'/m=0.94 (B1: x1.06); s=2 mu=2: group MS x2.22 at m'/m=0.50 (B1: x2.00); s=2 mu=4: group MS x1.12 at m'/m=1.00 (B1: x1.00); s=3 mu=2: group MS x1.01 at m'/m=0.88 (B1: x1.13); s=3 mu=4: group MS x1.03 at m'/m=1.00 (B1: x1.00); cluster-sorted s=1, s+1 stragglers in the attacked group: downstream FR 9.685 vs rateless mu=2 1.0106
+[  409.5s] VERDICT F4/A1 uncoded random: PASS | mean-square straggler perturbation of r(Q) / A1 prediction phi/(1-phi)(kappa_pt + r0^2) = 1.05 (pooled s, patterns)
+[  409.5s] VERDICT F4/A1' adversarial straggler: PASS | cluster-sorted, s=1: uncoded downstream mean 4.678 (max 7.562); FR 1.0200, max |FR(adversarial) - FR(no straggler)| = 0.0 over paired seeds
+[  409.6s] F4: done in 184.3 s
+[  409.6s] F5: start
+[  587.1s] F5 random done
+[  755.2s] F5 cluster-sorted done
+[  755.3s] VERDICT F5/E1 random order: PASS | sensitivity m=500: slope of log Var vs log(L+1) = -0.08 (all: random m=500: -0.08 +/- 0.21 (sum kappa: 0.07); random m=1000: -0.08 +/- 0.13 (sum kappa: 0.07); random m=4000: -0.07 +/- 0.17 (sum kappa: 0.06); cluster-sorted m=500: 0.18 +/- 0.09 (sum kappa: 0.15); cluster-sorted m=1000: -0.02 +/- 0.31 (sum kappa: 0.14); cluster-sorted m=4000: 0.10 +/- 0.10 (sum kappa: 0.10); )
+[  755.3s] VERDICT F5/E1 cluster-sorted: FAIL | sensitivity m=500: slope 0.18 (1 = linear in L+1); the E1 bound (S/m) sum_l kappa_l on this order grows with slope 0.15
+[  755.3s] VERDICT F5/E1 coefficient: FAIL (bound holds, not tight) | c = 0.022 (R^2 0.995): Var follows sum_l kappa_l but at 0.022 S/m; E1 is an upper bound with slack S_v <= S and sum cost^2/q <= S cost^2
+[  755.3s] VERDICT F5/E1(iv) per-level erasure: PASS | random order, m=1000, 256 blocks: Var ratio lossy/clean = 1.228 (1/(1-rho) = 1.111)
+[  755.3s] F5: done in 345.7 s
+[  755.3s] F6: start
+[  759.3s] F6 random done
+[  772.0s] F6 projection-sorted done
+[  772.0s] VERDICT F6/F1 lost fraction: FAIL | a=2 L=6: 0.4711 vs 0.4686; a=4 L=3: 0.2735 vs 0.2710; a=8 L=2: 0.1881 vs 0.1900; [a=64 f=0.01: 0.0085 vs 0.0100, z = -4.3] a=64 L=1: 0.0988 vs 0.1000; (all f within 3 run-level se: false)
+[  772.0s] VERDICT F6/F1 sqrt(L): FAIL | f=0.05, random, internal HT, runs with surviving data: slope of log RMS r vs log L = 0.73 +/- 0.21; a=2 L=6: RMS 0.003760 (F1 formula sqrt(L f/(1-f) kappa) 0.002698), total loss 0.0020; a=4 L=3: RMS 0.002069 (F1 formula sqrt(L f/(1-f) kappa) 0.001908), total loss 0.0000; a=8 L=2: RMS 0.001532 (F1 formula sqrt(L f/(1-f) kappa) 0.001558), total loss 0.0000; a=64 L=1: RMS 0.001011 (F1 formula sqrt(L f/(1-f) kappa) 0.001101), total loss 0.0000; 
+[  772.0s] VERDICT F6/F2 checkpoint: PASS | a=2: 0.0593 vs L f^2 = 0.0600; a=4: 0.0304 vs L f^2 = 0.0300; a=8: 0.0182 vs L f^2 = 0.0200; a=64: 0.0102 vs L f^2 = 0.0100; 
+[  772.0s] VERDICT F6/F1 projection-sorted: PASS | a=2, f=0.05: p99 distortion 6.135 (projection) vs 1.0268 (random); max Infinity; P[> 2] = 0.092; with checkpoint r=1 p99 1.6249
+[  772.0s] F6: done in 16.7 s
