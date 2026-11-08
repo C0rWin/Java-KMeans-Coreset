@@ -11,30 +11,114 @@ dated directory per run. Each run directory contains:
 - `shared.json`: what the shared full-data candidates cost per dataset and k.
 - `config.json`, `environment.json`, `command.txt`: what ran, on what, and how.
 
-## 2026-11-07: standard suite
+## 2026-11-08: standard suite (current)
 
-Results are in [`2026-11-07/summary.md`](2026-11-07/summary.md). The suite
-ran 740 runs in 22.9 minutes on an Apple M2 Max (12 cores) with JDK 17.0.5.
-The exact command and commit are in
-[`2026-11-07/command.txt`](2026-11-07/command.txt).
+Results are in [`2026-11-08/summary.md`](2026-11-08/summary.md). The suite ran
+740 runs (148 configurations × 5 seeds) in 17.8 minutes on an Apple M2 Max
+(12 cores) with JDK 17.0.5, at commit 847492f. The one-minute load average
+stayed between 2.8 and 18.5 (mean 7.2). The exact command is in
+[`2026-11-08/command.txt`](2026-11-08/command.txt).
 
-**Scaled down.** The full grid is datasets × k ∈ {10, 50} ×
-m ∈ {200, 1000, 4000} × four algorithms × {offline, stream with 64 blocks} ×
-5 seeds. Three kinds of cells are left out to stay near 30 minutes:
+The grid and its exclusions are the same as in the 2026-11-07 run below:
+datasets × k ∈ {10, 50} × m ∈ {200, 1000, 4000} × four algorithms ×
+{offline, stream with 64 blocks} × 5 seeds, without the mean coreset at
+m ≥ 1000 and without bicriteria sensitivity sampling at k = 50 on the
+1e6-point and sparse inputs.
 
-- The mean coreset at m ≥ 1000. It runs Lloyd with m centers over the whole
-  input, about 30 s CPU per build already at n = 1e5.
-- The mean coreset at m = 4000 everywhere.
-- Bicriteria sensitivity sampling at k = 50 on the 1e6-point and sparse inputs,
-  10-20 s per build.
+Distortion by coreset size, averaged over the four datasets and both k (mean
+over 5 seeds of each run's maximum; offline / stream):
 
-An earlier run with the original exclusions took 51 minutes on a loaded
-machine. It also covers mean at m = 1000 on the 1e5-point inputs and
-bicriteria at k = 50 on sparse data, and is kept in
-[`2026-11-07/extended/`](2026-11-07/extended/summary.md). Its 740 runs that
-overlap this one produced bit-identical coresets and distortions.
+| m | uniform | sensitivity k-means++ | sensitivity bicriteria | mean |
+|---|---|---|---|---|
+| 200 | 1.97 / 4.20 | 2.06 / 3.15 | 2.69 / 6.21 | 1.10 / 1.15 |
+| 1000 | 1.12 / 1.24 | 1.15 / 1.25 | 1.26 / 1.48 | – |
+| 4000 | 1.04 / 1.06 | 1.05 / 1.07 | 1.06 / 1.07 | – |
 
-Datasets:
+At k = 10 and m ≥ 1000, averaged over the four datasets:
+
+| m | algorithm | distortion offline / stream | downstream rel. cost offline / stream |
+|---|---|---|---|
+| 1000 | uniform | 1.062 / 1.129 | +1.7% / +3.2% |
+| 1000 | sensitivity k-means++ | 1.053 / 1.093 | +0.7% / +3.1% |
+| 1000 | sensitivity bicriteria | 1.128 / 1.114 | +3.7% / +4.4% |
+| 4000 | uniform | 1.027 / 1.039 | -0.5% / -0.1% |
+| 4000 | sensitivity k-means++ | 1.025 / 1.034 | -0.3% / -0.1% |
+| 4000 | sensitivity bicriteria | 1.042 / 1.049 | +0.0% / +0.4% |
+
+What the numbers say:
+
+- **Size matters more than the algorithm.** At k = 10, m ≥ 1000 every
+  sampling method lands within a few percent of the full data, and the best
+  of 10 solutions on the coreset costs at most 4.4% more than the full-data
+  reference on average (individual cells range from -1.8% to +8.2%). At
+  m = 4000 the coreset solution is as good as or slightly better than the
+  reference, which is itself not optimal. At m = 200 with k = 50 every sampling
+  method fails (2.7-5.0 offline, 5.0-14.4 in stream mode); ESA'22 uses coreset
+  sizes of at least 50k for this reason.
+- **Uniform sampling is a strong baseline on well-spread data.** On balanced
+  clusters, the ESA'22 instance and the sparse documents it matches or beats
+  k-means++ sensitivity sampling. Sensitivity sampling wins on skewed cluster
+  sizes: on `gauss-unbalanced-1m` at k = 10, m = 1000 it scores 1.067 against
+  1.150 offline and 1.128 against 1.320 in stream mode.
+- **Bicriteria seeding loses to k-means++ seeding almost everywhere** and
+  keeps fewer distinct points (723 of m = 1000 on sparse data at k = 10,
+  against 992 with k-means++).
+- **The mean coreset (Barger-Feldman) is the most accurate per point at small
+  m.** With 200 points it scores 1.008-1.057 on the Gaussian and sparse data,
+  except 1.19 (offline) and 1.31 (stream) at k = 50 on the unbalanced mixture.
+  In all 80 runs it never underestimated a cost (0 one-sided violations), and
+  weight and second moment were exact up to rounding (≤ 3e-14). It loses on
+  the ESA'22 instance (1.25 offline, 1.49 in stream mode at k = 10). It is
+  also by far the most expensive to build: 1.2-7.6 s CPU offline at m = 200,
+  against tens of milliseconds for sensitivity sampling.
+- **Stream mode degrades with composition, mostly through size.** At k = 10,
+  m = 1000, the level-0 summary and the top level (64 blocks, 7 reductions)
+  differ by at most 0.074 for the sampling methods. The final stream coreset
+  is worse than the offline one (for example 1.320 against 1.150 for uniform
+  on `gauss-unbalanced-1m`), partly because a merged sample keeps fewer
+  distinct points: about 655 for uniform at m = 1000, against 994-1000
+  offline. The mean coreset degrades with depth on the ESA'22 instance (1.20
+  to 1.49 at k = 10) and on the unbalanced mixture at k = 50 (1.18 to 1.31).
+- **Candidates computed on the coreset find the worst case.** For the sampling
+  methods, 87% of runs reach their maximum distortion on a Lloyd solution of
+  the coreset (`lloyd@C`, `bestOf@C`). For the mean coreset the maximum is
+  always on a full-data candidate.
+- **Confidence intervals hold on average, not per run.** Across the 210
+  offline sensitivity runs, 93.6% of the 95% intervals contain the true cost.
+  Within one run all candidates share one sample, so coverage is often all or
+  nothing: 9 runs fall below 50%.
+- **Validation costs more than construction for the fast algorithms.** Over
+  the suite, construction took 688 s CPU, evaluation 184 s plus 287 s for the
+  downstream solves on the coresets, and the shared full-data candidates 167 s
+  (`2026-11-08/shared.json`). Uniform builds a coreset of 1e6 points in about
+  2 ms but takes about 100 ms to validate. In distance evaluations, validation
+  (2.9e10) costs more than all constructions together (2.5e10). Each run
+  reads the full data 1.04 times on average.
+
+### Why distortion differs from 2026-11-07
+
+The 2026-11-07 run used the core before the efficiency work. Two things
+changed:
+
+- `CandidateSolutions` and the Lloyd solves on the coreset now seed with
+  greedy k-means++, which finds stronger solutions. Stronger candidates expose
+  more of a coreset's error, so measured distortion rose slightly, mostly at
+  small m. Uniform compression output is bit-identical to the previous run;
+  its distortion changed only because the candidates changed.
+- Construction got cheaper: median build CPU per configuration is 1.9× lower
+  for the mean coreset and 2.3× lower for uniform, and the mean coreset
+  allocates 187 MB per configuration instead of 1527 MB.
+
+## 2026-11-07: standard suite (previous)
+
+Results are in [`2026-11-07/summary.md`](2026-11-07/summary.md), command and
+commit in [`2026-11-07/command.txt`](2026-11-07/command.txt): 740 runs in 22.9
+minutes at commit 6dd0059, before the efficiency work. An earlier run with
+fewer exclusions, including mean at m = 1000 on the 1e5-point inputs and
+bicriteria at k = 50 on sparse data, is kept in
+[`2026-11-07/extended/`](2026-11-07/extended/summary.md).
+
+Datasets (both runs):
 
 - `gauss-unbalanced-1m`: 1e6 × 10, 20 Gaussian clusters (σ = 3), Zipf(1.5)
   cluster sizes.
@@ -43,98 +127,6 @@ Datasets:
   (1e5 × 50).
 - `sparse-bow-100k`: 1e5 documents over a 20,000-term vocabulary, 20 topics,
   about 38 nonzeros per document.
-
-Headline distortion, offline (mean over 5 seeds of each run's maximum, lower is
-better; "–" marks an excluded cell):
-
-| dataset | k | m | uniform | sensitivity k-means++ | sensitivity bicriteria | mean |
-|---|---|---|---|---|---|---|
-| gauss-unbalanced-1m | 10 | 200 | 1.578 | 1.279 | 1.640 | 1.005 |
-| gauss-unbalanced-1m | 10 | 1000 | 1.145 | 1.086 | 1.145 | – |
-| gauss-unbalanced-1m | 10 | 4000 | 1.068 | 1.064 | 1.060 | – |
-| gauss-unbalanced-1m | 50 | 200 | 4.867 | 4.164 | – | 1.178 |
-| gauss-unbalanced-1m | 50 | 1000 | 1.196 | 1.281 | – | – |
-| gauss-unbalanced-1m | 50 | 4000 | 1.069 | 1.089 | – | – |
-| gauss-balanced-200k | 10 | 200 | 1.146 | 1.219 | 1.398 | 1.008 |
-| gauss-balanced-200k | 10 | 1000 | 1.032 | 1.057 | 1.110 | – |
-| gauss-balanced-200k | 10 | 4000 | 1.015 | 1.019 | 1.041 | – |
-| gauss-balanced-200k | 50 | 200 | 2.178 | 3.019 | 7.611 | 1.015 |
-| gauss-balanced-200k | 50 | 1000 | 1.188 | 1.196 | 1.667 | – |
-| gauss-balanced-200k | 50 | 4000 | 1.050 | 1.054 | 1.151 | – |
-| esa22-k10-a5 | 10 | 200 | 1.139 | 1.238 | 1.232 | 1.164 |
-| esa22-k10-a5 | 10 | 1000 | 1.026 | 1.047 | 1.049 | – |
-| esa22-k10-a5 | 10 | 4000 | 1.007 | 1.016 | 1.015 | – |
-| esa22-k10-a5 | 50 | 200 | 1.712 | 2.215 | 2.409 | 1.250 |
-| esa22-k10-a5 | 50 | 1000 | 1.159 | 1.245 | 1.290 | – |
-| esa22-k10-a5 | 50 | 4000 | 1.042 | 1.070 | 1.094 | – |
-| sparse-bow-100k | 10 | 200 | 1.104 | 1.184 | 2.032 | 1.013 |
-| sparse-bow-100k | 10 | 1000 | 1.027 | 1.046 | 1.258 | – |
-| sparse-bow-100k | 10 | 4000 | 1.010 | 1.023 | 1.075 | – |
-| sparse-bow-100k | 50 | 200 | 1.645 | 2.766 | – | 1.026 |
-| sparse-bow-100k | 50 | 1000 | 1.115 | 1.233 | – | – |
-| sparse-bow-100k | 50 | 4000 | 1.033 | 1.067 | – | – |
-
-What the numbers say:
-
-- **Size matters more than the algorithm.** At m = 80k (k = 50, m = 4000),
-  uniform and k-means++ sensitivity sampling stay at or below 1.09 on every
-  dataset. At m = 4k (k = 50, m = 200) every sampling method fails, with
-  distortions from 1.6 to 7.6. This is why ESA'22 uses coreset sizes of at
-  least 50k.
-- **Uniform sampling is a strong baseline on well-spread data.** On balanced
-  clusters, the ESA'22 instance and the sparse documents, uniform sampling
-  matches or beats k-means++ sensitivity sampling at every size. The likely
-  reason is that importance weights add variance the data does not repay.
-  Sensitivity sampling wins where cluster sizes are skewed. On
-  `gauss-unbalanced-1m` at k = 10 it scores 1.28 against 1.58 at m = 200 and
-  1.09 against 1.15 at m = 1000. At k = 50 it wins only at m = 200.
-- **Bicriteria seeding loses to k-means++ seeding almost everywhere**, up to
-  7.6 against 3.0, and it takes 4-14× more CPU to build. Its O(k log n) small
-  clusters get large `8 w / |C|` sensitivities, so the sample concentrates and
-  keeps fewer distinct points: 2,172 of m = 4000 on sparse data with k = 10,
-  against 3,848 with k-means++.
-- **The mean coreset (Barger-Feldman) is the most accurate per point on
-  Gaussian and sparse data.** With 200 points it scores 1.005-1.026, except
-  1.18 at k = 50 on the unbalanced mixture. In all 80 runs it never
-  underestimated a cost (0 one-sided violations), and weight and second moment
-  were exact up to rounding (≤ 3e-14). On the ESA'22 instance it loses
-  clearly: its δ-sweep lower bound is 1.30 offline and 1.49 in stream mode,
-  while the sampling methods stay at or below 1.13 at the same size. A likely
-  cause is that averaging merges points that the instance's other clusterings
-  keep apart. It also costs 40× (against sensitivity sampling) to 10⁴×
-  (against uniform) more CPU to build: 8.2 s at n = 1e6, m = 200.
-- **Candidates computed on the coreset find the worst case.** For the sampling
-  methods, 78-89% of runs reach their maximum distortion on a Lloyd solution
-  of the coreset (`lloyd@C`, `bestOf@C`), not on the ESA'22 full-data
-  candidates. Without them the reported distortion would be 7% lower at the
-  median and up to 13× lower in the worst case. For the mean coreset the
-  maximum is always on a full-data candidate.
-- **Stream mode degrades gently per level.** At k = 10, m = 1000, the level-0
-  summary (one block) and the top level (all 64 blocks after 7 reductions)
-  differ by at most 0.06 for the sampling methods. Per-level numbers use only
-  the full-data candidates. The final stream coreset is worse than the offline
-  one, for example 1.33 against 1.15 for uniform on `gauss-unbalanced-1m`.
-  Part of the gap is size: a merged sample keeps fewer distinct points (about
-  655 for uniform at m = 1000, against 994-1000 offline). The mean coreset
-  degrades with depth only on the ESA'22 instance, from 1.12 to 1.33.
-- **Confidence intervals hold on average, not per run.** Across the 210
-  offline sensitivity runs, 94.5% of the 95% intervals contain the true cost.
-  Within one run all candidates share one sample, so coverage is often all or
-  nothing: 8 runs fall below 50%.
-- **Validation costs more than construction for the fast algorithms.** Over
-  the suite, construction took 857 s CPU, evaluation 167 s plus 177 s for the
-  downstream solves, and the shared full-data candidates 147 s
-  (`2026-11-07/shared.json`). Uniform builds a coreset of 1e6 points in 15 ms
-  but takes about 50 ms to validate. In distance evaluations, validation
-  (2.9e10) costs as much as all constructions together (2.7e10, most of it the
-  mean coreset's Lloyd). Each run reads the full data 1.04 times on average.
-  The first stream run per (dataset, k) pays a second pass for the per-level
-  prefix costs.
-- **Downstream cost tracks distortion.** At m = 4000, the best-of-10 solution
-  on the coreset is within 4% of the best-of-3 solution on the full data
-  (bicriteria on sparse data aside, at 13%), and is often better (negative
-  `rel. cost`). The full-data reference is itself not optimal: at k = 50 on 50
-  balanced clusters, solving on 200 means beats it by 40%.
 
 ## What is measured
 
@@ -233,6 +225,7 @@ descriptor.
 - Wall time is only meaningful on an idle machine. Each report records the
   one-minute load average. When it exceeds the core count, compare CPU times,
   allocation and distance evaluations instead.
-- The first-moment relative error is ill-conditioned when the data mean is
-  near the origin. The ESA'22 instance is centered, so its value there is
-  meaningless.
+- The first-moment error is normalized by the data scale,
+  |Δ| / sqrt(W · E) with E the second moment, so it stays meaningful on
+  centered data such as the ESA'22 instance (0.014-0.19 there for the
+  sampling coresets).

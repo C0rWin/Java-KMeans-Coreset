@@ -18,8 +18,9 @@ Project Structure
 The project consists of the following modules:
 
 1. **coreset-core** - dependency-free core (`io.github.c0rwin.coreset.core`):
-   immutable sparse vectors, weighted coresets, k-means cost, weighted
-   k-means++ seeding and Lloyd, a merge-and-reduce streaming tree, and
+   immutable sparse vectors, weighted coresets stored as CSR point blocks
+   (zero-copy union and slicing), k-means cost, greedy k-means++ seeding and
+   Hamerly-bounded weighted Lloyd, a merge-and-reduce streaming tree, and
    lightweight metrics (`MetricsSink`, `RecordingMetrics`, spans).
    - `algo`: `UniformCoreset`, `SensitivityCoreset` (k-means++ or bicriteria
      seeding, with sampling provenance) and `MeanCoreset` (Barger-Feldman,
@@ -56,7 +57,22 @@ The project consists of the following modules:
 9. **coreset-testbed** - evaluation testbed: datasets, offline/stream/distributed
    runs, per-run validity reports (distortion, integrity, cost, memory) and
    aggregated tables; see [docs/benchmarks/README.md](docs/benchmarks/README.md).
+10. **coreset-bench** - JMH benchmarks of the kernels, the node/gRPC ingestion
+   harness and JFR profiling, driven by `coreset-bench/run-benchmarks.sh`; see
+   [docs/performance.md](docs/performance.md).
 
+Documentation
+---
+
+- [docs/performance.md](docs/performance.md): JMH kernels, ingestion
+  throughput, JFR hotspots and the optimizations behind them.
+- [docs/benchmarks/README.md](docs/benchmarks/README.md): coreset quality
+  (distortion, integrity, downstream cost) from the testbed suites.
+- [docs/distributed-run.md](docs/distributed-run.md): an 8-node gRPC run on
+  1M points, with solution quality and communication volumes.
+- [docs/engines.md](docs/engines.md): Spark and Flink adapters and other
+  engine mappings.
+- [docs/roadmap.md](docs/roadmap.md): status, lessons learned and next steps.
 
 APIs
 ---
