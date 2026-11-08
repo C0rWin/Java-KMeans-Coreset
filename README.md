@@ -67,6 +67,8 @@ Documentation
   throughput, JFR hotspots and the optimizations behind them.
 - [docs/benchmarks/README.md](docs/benchmarks/README.md): coreset quality
   (distortion, integrity, downstream cost) from the testbed suites.
+- [docs/datasets.md](docs/datasets.md): the public datasets, their
+  preprocessing, the binary point format, checksums and reference statistics.
 - [docs/distributed-run.md](docs/distributed-run.md): an 8-node gRPC run on
   1M points, with solution quality and communication volumes.
 - [docs/engines.md](docs/engines.md): Spark and Flink adapters and other
