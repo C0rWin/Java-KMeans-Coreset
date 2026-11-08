@@ -55,23 +55,32 @@ public final class ProcessSampler implements AutoCloseable {
         return t;
     });
     private final Supplier<Map<Long, String>> roles;
+    private final Supplier<List<Long>> descendants;
     private final Map<Long, Track> window = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicInteger errors = new java.util.concurrent.atomic.AtomicInteger();
     private volatile boolean open;
 
     /** @param roles current role per pid (e.g. {@code node-0}); unnamed descendants are {@code child}, this JVM {@code self} */
     public ProcessSampler(int periodMillis, Supplier<Map<Long, String>> roles) {
-        this.roles = roles;
-        exec.scheduleAtFixedRate(this::sampleQuietly, periodMillis, periodMillis, TimeUnit.MILLISECONDS);
+        this(periodMillis, roles, () -> Processes.descendants().stream().map(ProcessHandle::pid).toList());
     }
 
-    /** Starts a window: CPU is counted from now; processes that appear later are counted from zero. */
+    /** As above with the descendant enumeration supplied (tests inject failures through it). */
+    ProcessSampler(int periodMillis, Supplier<Map<Long, String>> roles, Supplier<List<Long>> descendants) {
+        this.roles = roles;
+        this.descendants = descendants;
+        exec.scheduleAtFixedRate(this::sampleLocked, periodMillis, periodMillis, TimeUnit.MILLISECONDS);
+    }
+
+    /** Starts a window: CPU is counted from now; processes that appear later are counted from zero. Never throws. */
     public synchronized void start() {
         window.clear();
+        errors.set(0);
         open = true;
         sample(true);
     }
 
-    /** Ends the window with one last sample. */
+    /** Ends the window with one last sample. Never throws. */
     public synchronized List<Usage> stop() {
         sample(false);
         open = false;
@@ -82,35 +91,52 @@ public final class ProcessSampler implements AutoCloseable {
         return out;
     }
 
-    private void sampleQuietly() {
-        try {
-            synchronized (this) {
-                if (open) {
-                    sample(false);
-                }
-            }
-        } catch (RuntimeException e) {
-            // one missed sample only lowers resolution
+    /** Samples in the current window that failed in part (enumeration, roles or reading), each only lowering resolution. */
+    public int errors() {
+        return errors.get();
+    }
+
+    private synchronized void sampleLocked() {
+        if (open) {
+            sample(false);
         }
     }
 
+    /** One sample; failures are counted, never thrown, since metrics must not fail a measurement. */
     private void sample(boolean first) {
-        long self = ProcessHandle.current().pid();
-        Map<Long, String> names = new LinkedHashMap<>();
-        names.put(self, "self");
-        ProcessHandle.current().descendants().forEach(p -> names.put(p.pid(), "child"));
-        names.putAll(roles.get());
-        Map<Long, Sample> now = read(names.keySet());
-        now.forEach((pid, s) -> {
-            Track t = window.get(pid);
-            if (t == null) {
-                // a process seen at the window start counts from its CPU then; later arrivals from zero
-                window.put(pid, new Track(names.getOrDefault(pid, "child"), first ? s.cpuSeconds : 0.0, s.rssKb));
-                t = window.get(pid);
+        try {
+            long self = ProcessHandle.current().pid();
+            Map<Long, String> names = new LinkedHashMap<>();
+            names.put(self, "self");
+            boolean failed = false;
+            try {
+                descendants.get().forEach(pid -> names.put(pid, "child"));
+            } catch (RuntimeException e) {
+                failed = true; // fall back to the processes already known: tracked ones and named roles
+                window.forEach((pid, t) -> names.putIfAbsent(pid, t.role));
             }
-            t.cpuLast = Math.max(t.cpuLast, s.cpuSeconds);
-            t.peakRssKb = Math.max(t.peakRssKb, s.rssKb);
-        });
+            try {
+                names.putAll(roles.get());
+            } catch (RuntimeException e) {
+                failed = true;
+            }
+            if (failed) {
+                errors.incrementAndGet();
+            }
+            Map<Long, Sample> now = read(names.keySet());
+            now.forEach((pid, s) -> {
+                Track t = window.get(pid);
+                if (t == null) {
+                    // a process seen at the window start counts from its CPU then; later arrivals from zero
+                    window.put(pid, new Track(names.getOrDefault(pid, "child"), first ? s.cpuSeconds : 0.0, s.rssKb));
+                    t = window.get(pid);
+                }
+                t.cpuLast = Math.max(t.cpuLast, s.cpuSeconds);
+                t.peakRssKb = Math.max(t.peakRssKb, s.rssKb);
+            });
+        } catch (RuntimeException e) {
+            errors.incrementAndGet();
+        }
     }
 
     static Map<Long, Sample> read(Iterable<Long> pids) {

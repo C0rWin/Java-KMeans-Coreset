@@ -88,7 +88,9 @@ systems or algorithms on it. The real grid uses it to skip `mean` on the sparse 
 **Resources.** `ProcessSampler` samples RSS and CPU time of the cell JVM and all its descendants every `sampleMillis`.
 These are the node JVMs and the Spark executors. Linux reads `/proc/<pid>/stat`, macOS uses one `ps` call per sample.
 Per process it reports the peak RSS seen and the CPU seconds used inside the repetition. `cpu_s` sums all processes.
-Each record lists every process with its role: `coordinator`, `node-i`, `driver`, `executor` or `minicluster`.
+Each record lists every process with its role: `coordinator`, `node-i`, `driver`, `executor` or `minicluster`. The sampler never fails a cell. Process enumeration is retried with
+backoff: on macOS the JDK's native call fails with ENOMEM when the process table grows mid-read. If it still fails,
+the sample covers the processes already known, and the record counts the partial samples in `sampler_errors`.
 
 **Bytes shipped.**
 

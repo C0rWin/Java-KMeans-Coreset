@@ -177,6 +177,7 @@ public final class CellMain {
             procs.add(p);
         }
         r.put("cpu_s", cpu);
+        r.put("sampler_errors", sampler.errors());
         r.put("peak_rss_mb_max", peak);
         r.put("peak_rss_mb_sum", rssSum);
         r.put("processes", procs);

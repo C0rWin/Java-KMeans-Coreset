@@ -34,4 +34,29 @@ class ProcessSamplerTest {
             assertTrue(self.cpuSeconds() > 0.05, "cpu " + self.cpuSeconds());
         }
     }
+
+    @Test
+    void failingEnumerationIsCountedAndFallsBackToKnownProcesses() {
+        long self = ProcessHandle.current().pid();
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        try (ProcessSampler s = new ProcessSampler(10_000, () -> Map.of(self, "driver"), () -> {
+            calls.incrementAndGet();
+            throw new RuntimeException("Cannot allocate memory");
+        })) {
+            s.start();
+            List<ProcessSampler.Usage> u = s.stop();
+            assertEquals(2, calls.get(), "start and stop each sampled once");
+            assertEquals(2, s.errors());
+            assertEquals(1, u.size(), "the named root is still sampled");
+            assertEquals("driver", u.get(0).role());
+            assertTrue(u.get(0).peakRssMB() > 10);
+        }
+        try (ProcessSampler s = new ProcessSampler(10_000, () -> {
+            throw new IllegalStateException("roles unavailable");
+        }, List::of)) {
+            s.start();
+            assertEquals(1, s.stop().size(), "this JVM alone");
+            assertEquals(2, s.errors());
+        }
+    }
 }

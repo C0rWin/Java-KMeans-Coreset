@@ -8,6 +8,7 @@ import io.github.c0rwin.coreset.experiments.config.ExperimentConfig.FaultConfig;
 import io.github.c0rwin.coreset.experiments.config.ExperimentConfig.SystemConfig;
 import io.github.c0rwin.coreset.experiments.data.ChunkReader;
 import io.github.c0rwin.coreset.experiments.data.PointSource;
+import io.github.c0rwin.coreset.experiments.metrics.Processes;
 import io.github.c0rwin.coreset.spark.BuildMetrics;
 import io.github.c0rwin.coreset.spark.BuildResult;
 import io.github.c0rwin.coreset.spark.SparkCoresets;
@@ -154,7 +155,7 @@ final class SparkSystem implements EngineSystem {
 
     private static List<ProcessHandle> executors() {
         List<ProcessHandle> out = new ArrayList<>();
-        ProcessHandle.current().descendants().forEach(p -> {
+        Processes.descendants().forEach(p -> {
             Optional<String> cmd = p.info().commandLine();
             if (cmd.isPresent() && cmd.get().contains(EXECUTOR_MAIN)) {
                 out.add(p);
@@ -275,7 +276,14 @@ final class SparkSystem implements EngineSystem {
     /** SIGKILL the executor process with this id (its command line carries {@code --executor-id <id>}). */
     private void killExecutor(String executorId, long finishedTasks, Map<String, Object> f, long start) {
         ProcessHandle victim = null;
-        for (ProcessHandle p : executors()) {
+        List<ProcessHandle> candidates;
+        try {
+            candidates = executors();
+        } catch (RuntimeException e) { // enumeration failed even after retries: the repetition counts as missed
+            f.put("kill_error", "process enumeration failed: " + e);
+            return;
+        }
+        for (ProcessHandle p : candidates) {
             if (p.info().commandLine().orElse("").contains("--executor-id " + executorId + " ")) {
                 victim = p;
             }

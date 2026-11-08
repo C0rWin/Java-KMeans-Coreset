@@ -193,7 +193,11 @@ public final class ExperimentRunner {
         }
         Process p = pb.start();
         if (!p.waitFor(cfg.cellTimeoutSeconds(), TimeUnit.SECONDS)) {
-            p.toHandle().descendants().forEach(ProcessHandle::destroyForcibly);
+            try {
+                p.toHandle().descendants().forEach(ProcessHandle::destroyForcibly);
+            } catch (RuntimeException e) {
+                log("cell " + cell.id() + ": could not list its processes to kill them: " + e);
+            }
             p.destroyForcibly().waitFor();
             appendError(cell, "cell timed out after " + cfg.cellTimeoutSeconds() + " s");
             return false;
