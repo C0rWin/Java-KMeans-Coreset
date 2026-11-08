@@ -1,0 +1,61 @@
+---
+# Smoke grid on one synthetic dataset (n = 1M, d = 20): validates the
+# harness end to end and gives preliminary numbers. Parameters as in the
+# preset grid, with fewer parallelism levels and fault cells. The mean
+# coreset uses m = 500: each of its compressions is a Lloyd run with m
+# centers, O(m^2 d) per merge, and m = 2000 takes minutes per repetition.
+name: smoke-1m
+warmup: 1
+repetitions: 3
+seed: 1
+k: 20
+batchSize: 4096
+sampleMillis: 200
+cellTimeoutSeconds: 1800
+
+datasets:
+  - id: gm-1m-d20
+    type: gaussian-mixture
+    params:
+      {n: 1000000, d: 20, clusters: 20, sigma: 5, imbalance: 1.0, seed: 1}
+
+algorithms:
+  - {id: uniform, params: {m: 2000}}
+  - {id: sensitivity, params: {k: 20, m: 2000}}
+  - {id: mean, params: {m: 500}}
+  - {id: lightweight, params: {m: 2000}}
+
+systems:
+  - {type: grpc, options: {workersPerNode: 1, maxInFlight: 16}}
+  - {type: spark, mode: local, options: {treeDepth: 2}}
+  - {type: spark, mode: local-cluster, options: {treeDepth: 2}}
+  - {type: spark-mllib, mode: local}
+  - {type: flink, options: {chunksPerPartial: 8}}
+
+parallelism: [1, 4, 8]
+
+solver: {restarts: 10, iterations: 50}
+
+quality:
+  referenceRuns: 3
+  referenceRestarts: 5
+  referenceIterations: 50
+  candidates: 2
+  candidateIterations: 20
+  evalThreads: 4
+
+memory: {workersMB: 8192, driverMB: 2048}
+
+jvmFlags: [-XX:+UseParallelGC]
+
+faults:
+  - {system: grpc, kind: kill-nodes, at: 0.5, afterKill: drop,
+     parallelism: [4], algorithms: [uniform, sensitivity]}
+  - {system: grpc, kind: kill-nodes, at: 0.5, afterKill: drop, reweight: true,
+     parallelism: [4], algorithms: [uniform]}
+  - {system: grpc, kind: kill-nodes, at: 0.75, snapshotAt: 0.5,
+     afterKill: reroute, parallelism: [4], algorithms: [uniform]}
+  - {system: spark/local-cluster, kind: kill-executor, at: 0.5,
+     parallelism: [4], algorithms: [uniform, sensitivity]}
+  - {system: flink, kind: task-failure, at: 0.5,
+     parallelism: [4], algorithms: [uniform, sensitivity]}

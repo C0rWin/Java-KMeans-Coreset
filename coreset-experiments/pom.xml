@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.github.c0rwin.coreset</groupId>
+    <artifactId>coreset-parent</artifactId>
+    <version>1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>coreset-experiments</artifactId>
+  <packaging>jar</packaging>
+  <name>coreset-experiments</name>
+  <description>Config-driven comparison of the gRPC coreset cluster with Spark and Flink: performance, quality and
+    behaviour under injected failures</description>
+
+  <properties>
+    <!-- An experiment harness, not a published library. -->
+    <maven.deploy.skip>true</maven.deploy.skip>
+    <maven.install.skip>true</maven.install.skip>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.github.c0rwin.coreset</groupId>
+      <artifactId>coreset-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.c0rwin.coreset</groupId>
+      <artifactId>coreset-node</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.c0rwin.coreset</groupId>
+      <artifactId>coreset-grpc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.c0rwin.coreset</groupId>
+      <artifactId>coreset-spark</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.github.c0rwin.coreset</groupId>
+      <artifactId>coreset-flink</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.github.c0rwin.coreset</groupId>
+      <artifactId>coreset-testbed</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <!-- The lightweight coreset plug-in, found through the SPI by every system (nodes, executors, task managers). -->
+      <groupId>io.github.c0rwin.coreset</groupId>
+      <artifactId>coreset-examples</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.dataformat</groupId>
+      <artifactId>jackson-dataformat-yaml</artifactId>
+    </dependency>
+
+    <!-- Real engine runtimes (provided scope in the engine modules): the harness runs them locally. -->
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-core_${scala.binary.version}</artifactId>
+      <version>${spark.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-sql_${scala.binary.version}</artifactId>
+      <version>${spark.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-mllib_${scala.binary.version}</artifactId>
+      <version>${spark.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-streaming-java</artifactId>
+      <version>${flink.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-clients</artifactId>
+      <version>${flink.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-runtime</artifactId>
+      <version>${flink.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>true</filtering>
+      </resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <argLine>${spark.test.jvm.args}</argLine>
+          <!-- Cell JVMs, node processes and Spark executors inherit java.class.path: keep it a plain path list. -->
+          <useManifestOnlyJar>false</useManifestOnlyJar>
+        </configuration>
+      </plugin>
+      <plugin>
+        <!-- run-engines.sh launches from target/classes plus this class path; no uber-jar of two engines. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.8.1</version>
+        <executions>
+          <execution>
+            <id>runtime-classpath</id>
+            <phase>package</phase>
+            <goals>
+              <goal>build-classpath</goal>
+            </goals>
+            <configuration>
+              <includeScope>runtime</includeScope>
+              <outputFile>${project.build.directory}/runtime-classpath.txt</outputFile>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
