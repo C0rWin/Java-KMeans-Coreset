@@ -1,0 +1,99 @@
+---
+# Full engine comparison grid: systems x N in {1,2,4,8} x algorithms x
+# datasets, each cell undisturbed and with the faults listed below. See
+# docs/experiments/engines.md for the method and the fairness rules.
+name: preset-grid
+warmup: 1
+repetitions: 3
+seed: 1
+k: 20
+batchSize: 4096          # gRPC batch and read chunk size (points)
+sampleMillis: 200        # RSS/CPU sampling period
+cellTimeoutSeconds: 3600
+
+datasets:
+  - id: gm-1m-d20
+    type: gaussian-mixture
+    params:
+      {n: 1000000, d: 20, clusters: 20, sigma: 5, imbalance: 1.0, seed: 1}
+  - id: gm-4m-d20
+    type: gaussian-mixture
+    params:
+      {n: 4000000, d: 20, clusters: 20, sigma: 5, imbalance: 1.0, seed: 2}
+  - id: esa22-k20-a4     # ESA'22 hard instance: n = 20^4 = 160000, d = 80
+    type: esa22
+    params: {k: 20, alpha: 4}
+# Real datasets (testbed descriptors, converted binaries in the testbed
+# cache; convert first with `coreset-testbed datasets convert <name>`):
+#  - {id: covertype, type: public, params: {name: covertype}}
+#  - {id: census1990, type: public, params: {name: census1990}}
+#  - {id: higgs-z, type: public, params: {name: higgs, variant: zscore}}
+
+algorithms:
+  - {id: uniform, params: {m: 2000}}
+  - {id: sensitivity, params: {k: 20, m: 2000}}
+  # mean runs Lloyd with m centers per compression: the long pole of the grid
+  - {id: mean, params: {m: 2000}}
+  # third-party plug-in (coreset-examples) through the SPI
+  - {id: lightweight, params: {m: 2000}}
+
+systems:
+  - {type: grpc, options: {workersPerNode: 1, maxInFlight: 16}}
+  - {type: spark, mode: local, options: {treeDepth: 2}}
+  - {type: spark, mode: local-cluster, options: {treeDepth: 2}}
+  # coreset-free baseline: MLlib k-means|| on the full data
+  - {type: spark-mllib, mode: local}
+  - {type: flink, options: {chunksPerPartial: 8}}
+
+parallelism: [1, 2, 4, 8]
+
+solver: {restarts: 10, iterations: 50}
+
+quality:
+  referenceRuns: 3
+  referenceRestarts: 10
+  referenceIterations: 50
+  candidates: 2
+  candidateIterations: 20
+  maxInMemoryPoints: 2000000
+  evalThreads: 4
+
+memory: {workersMB: 8192, driverMB: 2048}
+
+jvmFlags: [-XX:+UseParallelGC]
+
+faults:
+  - {system: grpc, kind: kill-nodes, at: 0.5, afterKill: drop,
+     parallelism: [4, 8], algorithms: [uniform, sensitivity]}
+  - {system: grpc, kind: kill-nodes, at: 0.5, afterKill: drop, reweight: true,
+     parallelism: [4, 8], algorithms: [uniform, sensitivity]}
+  - {system: grpc, kind: kill-nodes, at: 0.75, snapshotAt: 0.5,
+     afterKill: reroute, parallelism: [4, 8],
+     algorithms: [uniform, sensitivity]}
+  - {system: spark/local-cluster, kind: kill-executor, at: 0.5,
+     parallelism: [4, 8], algorithms: [uniform, sensitivity]}
+  - {system: flink, kind: task-failure, at: 0.5,
+     parallelism: [4, 8], algorithms: [uniform, sensitivity]}
+
+# Lossy gRPC ingest: off by default; the current protocol stalls on a lost
+# batch, so a lossy repetition fails at flushTimeoutSeconds.
+# lossy: {model: gilbert-elliott, pGoodToBad: 0.001, pBadToGood: 0.2,
+#         lossGood: 0.0, lossBad: 1.0, methods: [Ingest]}
+
+# Cluster runs: the same grid with real targets. Set the grpc system to
+# mode: external, spark to mode: cluster and flink to mode: remote. The
+# dataset file must exist at the same path on every worker; sparkJars and
+# flinkJars are the coreset jars from target/runtime-classpath.txt
+# (coreset-core, -spark or -flink, -testbed, -experiments, -examples).
+# cluster:
+#   grpcTargets: [node1:7070, node2:7070, node3:7070, node4:7070]
+#   grpcMetrics:
+#     - http://node1:9464/metrics
+#     - http://node2:9464/metrics
+#     - http://node3:9464/metrics
+#     - http://node4:9464/metrics
+#   grpcKillCommand: "ssh {host} pkill -9 -f 'NodeCommand.*{port}'"
+#   sparkMaster: spark://master:7077
+#   sparkJars: [/opt/coreset/coreset-experiments.jar]
+#   flinkJobManager: jobmanager:8081
+#   flinkJars: [/opt/coreset/coreset-experiments.jar]

@@ -35,3 +35,5 @@ bin
 target
 .settings
 *.checkstyle
+# engine-comparison runs (coreset-experiments/run-engines.sh)
+/results/

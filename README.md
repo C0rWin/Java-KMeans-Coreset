@@ -57,6 +57,12 @@ The project consists of the following modules:
 8. **coreset-examples** - a third-party algorithm (the lightweight coreset of
    Bachem, Lucic and Krause, KDD 2018) plugged in through the SPI only, with
    tests running it through every layer above.
+9. **coreset-experiments** - config-driven comparison of the gRPC coreset
+   cluster with Spark and Flink on the same data and algorithms: timing split,
+   CPU, per-process RSS, bytes shipped, full-data quality, and real injected
+   failures (killed nodes and executors, task failures), driven by
+   `coreset-experiments/run-engines.sh`; see
+   [docs/experiments/engines.md](docs/experiments/engines.md).
 
 Documentation
 ---
@@ -73,6 +79,9 @@ Documentation
   1M points, with solution quality and communication volumes.
 - [docs/engines.md](docs/engines.md): Spark and Flink adapters and other
   engine mappings.
+- [docs/experiments/engines.md](docs/experiments/engines.md): engine
+  comparison method, fairness rules, how to run it on one host or a cluster,
+  preliminary results.
 - [docs/roadmap.md](docs/roadmap.md): status, lessons learned and next steps.
 
 APIs

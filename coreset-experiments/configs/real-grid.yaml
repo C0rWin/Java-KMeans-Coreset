@@ -1,0 +1,84 @@
+---
+# Real-dataset grid: the converted testbed binaries (read in place from
+# ~/.cache/coreset-testbed; convert them first with
+# `coreset-testbed datasets convert <name> --variant zscore|tfidf`).
+# grpc, Spark local-cluster and Flink at N in {1,4,8} with four coreset
+# algorithms, plus the MLlib k-means|| baseline; every coreset cell
+# undisturbed, fault cells for uniform and sensitivity.
+name: real-grid
+warmup: 1
+repetitions: 3
+seed: 1
+k: 25
+batchSize: 4096
+sampleMillis: 200
+cellTimeoutSeconds: 7200
+
+datasets:
+  - {id: covertype.zscore, type: public,
+     params: {name: covertype, variant: zscore}}
+  - {id: census1990.zscore, type: public,
+     params: {name: census1990, variant: zscore}}
+  - {id: kddcup99.zscore, type: public,
+     params: {name: kddcup99, variant: zscore}}
+  - {id: yearmsd.zscore, type: public,
+     params: {name: yearmsd, variant: zscore}}
+  - {id: susy.zscore, type: public, params: {name: susy, variant: zscore}}
+  # full 11M rows
+  - {id: higgs.zscore, type: public, params: {name: higgs, variant: zscore}}
+  # Sparse (d = 102,660). mean is excluded: each of its compressions keeps
+  # m dense centroid sums (500 x 102,660 doubles). MLlib gets sparse
+  # vectors; every other system handles CSR rows natively.
+  - {id: nytimes.tfidf, type: public,
+     params: {name: nytimes, variant: tfidf}, exclude: [mean]}
+
+algorithms:
+  - {id: uniform, params: {m: 4000}}
+  - {id: sensitivity, params: {k: 25, m: 4000}}
+  # mean runs Lloyd with m centres per compression; m = 500 keeps it feasible
+  - {id: mean, params: {m: 500}}
+  # third-party plug-in (coreset-examples) through the SPI
+  - {id: lightweight, params: {m: 4000}}
+
+systems:
+  - {type: grpc, options: {workersPerNode: 1, maxInFlight: 16}}
+  - {type: spark, mode: local-cluster, options: {treeDepth: 2}}
+  # coreset-free baseline: MLlib k-means|| on the full data
+  - {type: spark-mllib, mode: local}
+  - {type: flink, options: {chunksPerPartial: 8}}
+
+parallelism: [1, 4, 8]
+
+solver: {restarts: 10, iterations: 50}
+
+# Above 2M rows (census1990, kddcup99, susy, higgs) candidates and the
+# reference come from a 2M-row uniform sample; every cost is still exact.
+quality:
+  referenceRuns: 3
+  referenceRestarts: 10
+  referenceIterations: 50
+  candidates: 2
+  candidateIterations: 20
+  maxInMemoryPoints: 2000000
+  evalThreads: 4
+
+# HIGGS is 2.5 GB of doubles: Spark local (MLlib) and the single-JVM modes
+# get 16 GB, multi-process workers 16 GB / N each.
+memory: {workersMB: 16384, driverMB: 4096}
+
+jvmFlags: [-XX:+UseParallelGC]
+
+faults:
+  # node kills: 1 of 4 and 2 of 8, before any snapshot and after one
+  - {system: grpc, kind: kill-nodes, at: 0.5, count: 1, afterKill: drop,
+     parallelism: [4], algorithms: [uniform, sensitivity]}
+  - {system: grpc, kind: kill-nodes, at: 0.75, snapshotAt: 0.5, count: 1,
+     afterKill: drop, parallelism: [4], algorithms: [uniform, sensitivity]}
+  - {system: grpc, kind: kill-nodes, at: 0.5, count: 2, afterKill: drop,
+     parallelism: [8], algorithms: [uniform, sensitivity]}
+  - {system: grpc, kind: kill-nodes, at: 0.75, snapshotAt: 0.5, count: 2,
+     afterKill: drop, parallelism: [8], algorithms: [uniform, sensitivity]}
+  - {system: spark/local-cluster, kind: kill-executor, at: 0.5,
+     parallelism: [4, 8], algorithms: [uniform, sensitivity]}
+  - {system: flink, kind: task-failure, at: 0.5,
+     parallelism: [4, 8], algorithms: [uniform, sensitivity]}

@@ -26,6 +26,7 @@
     <module>coreset-bench</module>
     <module>coreset-testbed</module>
     <module>coreset-examples</module>
+    <module>coreset-experiments</module>
   </modules>
 
   <properties>

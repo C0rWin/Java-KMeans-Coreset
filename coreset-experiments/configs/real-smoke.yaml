@@ -1,0 +1,38 @@
+---
+# Tiny real-data check of the harness: covertype (z-scored), N = 2, one
+# algorithm, every system and fault kind once.
+name: real-smoke
+warmup: 1
+repetitions: 1
+seed: 1
+k: 25
+batchSize: 4096
+cellTimeoutSeconds: 1800
+
+datasets:
+  - {id: covertype.zscore, type: public,
+     params: {name: covertype, variant: zscore}}
+
+algorithms:
+  - {id: sensitivity, params: {k: 25, m: 4000}}
+
+systems:
+  - {type: grpc}
+  - {type: spark, mode: local-cluster}
+  - {type: spark-mllib, mode: local}
+  - {type: flink}
+
+parallelism: [2]
+
+solver: {restarts: 10, iterations: 50}
+
+quality: {referenceRuns: 2, referenceRestarts: 5, candidates: 1, evalThreads: 4}
+
+memory: {workersMB: 4096, driverMB: 2048}
+
+jvmFlags: [-XX:+UseParallelGC]
+
+faults:
+  - {system: grpc, kind: kill-nodes, at: 0.75, snapshotAt: 0.5, count: 1}
+  - {system: spark/local-cluster, kind: kill-executor, at: 0.5}
+  - {system: flink, kind: task-failure, at: 0.5}

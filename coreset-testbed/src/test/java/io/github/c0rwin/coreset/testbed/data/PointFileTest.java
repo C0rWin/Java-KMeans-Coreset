@@ -218,4 +218,57 @@ class PointFileTest {
         assertEquals(0, rows.storedEntries());
         PointFile.verify(csr);
     }
+
+    @Test
+    void rangedReadersReturnExactlyTheirRowsInEveryChunking() throws IOException {
+        int n = 37;
+        double[][] rows = denseRows(n, 5, 21);
+        Path dense = dir.resolve("r.cbin");
+        writeDense(dense, rows, 5);
+        SplittableRandom rnd = new SplittableRandom(22);
+        Path csr = dir.resolve("r.csr");
+        int[][] idx = new int[n][];
+        long nnz = 0;
+        for (int i = 0; i < n; i++) {
+            idx[i] = rnd.ints(0, 50).distinct().limit(rnd.nextInt(4)).sorted().toArray(); // some rows empty
+            nnz += idx[i].length;
+        }
+        try (PointFileWriter w = PointFileWriter.csr(csr, n, 50, nnz, 0)) {
+            for (int i = 0; i < n; i++) {
+                double[] val = new double[idx[i].length];
+                Arrays.fill(val, i + 1.0);
+                w.writeRow(idx[i], val, 0, val.length);
+            }
+            w.finish();
+        }
+        PointSet allDense = PointFile.readAll(dense);
+        PointSet allCsr = PointFile.readAll(csr);
+        int[][] ranges = {{0, n}, {0, 0}, {n, n}, {5, 6}, {7, 30}, {36, 37}, {12, 37}};
+        for (Path file : List.of(dense, csr)) {
+            PointSet all = file == dense ? allDense : allCsr;
+            for (int[] range : ranges) {
+                for (int chunk : new int[] {1, 4, 64}) {
+                    List<SparseVector> got = new ArrayList<>();
+                    try (PointFile.Reader r = PointFile.open(file, chunk, range[0], range[1])) {
+                        assertEquals(range[0], r.position());
+                        while (r.hasNext()) {
+                            PointBlock b = r.next();
+                            assertTrue(b.size() <= chunk);
+                            for (int i = 0; i < b.size(); i++) {
+                                got.add(b.vector(i));
+                            }
+                        }
+                        assertEquals(range[1], r.position());
+                    }
+                    assertEquals(range[1] - range[0], got.size(), file + " " + Arrays.toString(range));
+                    for (int i = 0; i < got.size(); i++) {
+                        assertEquals(all.vector(range[0] + i), got.get(i), file + " row " + (range[0] + i));
+                    }
+                }
+            }
+            assertThrows(IllegalArgumentException.class, () -> PointFile.open(file, 4, 3, n + 1));
+            assertThrows(IllegalArgumentException.class, () -> PointFile.open(file, 4, 6, 5));
+            assertThrows(IllegalArgumentException.class, () -> PointFile.open(file, 4, -1, 5));
+        }
+    }
 }
