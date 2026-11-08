@@ -7,11 +7,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.StringReader;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.zip.GZIPOutputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class LoadersTest {
 
@@ -77,6 +85,37 @@ class LoadersTest {
                 SparseVector.of(5, new int[0], new double[0])), docs);
     }
 
+    @Test
+    void bagOfWordsKeepsEmptyDocumentsAsRowsAndSortsWords() throws Exception {
+        List<SparseVector> docs = vectors(Loaders.load(fixture("docword_small.txt"), Loaders.Format.BOW,
+                Loaders.Options.defaults()));
+        assertEquals(List.of(
+                SparseVector.of(5, new int[] {1, 3}, new double[] {3, 1}),
+                SparseVector.of(5, new int[0], new double[0]),
+                SparseVector.of(5, new int[] {0, 4}, new double[] {1, 2}),
+                SparseVector.of(5, new int[] {1, 2}, new double[] {1, 4})), docs);
+    }
+
+    @Test
+    void zipMembersAreOpenedByNameAndGunzipped(@TempDir Path dir) throws Exception {
+        Path zip = dir.resolve("a.zip");
+        try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(zip))) {
+            z.putNextEntry(new ZipEntry("inner/data.csv.gz"));
+            ByteArrayOutputStream gz = new ByteArrayOutputStream();
+            try (GZIPOutputStream g = new GZIPOutputStream(gz)) {
+                g.write("1,2\n3,4\n".getBytes(StandardCharsets.UTF_8));
+            }
+            z.write(gz.toByteArray());
+            z.closeEntry();
+        }
+        try (BufferedReader r = Loaders.open(zip, "inner/data.csv.gz")) {
+            assertEquals(List.of(v(1, 2), v(3, 4)), vectors(Loaders.read(r, Loaders.Format.DENSE,
+                    Loaders.Options.defaults())));
+        }
+        IOException missing = assertThrows(IOException.class, () -> Loaders.open(zip, "nope"));
+        assertTrue(missing.getMessage().contains("no zip entry 'nope'"), missing.getMessage());
+    }
+
     private static IllegalArgumentException failure(Loaders.Format format, String text) {
         return assertThrows(IllegalArgumentException.class,
                 () -> Loaders.read(new BufferedReader(new StringReader(text)), format, Loaders.Options.defaults()));
@@ -92,5 +131,10 @@ class LoadersTest {
         assertTrue(failure(Loaders.Format.WIKI, "1 4 0 1\n2 5 0 1\n").getMessage().startsWith("line 2: dim 5"));
         assertTrue(failure(Loaders.Format.WIKI, "1 4 4 1\n").getMessage().contains("outside [0, 4)"));
         assertTrue(failure(Loaders.Format.WIKI, "1 4 0\n").getMessage().startsWith("line 1: expected"));
+        assertTrue(failure(Loaders.Format.BOW, "2\n3\n2\n1 1 1\n").getMessage().contains("header says 2 entries"));
+        assertTrue(failure(Loaders.Format.BOW, "2\n3\n2\n2 1 1\n1 1 1\n").getMessage()
+                .startsWith("line 5: document 1 out of order"));
+        assertTrue(failure(Loaders.Format.BOW, "1\n3\n2\n1 2 1\n1 2 5\n").getMessage().contains("duplicate word 2"));
+        assertTrue(failure(Loaders.Format.BOW, "1\n3\n1\n1 4 1\n").getMessage().contains("word 4"));
     }
 }

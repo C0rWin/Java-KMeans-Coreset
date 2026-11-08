@@ -87,29 +87,15 @@ public final class Datasets {
                         file.toAbsolutePath().toString(), dropSteps(drop), Optional.empty());
             }
             case "public": {
-                p.allow("name");
-                String name = p.string("name");
-                PublicDataset pd = PublicDataset.REGISTRY.get(name);
-                if (pd == null) {
-                    throw new IllegalArgumentException("unknown public dataset '" + name + "', known: "
-                            + new TreeSet<>(PublicDataset.REGISTRY.keySet()));
+                p.allow("name", "variant");
+                PublicDataset pd = PublicDataset.named(p.string("name"));
+                Conversion.Variant variant = Conversion.Variant.of(p.string("variant", "raw"));
+                Path file = Conversion.ensure(pd, cacheDir, variant, allowDownload);
+                List<String> steps = new ArrayList<>(dropSteps(pd.drop()));
+                if (variant != Conversion.Variant.RAW) {
+                    steps.add(variant.id());
                 }
-                Path file = pd.cached(cacheDir).orElse(null);
-                if (file == null) {
-                    if (!allowDownload) {
-                        throw new IllegalStateException("public dataset " + name + " is not cached in " + cacheDir
-                                + "; fetch it with 'coreset-testbed datasets fetch " + name + "' or pass "
-                                + "--allow-download");
-                    }
-                    file = pd.fetch(cacheDir);
-                }
-                List<WeightedPoint> pts = Loaders.load(file, pd.format(),
-                        new Loaders.Options(Loaders.Header.AUTO, pd.drop(), 0));
-                if (pts.size() != pd.n() || pts.get(0).vector().dim() != pd.d()) {
-                    throw new IllegalStateException(name + ": loaded " + pts.size() + " x "
-                            + pts.get(0).vector().dim() + ", descriptor says " + pd.n() + " x " + pd.d());
-                }
-                return Dataset.of(spec.id(), pts, pd.sha256(), pd.license(), pd.url(), dropSteps(pd.drop()),
+                return Dataset.of(spec.id(), PointFile.readAll(file), pd.sha256(), pd.license(), pd.url(), steps,
                         Optional.empty());
             }
             default:
