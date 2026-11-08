@@ -207,4 +207,22 @@ class CoresetStreamSinkTest {
         assertThrows(IOException.class, () -> StreamCheckpoint.decode(state));
         assertThrows(IOException.class, () -> StreamCheckpoint.decode(new byte[] {1, 2, 3}));
     }
+
+    @Test
+    void factorySinksCheckpointTheFactoryIdentity(@TempDir Path tmp) throws Exception {
+        String dir = tmp.resolve("factory-sink").toString();
+        Dataset<Row> batch = spark.createDataset(batches.get(0), Encoders.bean(PointRow.class)).toDF();
+        CoresetStreamSink sink = CoresetStreamSink.open(spark, dir, COLUMNS, new UniformRecipe(150), SEED, 2, 300);
+        assertTrue(sink.apply(batch, 0));
+        double weight = batches.get(0).stream().mapToDouble(PointRow::getWeight).sum();
+        assertEquals(weight, sink.snapshot().totalWeight(), 1e-9 * weight); // uniform conserves weight
+
+        CoresetStreamSink resumed = CoresetStreamSink.open(spark, dir, COLUMNS, new UniformRecipe(150), SEED, 2, 300);
+        assertEquals(0, resumed.lastBatchId());
+        assertEquals(sink.snapshot(), resumed.snapshot());
+        assertThrows(IllegalStateException.class,
+                () -> CoresetStreamSink.open(spark, dir, COLUMNS, new UniformRecipe(151), SEED, 2, 300));
+        assertThrows(IllegalStateException.class,
+                () -> CoresetStreamSink.open(spark, dir, COLUMNS, "uniform", Map.of("m", "150"), SEED, 2, 300));
+    }
 }

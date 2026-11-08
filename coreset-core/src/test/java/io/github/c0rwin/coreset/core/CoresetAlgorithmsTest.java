@@ -167,5 +167,34 @@ class CoresetAlgorithmsTest {
         assertEquals("sensitivity(k=2, m=8, seeding=kmeans++(lloydIterations=0), bound=standard(alpha=2.0))",
                 ((CoresetAlgorithmFactory) copy).create().toString());
         assertThrows(UnknownAlgorithmException.class, () -> new RegisteredAlgorithm("nope", Map.of()).create());
+        assertEquals("sensitivity{k=2, m=8}", recipe.identity());
+    }
+
+    /** A code-supplied recipe, as an engine user would write one. */
+    static final class UniformOf implements CoresetAlgorithmFactory {
+        private static final long serialVersionUID = 1L;
+        private final int m;
+        private final Object extra;
+
+        UniformOf(int m, Object extra) {
+            this.m = m;
+            this.extra = extra;
+        }
+
+        @Override
+        public CoresetAlgorithm create() {
+            return new UniformCoreset(m);
+        }
+    }
+
+    @Test
+    void defaultIdentityFollowsTheSerializedForm() {
+        String a = new UniformOf(8, null).identity();
+        assertEquals(a, new UniformOf(8, null).identity());
+        assertTrue(a.matches(java.util.regex.Pattern.quote(UniformOf.class.getName()) + "@sha256:[0-9a-f]{64}"), a);
+        assertFalse(a.equals(new UniformOf(9, null).identity()));
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> new UniformOf(8, new Object()).identity());
+        assertTrue(e.getMessage().endsWith("is not serializable"), e.getMessage());
     }
 }

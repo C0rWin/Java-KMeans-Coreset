@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.SparseVector;
+import io.github.c0rwin.coreset.core.UnknownAlgorithmException;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.algo.Algorithms;
 import io.github.c0rwin.coreset.core.validate.Candidate;
@@ -334,5 +335,15 @@ class SparkCoresetsTest {
         assertEquals(64, SparkCoresets.defaultChunkSize(Map.of("k", "3", "eps", "0.1", "maxM", "32")));
         assertThrows(IllegalArgumentException.class,
                 () -> SparkCoresets.kMeans(data, "uniform", Map.of("m", "3"), SEED, 2, 0, 1, 1));
+    }
+
+    @Test
+    void aCodeSuppliedFactoryBuildsWhatTheRegisteredIdBuilds() {
+        Coreset byId = SparkCoresets.build(data, "uniform", Map.of("m", "400"), SEED, 3).coreset();
+        Coreset byFactory = SparkCoresets.build(data, new UniformRecipe(400), SEED, 3, 800).coreset();
+        assertEquals(byId, byFactory);
+        assertThrows(UnknownAlgorithmException.class,
+                () -> SparkCoresets.build(data, "nope", Map.of("m", "3"), SEED, 2));
+        assertThrows(IllegalArgumentException.class, () -> SparkCoresets.build(data, new UniformRecipe(0), SEED, 2, 8));
     }
 }

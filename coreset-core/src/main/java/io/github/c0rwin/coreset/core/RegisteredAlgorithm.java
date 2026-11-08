@@ -25,4 +25,10 @@ public record RegisteredAlgorithm(String id, Map<String, String> params) impleme
     public CoresetAlgorithm create() {
         return CoresetAlgorithms.load().create(id, params);
     }
+
+    /** The id followed by the sorted parameters, e.g. {@code sensitivity{k=3, m=200}}. */
+    @Override
+    public String identity() {
+        return id + params;
+    }
 }
