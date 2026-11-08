@@ -8,10 +8,11 @@ import java.util.Objects;
 import java.util.TreeMap;
 
 /**
- * One algorithm of the grid, resolved through the node's {@code AlgorithmResolver} SPI.
+ * One algorithm of the grid, resolved through {@link io.github.c0rwin.coreset.core.CoresetAlgorithms}, so any
+ * registered id works, built-in or from a provider jar on the class path.
  *
  * @param label    name in reports and tables; defaults to the id plus its fixed parameters
- * @param id       resolver id, e.g. {@code uniform}, {@code sensitivity}, {@code mean}
+ * @param id       registered algorithm id, e.g. {@code uniform}, {@code sensitivity}, {@code mean}
  * @param params   fixed parameters
  * @param inject   grid parameters added per run: {@code k} and/or {@code m}; defaults to what the built-in ids take
  * @param oneSided whether the algorithm never underestimates cost (Barger-Feldman mean coreset), so

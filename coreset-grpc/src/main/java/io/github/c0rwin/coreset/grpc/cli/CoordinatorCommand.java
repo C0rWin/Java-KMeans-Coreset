@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.grpc.cli;
 
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
@@ -10,8 +11,6 @@ import io.github.c0rwin.coreset.grpc.CoordinatorOptions;
 import io.github.c0rwin.coreset.grpc.CoresetCoordinator;
 import io.github.c0rwin.coreset.grpc.GatheredSnapshot;
 import io.github.c0rwin.coreset.grpc.IngestStream;
-import io.github.c0rwin.coreset.node.AlgorithmResolver;
-import io.github.c0rwin.coreset.node.ServiceLoaderAlgorithmResolver;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.github.c0rwin.coreset.node.TreeMode;
 import java.io.BufferedReader;
@@ -25,7 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
-import java.util.function.Supplier;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -121,21 +119,11 @@ public final class CoordinatorCommand implements Callable<Integer> {
     @Option(names = "--auth-token-file", description = "File holding the nodes' shared auth token.")
     Path authTokenFile;
 
-    private final Supplier<AlgorithmResolver> resolver;
-
-    public CoordinatorCommand() {
-        this(ServiceLoaderAlgorithmResolver::load);
-    }
-
-    CoordinatorCommand(Supplier<AlgorithmResolver> resolver) {
-        this.resolver = resolver;
-    }
-
     @Override
     public Integer call() throws Exception {
         PrintWriter out = spec.commandLine().getOut();
         CoresetAlgorithm finalCompress = finalAlgorithm == null ? null
-                : resolver.get().resolve(finalAlgorithm, finalParams);
+                : CoresetAlgorithms.load().create(finalAlgorithm, finalParams);
         String sessionId = session != null ? session : UUID.randomUUID().toString();
         SessionSpec sessionSpec = new SessionSpec(algorithm, params, seed, workers, queueCapacity,
                 TreeMode.fromId(treeMode));

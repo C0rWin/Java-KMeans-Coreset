@@ -12,7 +12,7 @@ import io.github.c0rwin.coreset.grpc.cli.NodeCommand;
 import io.github.c0rwin.coreset.grpc.proto.StatsResponse;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.github.c0rwin.coreset.node.TreeMode;
-import io.github.c0rwin.coreset.node.testing.TestResolver;
+import io.github.c0rwin.coreset.node.testing.TestProvider;
 import io.grpc.ManagedChannel;
 import io.grpc.health.v1.HealthCheckRequest;
 import io.grpc.health.v1.HealthCheckResponse;
@@ -59,7 +59,7 @@ class NettyEndToEndTest {
             for (int i = 0; i < 3; i++) {
                 NodeCommand cmd = new NodeCommand();
                 new CommandLine(cmd).parseArgs("--port", "0", "--metrics-port", "0", "--shutdown-grace-ms", "500");
-                running.add(cmd.start(new TestResolver()));
+                running.add(cmd.start(TestProvider.registry()));
             }
             List<String> targets = running.stream().map(r -> "localhost:" + r.port()).toList();
             List<WeightedPoint> all = blobs(new SplittableRandom(11), 30_000);

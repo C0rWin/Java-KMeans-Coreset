@@ -7,15 +7,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
+import io.github.c0rwin.coreset.core.CoresetAlgorithmProvider;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.node.testing.TestData;
-import io.github.c0rwin.coreset.node.testing.TestResolver;
+import io.github.c0rwin.coreset.node.testing.TestProvider;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SplittableRandom;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,7 +39,7 @@ class NodeLimitsTest {
     }
 
     private CoresetNode node(NodeLimits limits, Map<String, CoresetAlgorithm> extra) {
-        node = new CoresetNode(new TestResolver(extra), MetricsSink.NOOP, Duration.ofMillis(200), limits);
+        node = new CoresetNode(TestProvider.registry(extra), MetricsSink.NOOP, Duration.ofMillis(200), limits);
         return node;
     }
 
@@ -62,10 +65,20 @@ class NodeLimitsTest {
     void shapeLimitsAreCheckedBeforeAnythingIsResolved() {
         AtomicInteger resolved = new AtomicInteger();
         CoresetAlgorithm counting = (input, rng, metrics) -> input;
-        CoresetNode n = new CoresetNode((id, params) -> {
-            resolved.incrementAndGet();
-            return counting;
-        }, MetricsSink.NOOP, Duration.ofMillis(200), NodeLimits.builder().maxQueueCapacity(8).maxParams(1).build());
+        CoresetAlgorithmProvider countingProvider = new CoresetAlgorithmProvider() {
+            @Override
+            public Set<String> ids() {
+                return Set.of("x");
+            }
+
+            @Override
+            public CoresetAlgorithm create(String id, Map<String, String> params) {
+                resolved.incrementAndGet();
+                return counting;
+            }
+        };
+        CoresetNode n = new CoresetNode(CoresetAlgorithms.of(countingProvider), MetricsSink.NOOP,
+                Duration.ofMillis(200), NodeLimits.builder().maxQueueCapacity(8).maxParams(1).build());
         node = n;
         assertThrows(IllegalArgumentException.class,
                 () -> n.createSession("q", new SessionSpec("x", Map.of(), 1L, 1, 16)));

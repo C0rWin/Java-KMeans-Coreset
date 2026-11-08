@@ -2,6 +2,7 @@ package io.github.c0rwin.coreset.bench.perf;
 
 import io.github.c0rwin.coreset.bench.Workloads;
 import io.github.c0rwin.coreset.core.Coreset;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.Distribution;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
@@ -13,7 +14,6 @@ import io.github.c0rwin.coreset.grpc.CoresetCoordinator;
 import io.github.c0rwin.coreset.grpc.CoresetNodeServer;
 import io.github.c0rwin.coreset.grpc.GatheredSnapshot;
 import io.github.c0rwin.coreset.grpc.IngestStream;
-import io.github.c0rwin.coreset.node.CoreAlgorithmsResolver;
 import io.github.c0rwin.coreset.node.CoresetNode;
 import io.github.c0rwin.coreset.node.IngestResult;
 import io.github.c0rwin.coreset.node.NodeMetricNames;
@@ -144,7 +144,7 @@ public final class NodeIngestHarness {
         int queue = Integer.parseInt(opts.get("queue"));
         int producers = Integer.parseInt(opts.get("producers"));
         long backoffNs = Long.parseLong(opts.get("busy-backoff-us")) * 1000L;
-        try (CoresetNode node = new CoresetNode(new CoreAlgorithmsResolver(), metrics)) {
+        try (CoresetNode node = new CoresetNode(CoresetAlgorithms.load(), metrics)) {
             node.createSession(SESSION, new SessionSpec(opts.get("algorithm"), algorithmParams(), 99L, workers, queue,
                     mode));
             AtomicLong busy = new AtomicLong();
@@ -244,7 +244,7 @@ public final class NodeIngestHarness {
         try {
             for (int i = 0; i < nodes; i++) {
                 RecordingMetrics m = new RecordingMetrics();
-                CoresetNode node = new CoresetNode(new CoreAlgorithmsResolver(), m);
+                CoresetNode node = new CoresetNode(CoresetAlgorithms.load(), m);
                 coreNodes.add(node);
                 nodeMetrics.add(m);
                 CoresetNodeServer server = CoresetNodeServer.start(

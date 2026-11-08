@@ -2,6 +2,7 @@ package io.github.c0rwin.coreset.testbed.run;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.algo.SampledCoreset;
@@ -16,7 +17,6 @@ import io.github.c0rwin.coreset.grpc.CoresetCoordinator;
 import io.github.c0rwin.coreset.grpc.CoresetNodeServer;
 import io.github.c0rwin.coreset.grpc.GatheredSnapshot;
 import io.github.c0rwin.coreset.grpc.IngestStream;
-import io.github.c0rwin.coreset.node.AlgorithmResolver;
 import io.github.c0rwin.coreset.node.CoresetNode;
 import io.github.c0rwin.coreset.node.IngestResult;
 import io.github.c0rwin.coreset.node.NodeSnapshot;
@@ -38,12 +38,12 @@ final class Builder {
     private static final long FINAL_REDUCE_SALT = 0xF1A1L;
     private static final long PRODUCER_SALT = 0x9D0CL;
 
-    private final AlgorithmResolver resolver;
+    private final CoresetAlgorithms algorithms;
     private final boolean exclusive;
 
     /** @param exclusive runs execute one at a time, so heap peaks and process CPU are attributable */
-    Builder(AlgorithmResolver resolver, boolean exclusive) {
-        this.resolver = resolver;
+    Builder(CoresetAlgorithms algorithms, boolean exclusive) {
+        this.algorithms = algorithms;
         this.exclusive = exclusive;
     }
 
@@ -89,8 +89,8 @@ final class Builder {
     Built build(Dataset ds, String algorithmId, Map<String, String> params, ModeSpec mode, long seed)
             throws Exception {
         return switch (mode.type()) {
-            case ModeSpec.OFFLINE -> offline(ds, resolver.resolve(algorithmId, params), seed);
-            case ModeSpec.STREAM -> stream(ds, resolver.resolve(algorithmId, params), mode, seed);
+            case ModeSpec.OFFLINE -> offline(ds, algorithms.create(algorithmId, params), seed);
+            case ModeSpec.STREAM -> stream(ds, algorithms.create(algorithmId, params), mode, seed);
             case ModeSpec.DISTRIBUTED -> distributed(ds, algorithmId, params, mode, seed);
             default -> throw new IllegalArgumentException("unknown mode " + mode.type());
         };
@@ -149,7 +149,7 @@ final class Builder {
         final int n = points.size();
         final int b = Math.min(mode.blockCount(), n);
         final int nodesCount = mode.nodes();
-        CoresetAlgorithm finalAlgorithm = resolver.resolve(algorithmId, params);
+        CoresetAlgorithm finalAlgorithm = algorithms.create(algorithmId, params);
         // Same producer id and per-node partitions on both transports, so they build the identical coreset.
         String producer = "testbed-" + Long.toHexString(Seeds.mix(seed, PRODUCER_SALT));
         SessionSpec spec = new SessionSpec(algorithmId, params, seed, mode.workers(),
@@ -161,7 +161,7 @@ final class Builder {
         RecordingMetrics wire = new RecordingMetrics();
         try {
             for (int i = 0; i < nodesCount; i++) {
-                nodes.add(new CoresetNode(resolver, metrics));
+                nodes.add(new CoresetNode(algorithms, metrics));
             }
             boolean grpc = mode.transport().equals("grpc");
             if (grpc) {

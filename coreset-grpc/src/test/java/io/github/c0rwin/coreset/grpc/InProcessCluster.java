@@ -3,7 +3,7 @@ package io.github.c0rwin.coreset.grpc;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
 import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import io.github.c0rwin.coreset.node.CoresetNode;
-import io.github.c0rwin.coreset.node.testing.TestResolver;
+import io.github.c0rwin.coreset.node.testing.TestProvider;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptor;
@@ -32,7 +32,7 @@ final class InProcessCluster implements AutoCloseable {
             throws IOException {
         for (int i = 0; i < n; i++) {
             RecordingMetrics m = new RecordingMetrics();
-            CoresetNode node = new CoresetNode(new TestResolver(extra), m, Duration.ofMillis(200));
+            CoresetNode node = new CoresetNode(TestProvider.registry(extra), m, Duration.ofMillis(200));
             CoresetNodeGrpcService service = new CoresetNodeGrpcService(node, () -> m.snapshot().toJson(),
                     CoresetNodeGrpcService.Config.defaults().withIngest(ingestWindow, Duration.ofMillis(1)));
             HealthStatusManager health = new HealthStatusManager();

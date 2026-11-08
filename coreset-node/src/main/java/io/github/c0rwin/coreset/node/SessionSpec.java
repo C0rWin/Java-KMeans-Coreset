@@ -6,7 +6,7 @@ import java.util.Objects;
 /**
  * Configuration of one ingestion session.
  *
- * @param algorithmId   id passed to the node's {@link AlgorithmResolver}
+ * @param algorithmId   id resolved by the node's {@link io.github.c0rwin.coreset.core.CoresetAlgorithms}
  * @param params        algorithm parameters (copied)
  * @param seed          root of every random choice in the session: batch {@code seq} of a producer is compressed with a
  *                      generator derived from {@code (seed, partition, producer, seq)}, worker {@code i} merges with

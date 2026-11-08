@@ -14,13 +14,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.SparseVector;
+import io.github.c0rwin.coreset.core.UnknownAlgorithmException;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricNames;
 import io.github.c0rwin.coreset.core.metrics.MetricsSnapshot;
 import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import io.github.c0rwin.coreset.node.testing.TestAlgorithms;
 import io.github.c0rwin.coreset.node.testing.TestData;
-import io.github.c0rwin.coreset.node.testing.TestResolver;
+import io.github.c0rwin.coreset.node.testing.TestProvider;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +53,7 @@ class CoresetNodeTest {
     }
 
     private CoresetNode node(Map<String, io.github.c0rwin.coreset.core.CoresetAlgorithm> extra) {
-        node = new CoresetNode(new TestResolver(extra), metrics, Duration.ofMillis(200));
+        node = new CoresetNode(TestProvider.registry(extra), metrics, Duration.ofMillis(200));
         return node;
     }
 

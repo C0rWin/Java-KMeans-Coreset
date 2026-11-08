@@ -5,11 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.grpc.proto.CloseSessionRequest;
 import io.github.c0rwin.coreset.grpc.proto.CoresetNodeServiceGrpc;
-import io.github.c0rwin.coreset.node.ServiceLoaderAlgorithmResolver;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import java.io.BufferedReader;
@@ -56,7 +56,7 @@ class CliTest {
             for (int i = 0; i < 2; i++) {
                 NodeCommand cmd = new NodeCommand();
                 new CommandLine(cmd).parseArgs("--port", "0", "--metrics-port", "-1");
-                nodes.add(cmd.start(ServiceLoaderAlgorithmResolver.load()));
+                nodes.add(cmd.start(CoresetAlgorithms.load()));
             }
             assertEquals(-1, nodes.get(0).metricsPort());
             Path input = dir.resolve("points.csv");
@@ -92,7 +92,7 @@ class CliTest {
     void coordinatorClosesItsSessionWhenTheRunFails(@TempDir Path dir) throws Exception {
         NodeCommand cmd = new NodeCommand();
         new CommandLine(cmd).parseArgs("--port", "0", "--metrics-port", "-1");
-        try (NodeCommand.Running node = cmd.start(ServiceLoaderAlgorithmResolver.load())) {
+        try (NodeCommand.Running node = cmd.start(CoresetAlgorithms.load())) {
             Path input = dir.resolve("bad.csv");
             Files.writeString(input, "1,2\n3,4\n5,6,7\n"); // the third line has the wrong width
             StringWriter err = new StringWriter();
