@@ -1,6 +1,8 @@
 package io.github.c0rwin.coreset.testbed.data;
 
 import io.github.c0rwin.coreset.core.Coreset;
+import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.util.List;
@@ -32,27 +34,32 @@ public record Dataset(String id, Coreset coreset, Coreset moments, int dim, long
         Objects.requireNonNull(benchmark, "benchmark");
     }
 
-    /**
-     * Wraps non-empty points; one pass computes nnz, weight and moments. The point list is copied once (by
-     * {@link Coreset}), points are shared.
-     */
+    /** Copies the points into one block ({@link PointBlock#of}), then wraps it like the {@link PointSet} form. */
     public static Dataset of(String id, List<WeightedPoint> points, String sha256, String license, String source,
+                             List<String> preprocessing, Optional<Esa22Benchmark> benchmark) {
+        return of(id, PointSet.of(PointBlock.of(points)), sha256, license, source, preprocessing, benchmark);
+    }
+
+    /** Wraps non-empty points without copying; one pass over the segments computes nnz, weight and moments. */
+    public static Dataset of(String id, PointSet points, String sha256, String license, String source,
                              List<String> preprocessing, Optional<Esa22Benchmark> benchmark) {
         if (points.isEmpty()) {
             throw new IllegalArgumentException("dataset " + id + " has no points");
         }
-        int dim = points.get(0).vector().dim();
+        int dim = points.dim();
         double[] first = new double[dim];
         long nnz = 0;
         double weight = 0.0;
         double second = 0.0;
-        for (int i = 0, n = points.size(); i < n; i++) {
-            WeightedPoint p = points.get(i);
-            double w = p.weight();
-            nnz += p.vector().nnz();
-            weight += w;
-            second += w * p.vector().squaredNorm();
-            p.vector().addTo(first, w);
+        for (int s = 0; s < points.segmentCount(); s++) {
+            PointBlock b = points.segment(s);
+            for (int i = 0, n = b.size(); i < n; i++) {
+                double w = b.weight(i);
+                nnz += b.nnz(i);
+                weight += w;
+                second += w * b.squaredNorm(i);
+                b.addTo(i, first, w);
+            }
         }
         if (!(weight > 0.0)) {
             throw new IllegalArgumentException("dataset " + id + " has no positive weight");

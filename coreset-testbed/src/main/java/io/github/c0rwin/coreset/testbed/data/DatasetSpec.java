@@ -13,9 +13,11 @@ import java.util.TreeMap;
  *   <li>{@code esa22}: {@code k, alpha}.</li>
  *   <li>{@code sparse-bow}: {@code n, d, topics, docLength}; optional {@code topicVocabulary} (d / topics),
  *       {@code topicMix} (0.8), {@code imbalance} (0), {@code seed} (1).</li>
- *   <li>{@code file}: {@code path}, {@code format} (dense, libsvm or wiki); optional {@code header} (auto, present,
+ *   <li>{@code file}: {@code path}, {@code format} (dense, libsvm, wiki or bow); optional {@code header} (auto, present,
  *       absent), {@code drop} (comma-separated column names or indices), {@code dim} (libsvm), {@code license}.</li>
- *   <li>{@code public}: {@code name} of a {@link PublicDataset}; read from the cache, downloaded only when allowed.</li>
+ *   <li>{@code public}: {@code name} of a {@link PublicDataset} and optional {@code variant} ({@code raw} default,
+ *       {@code zscore}, {@code tfidf}; see {@link Conversion.Variant}); read from the cache's binary conversion, which
+ *       is created on first use; downloaded only when allowed.</li>
  * </ul>
  *
  * @param id label used in reports; defaults to the public dataset name for {@code public}
