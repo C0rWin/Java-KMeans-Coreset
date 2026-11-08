@@ -1,0 +1,174 @@
+package io.github.c0rwin.coreset.core.algo;
+
+import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.PointSet;
+import io.github.c0rwin.coreset.core.WeightedPoint;
+import java.util.List;
+
+/**
+ * Turns a rough clustering B into per-point bounds {@code s_p} on the sensitivity
+ * {@code sigma_p = sup_Q w_p d(p, Q)^2 / cost(P, Q)}, as used by {@link SensitivityCoreset}.
+ *
+ * <p>Instances are immutable and thread-safe.
+ */
+public abstract class SensitivityBound {
+
+    /**
+     * Default alpha of {@link #standard}, chosen by measurement, not theory: on Gaussian mixtures with and without
+     * outliers (k 4-20, m 100-400, offline and 16-batch merge-reduce) it gave the lowest distortion and weight error
+     * of {1, 2, 16 (log2 k + 2)} and the legacy formula. The theory value {@link #kMeansPlusPlusAlpha} over-weights
+     * the distance terms and inflated merge-reduce distortion up to 8x on data with outliers. With this default s_p
+     * bounds the sensitivity only when the seeding is within a factor 2 of optimal, so Hoeffding intervals and
+     * a-priori sizes are heuristic; pass {@code kMeansPlusPlusAlpha(k)} where a guarantee is needed.
+     */
+    public static final double DEFAULT_ALPHA = 2.0;
+
+    private SensitivityBound() {
+    }
+
+    /**
+     * The bound of Bachem, Lucic and Krause, "Practical Coreset Constructions for Machine Learning" (2017), Lemma 2.2,
+     * in weighted form. For p in cluster B_i of B, with W_i its weight and {@code cost(B_i)} its cost:
+     * <pre>  s_p = 2 alpha w_p d(p, B)^2 / cost(B) + 4 alpha w_p cost(B_i) / (W_i cost(B)) + 4 w_p / W_i</pre>
+     * (only the last term when {@code cost(B) = 0}). It follows from {@code d(p, Q)^2 <= 2 d(p, b_i)^2 + 2 d(b_i, Q)^2},
+     * averaging the same inequality over B_i for {@code d(b_i, Q)^2}, and {@code cost(P, Q) >= cost(B) / alpha}, so
+     * {@code s_p >= sigma_p} holds whenever {@code cost(B) <= alpha * OPT_k}. The total is
+     * {@code S = 6 alpha + 4 * (non-empty clusters)}.
+     *
+     * @throws IllegalArgumentException unless {@code alpha} is finite and {@code >= 1}
+     */
+    public static SensitivityBound standard(double alpha) {
+        if (!(alpha >= 1.0) || Double.isInfinite(alpha)) {
+            throw new IllegalArgumentException("alpha must be finite and >= 1: " + alpha);
+        }
+        return new Standard(alpha);
+    }
+
+    /**
+     * {@code 16 (log2 k + 2)}, the approximation factor Bachem et al. (Section 2.4) derive for k-means++ seeding:
+     * Arthur and Vassilvitskii bound its expected cost by {@code 8 (log2 k + 2) OPT_k}, so by Markov's inequality one
+     * seeding is within this factor with probability at least 1/2. Lloyd steps and the extra centers of bicriteria
+     * seeding (whose first round is a k-means++ seeding) only lower cost(B), so the factor stays valid for them.
+     *
+     * @throws IllegalArgumentException if {@code k < 1}
+     */
+    public static double kMeansPlusPlusAlpha(int k) {
+        if (k < 1) {
+            throw new IllegalArgumentException("k must be >= 1: " + k);
+        }
+        return 16.0 * (Math.log(k) / Math.log(2.0) + 2.0);
+    }
+
+    /**
+     * The formula used before {@link #standard}: {@code s_p = 8 w_p / W_i + 2 w_p d(p, B)^2 / cost(B)}, total
+     * {@code 8 * clusters + 2}. It omits B's approximation factor and bounds {@code sigma_p} only when B is optimal,
+     * so Hoeffding intervals and a-priori sizes built on it carry no guarantee. Kept for comparison.
+     */
+    public static SensitivityBound legacy() {
+        return Legacy.INSTANCE;
+    }
+
+    /** {@link #sensitivities(PointSet, Clustering)} on a copy of {@code points} in one block. */
+    public final double[] sensitivities(List<WeightedPoint> points, Clustering b) {
+        return sensitivities(PointSet.of(PointBlock.of(points)), b);
+    }
+
+    /**
+     * Per-point bounds for {@code points} under the clustering {@code b} of the same points (zero for zero-weight
+     * points), as a new array; {@code b} is not modified. One pass when {@code b} comes from a {@link Seeding}
+     * (which supplies the per-cluster totals), else two.
+     */
+    public final double[] sensitivities(PointSet points, Clustering b) {
+        double[] s = new double[points.size()];
+        fill(points, b, s);
+        return s;
+    }
+
+    /**
+     * Writes the bounds into {@code out} in one pass (two without per-cluster totals) and returns their sum, added
+     * in row order. {@code out} may be {@code b.squaredDistances}: each entry is read before it is overwritten.
+     */
+    final double fill(PointSet points, Clustering b, double[] out) {
+        final int n = points.size();
+        if (b.assignment.length != n || out.length != n) {
+            throw new IllegalArgumentException("clustering has " + b.assignment.length + " points, output "
+                    + out.length + ", input " + n);
+        }
+        double[] clusterWeight = b.clusterWeights;
+        double[] clusterCost = b.clusterCosts;
+        if (clusterWeight == null) {
+            clusterWeight = new double[b.centers().size()];
+            clusterCost = new double[clusterWeight.length];
+            for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+                PointBlock p = points.segment(t);
+                for (int i = 0, rows = p.size(); i < rows; i++, g++) {
+                    double w = p.weight(i);
+                    if (w > 0.0) {
+                        int c = b.assignment[g];
+                        clusterWeight[c] += w;
+                        clusterCost[c] += w * b.squaredDistances[g];
+                    }
+                }
+            }
+        }
+        final double costB = b.cost();
+        double total = 0.0;
+        for (int t = 0, g = 0; t < points.segmentCount(); t++) {
+            PointBlock p = points.segment(t);
+            for (int i = 0, rows = p.size(); i < rows; i++, g++) {
+                double w = p.weight(i);
+                double s = 0.0;
+                if (w > 0.0) {
+                    int c = b.assignment[g];
+                    s = bound(w, b.squaredDistances[g], clusterWeight[c], clusterCost[c], costB);
+                }
+                out[g] = s;
+                total += s;
+            }
+        }
+        return total;
+    }
+
+    /** {@code s_p} for weight w, squared distance d2 to B, its cluster's weight and cost, and cost(B). */
+    abstract double bound(double w, double d2, double clusterWeight, double clusterCost, double costB);
+
+    private static final class Standard extends SensitivityBound {
+        private final double alpha;
+
+        Standard(double alpha) {
+            this.alpha = alpha;
+        }
+
+        @Override
+        double bound(double w, double d2, double clusterWeight, double clusterCost, double costB) {
+            double s = 4.0 * w / clusterWeight;
+            if (costB > 0.0) {
+                s += 2.0 * alpha * w * d2 / costB + 4.0 * alpha * w * clusterCost / (clusterWeight * costB);
+            }
+            return s;
+        }
+
+        @Override
+        public String toString() {
+            return "standard(alpha=" + alpha + ")";
+        }
+    }
+
+    private static final class Legacy extends SensitivityBound {
+        static final Legacy INSTANCE = new Legacy();
+
+        @Override
+        double bound(double w, double d2, double clusterWeight, double clusterCost, double costB) {
+            double s = 8.0 * w / clusterWeight;
+            if (costB > 0.0) {
+                s += 2.0 * w * d2 / costB;
+            }
+            return s;
+        }
+
+        @Override
+        public String toString() {
+            return "legacy";
+        }
+    }
+}

@@ -1,0 +1,53 @@
+---
+# Quick end-to-end check of every dataset kind, algorithm and mode
+# (about a minute on a laptop).
+name: smoke
+problem: kmeans
+seed: 42
+replicates: 2
+datasets:
+  - id: gauss-unbalanced-20k
+    type: gaussian-mixture
+    params:
+      n: 20000
+      d: 10
+      clusters: 10
+      sigma: 3
+      imbalance: 1.5
+      seed: 7
+  - id: esa22-k8-a4
+    type: esa22
+    params: {k: 8, alpha: 4}
+  - id: sparse-bow-5k
+    type: sparse-bow
+    params: {n: 5000, d: 5000, topics: 10, docLength: 40, seed: 11}
+ks: [8]
+sizes: [100, 400]
+algorithms:
+  - id: uniform
+  - id: sensitivity
+    label: sensitivity-kmeans++
+    params: {seeding: kmeans++}
+  - id: sensitivity
+    label: sensitivity-bicriteria
+    params: {seeding: bicriteria}
+  - id: mean
+    label: mean
+    params: {lloydIterations: 5}
+modes:
+  - type: offline
+  - type: stream
+    blockCount: 16
+  - type: distributed
+    nodes: 4
+    blockCount: 16
+  - type: distributed
+    transport: grpc
+    nodes: 2
+    blockCount: 8
+evaluation:
+  candidatesPerGenerator: 3
+  lloydOnCoreset: 2
+  downstreamRestarts: 5
+  fullRestarts: 2
+  lloydIterations: 30

@@ -1,0 +1,81 @@
+package io.github.c0rwin.coreset.grpc;
+
+import java.time.Duration;
+import java.util.Objects;
+
+/**
+ * Client-side knobs of {@link CoresetCoordinator}.
+ *
+ * @param maxInFlightPerNode   unacknowledged batches allowed per node stream; {@code submit} blocks beyond it
+ * @param rpcDeadline          deadline of every unary call (added to any snapshot await time)
+ * @param streamDeadline       lifetime of one ingest stream; on expiry the stream is reopened and unacknowledged
+ *                             batches are resent with their original seqs
+ * @param initialBackoff       first delay before resending a BUSY batch or reopening a broken stream; doubles per
+ *                             consecutive attempt
+ * @param maxBackoff           cap of the backoff
+ * @param maxTransportFailures consecutive stream failures without any accepted batch before the ingest is failed
+ * @param maxMessageBytes      message limit; inbound it bounds snapshot responses, outbound the batches (which the
+ *                             node accepts only up to its own inbound limit)
+ * @param maxBusy              how long one batch may keep being answered BUSY before the ingest is failed
+ * @param submitTimeout        how long {@code submit} waits for in-flight capacity before failing the ingest
+ * @param maxDim               largest vector dimension accepted in node responses
+ * @param costShardsPerNode    raw-point cost shards in flight per node during {@code cost(centers, points, ...)}
+ */
+public record CoordinatorOptions(int maxInFlightPerNode, Duration rpcDeadline, Duration streamDeadline,
+                                 Duration initialBackoff, Duration maxBackoff, int maxTransportFailures,
+                                 int maxMessageBytes, Duration maxBusy, Duration submitTimeout, int maxDim,
+                                 int costShardsPerNode) {
+
+    /** Snapshots of large sessions exceed gRPC's 4 MiB default; the node caps them by point count. */
+    public static final int DEFAULT_MAX_MESSAGE_BYTES = 256 * 1024 * 1024;
+
+    public CoordinatorOptions {
+        Objects.requireNonNull(rpcDeadline, "rpcDeadline");
+        Objects.requireNonNull(streamDeadline, "streamDeadline");
+        Objects.requireNonNull(initialBackoff, "initialBackoff");
+        Objects.requireNonNull(maxBackoff, "maxBackoff");
+        Objects.requireNonNull(maxBusy, "maxBusy");
+        Objects.requireNonNull(submitTimeout, "submitTimeout");
+        if (maxInFlightPerNode < 1) {
+            throw new IllegalArgumentException("maxInFlightPerNode must be >= 1: " + maxInFlightPerNode);
+        }
+        if (maxTransportFailures < 1) {
+            throw new IllegalArgumentException("maxTransportFailures must be >= 1: " + maxTransportFailures);
+        }
+        if (initialBackoff.isNegative() || maxBackoff.compareTo(initialBackoff) < 0) {
+            throw new IllegalArgumentException("need 0 <= initialBackoff <= maxBackoff");
+        }
+        if (maxBusy.isNegative() || submitTimeout.isNegative() || maxDim < 1 || costShardsPerNode < 1) {
+            throw new IllegalArgumentException("maxBusy, submitTimeout >= 0 and maxDim, costShardsPerNode >= 1");
+        }
+    }
+
+    public static CoordinatorOptions defaults() {
+        return new CoordinatorOptions(16, Duration.ofSeconds(30), Duration.ofMinutes(10), Duration.ofMillis(1),
+                Duration.ofMillis(250), 8, DEFAULT_MAX_MESSAGE_BYTES, Duration.ofMinutes(5), Duration.ofMinutes(10),
+                1 << 24, 2);
+    }
+
+    public CoordinatorOptions withMaxInFlightPerNode(int n) {
+        return new CoordinatorOptions(n, rpcDeadline, streamDeadline, initialBackoff, maxBackoff,
+                maxTransportFailures, maxMessageBytes, maxBusy, submitTimeout, maxDim, costShardsPerNode);
+    }
+
+    public CoordinatorOptions withStreamDeadline(Duration d) {
+        return new CoordinatorOptions(maxInFlightPerNode, rpcDeadline, d, initialBackoff, maxBackoff,
+                maxTransportFailures, maxMessageBytes, maxBusy, submitTimeout, maxDim, costShardsPerNode);
+    }
+
+    public CoordinatorOptions withBusyAndSubmitLimits(Duration busy, Duration submit) {
+        return new CoordinatorOptions(maxInFlightPerNode, rpcDeadline, streamDeadline, initialBackoff, maxBackoff,
+                maxTransportFailures, maxMessageBytes, busy, submit, maxDim, costShardsPerNode);
+    }
+
+    long backoffNanos(int attempt) {
+        long base = initialBackoff.toNanos();
+        long cap = maxBackoff.toNanos();
+        int shift = Math.min(Math.max(attempt - 1, 0), 30);
+        long d = base << shift;
+        return d < 0 || d > cap ? cap : d;
+    }
+}
