@@ -15,7 +15,10 @@ import io.github.c0rwin.coreset.testbed.problem.Centers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.SplittableRandom;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
+import java.util.function.IntFunction;
+import java.util.stream.IntStream;
 
 /**
  * A dataset prepared once for every fault experiment on it: the ESA'22 candidate pool plus the best-of-N Lloyd
@@ -97,13 +100,37 @@ final class Instance {
 
     static Instance prepare(String id, Dataset ds, int k, int perGenerator, int lloydIterations, int restarts,
                             long seed, ForkJoinPool pool) {
+        return prepare(id, ds, k, perGenerator, lloydIterations, restarts, seed, pool, false);
+    }
+
+    /**
+     * With {@code parallel}, the k-means++ candidates and the reference restarts run as independent pool tasks, each
+     * with its own derived generator (large real datasets); otherwise one generator serves every step in order.
+     */
+    static Instance prepare(String id, Dataset ds, int k, int perGenerator, int lloydIterations, int restarts,
+                            long seed, ForkJoinPool pool, boolean parallel) {
         long t0 = System.nanoTime();
         SplittableRandom rng = new SplittableRandom(seed);
         List<Candidate> cands = new ArrayList<>();
-        cands.addAll(CandidateSolutions.kMeansPlusPlusOnFull(ds.coreset(), k, perGenerator, rng));
-        cands.addAll(CandidateSolutions.convexCombinationsOfBicriteria(ds.coreset(), k, perGenerator, rng));
         PointSet pts = ds.coreset().pointSet();
-        KMeansResult best = WeightedLloyd.bestOf(pts, k, lloydIterations, restarts, rng, MetricsSink.NOOP);
+        KMeansResult best;
+        if (parallel && pool != null) {
+            List<Candidate> seeds = submit(pool, perGenerator, i -> new Candidate("kmeans++@P#" + i,
+                    CandidateSolutions.kMeansPlusPlusOnFull(ds.coreset(), k, 1,
+                            new SplittableRandom(LabSeeds.of(seed, "kmeans++", i, 0))).get(0).centers()));
+            cands.addAll(seeds);
+            cands.addAll(CandidateSolutions.convexCombinationsOfBicriteria(ds.coreset(), k, perGenerator, rng));
+            List<KMeansResult> runs = submit(pool, restarts, i -> WeightedLloyd.bestOf(pts, k, lloydIterations, 1,
+                    new SplittableRandom(LabSeeds.of(seed, "reference", i, 0)), MetricsSink.NOOP));
+            best = runs.get(0);
+            for (KMeansResult r : runs) {
+                best = r.cost() < best.cost() ? r : best;
+            }
+        } else {
+            cands.addAll(CandidateSolutions.kMeansPlusPlusOnFull(ds.coreset(), k, perGenerator, rng));
+            cands.addAll(CandidateSolutions.convexCombinationsOfBicriteria(ds.coreset(), k, perGenerator, rng));
+            best = WeightedLloyd.bestOf(pts, k, lloydIterations, restarts, rng, MetricsSink.NOOP);
+        }
         cands.add(new Candidate(REFERENCE, best.centers()));
         List<String> labels = new ArrayList<>();
         List<Centers> centers = new ArrayList<>();
@@ -120,6 +147,17 @@ final class Instance {
         }
         return new Instance(id, ds, k, labels, centers, table, s, total, best.assignment(),
                 (System.nanoTime() - t0) / 1e6);
+    }
+
+    private static <T> List<T> submit(ForkJoinPool pool, int count, IntFunction<T> task) {
+        try {
+            return pool.submit(() -> IntStream.range(0, count).parallel().mapToObj(task).toList()).get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted", e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException("instance preparation failed", e.getCause());
+        }
     }
 
     int candidates() {

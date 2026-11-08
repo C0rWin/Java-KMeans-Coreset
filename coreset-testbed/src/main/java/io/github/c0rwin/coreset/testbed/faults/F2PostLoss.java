@@ -56,7 +56,7 @@ final class F2PostLoss {
         }
     }
 
-    private static List<Recorder.Row> runSeed(FaultLab lab, Instance inst, Kind kind, int n, int m, int reps, int s,
+    static List<Recorder.Row> runSeed(FaultLab lab, Instance inst, Kind kind, int n, int m, int reps, int s,
                                               boolean solve) {
         Placement pl = new Placement(inst, Partitions.split(kind, inst.cluster, inst.points, n,
                 F1NodeLoss.partitionRng(lab, inst, kind, n, s)));

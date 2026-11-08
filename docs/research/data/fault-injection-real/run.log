@@ -1,0 +1,174 @@
+[    0.0s] REAL: start
+[   15.9s] instance covertype-k10: n=581012 d=54 k=10 smax/S=0.000476 S=52.0 smallest cluster=6575 (15.8 s)
+[   17.4s] F1 raw covertype-k10 done
+[   29.2s] F1 pipeline covertype-k10 random done
+[   40.6s] F1 pipeline covertype-k10 cluster-sorted done
+[   48.8s] F3 sample covertype-k10 done
+[   50.3s] F3 sweep covertype-k10 done
+[  181.9s] REAL covertype-k10 done
+[  208.0s] instance covertype-k25: n=581012 d=54 k=25 smax/S=0.0119 S=112.0 smallest cluster=474 (26.2 s)
+[  209.0s] F1 raw covertype-k25 done
+[  232.3s] F1 pipeline covertype-k25 random done
+[  248.7s] F1 pipeline covertype-k25 cluster-sorted done
+[  262.1s] F3 sample covertype-k25 done
+[  265.0s] F3 sweep covertype-k25 done
+[  457.7s] REAL covertype-k25 done
+[  532.4s] instance census1990-k10: n=2458285 d=68 k=10 smax/S=1.21e-05 S=52.0 smallest cluster=105494 (74.7 s)
+[  536.5s] F1 raw census1990-k10 done
+[  569.2s] F1 pipeline census1990-k10 random done
+[  605.0s] F1 pipeline census1990-k10 cluster-sorted done
+[  639.4s] F3 sample census1990-k10 done
+[  647.3s] F3 sweep census1990-k10 done
+[  661.7s] instance census1990-500k-k10: n=500000 d=68 k=10 smax/S=1.93e-05 S=52.0 smallest cluster=785 (14.4 s)
+[  753.5s] REAL census1990-k10 done
+[  910.6s] instance census1990-k25: n=2458285 d=68 k=25 smax/S=7.28e-06 S=112.0 smallest cluster=3711 (157.1 s)
+[  914.9s] F1 raw census1990-k25 done
+[  980.7s] F1 pipeline census1990-k25 random done
+[ 1051.2s] F1 pipeline census1990-k25 cluster-sorted done
+[ 1124.4s] F3 sample census1990-k25 done
+[ 1141.3s] F3 sweep census1990-k25 done
+[ 1172.7s] instance census1990-500k-k25: n=500000 d=68 k=25 smax/S=4.65e-05 S=112.0 smallest cluster=352 (31.4 s)
+[ 1382.2s] REAL census1990-k25 done
+[ 1435.2s] instance kddcup99-k10: n=4898431 d=38 k=10 smax/S=0.00735 S=52.0 smallest cluster=1 (53.0 s)
+[ 1440.9s] F1 raw kddcup99-k10 done
+[ 1470.1s] F1 pipeline kddcup99-k10 random done
+[ 1497.7s] F1 pipeline kddcup99-k10 cluster-sorted done
+[ 1543.7s] F3 sample kddcup99-k10 done
+[ 1552.9s] F3 sweep kddcup99-k10 done
+[ 1558.1s] instance kddcup99-500k-k10: n=500000 d=38 k=10 smax/S=0.0192 S=52.0 smallest cluster=4 (5.2 s)
+[ 1620.0s] REAL kddcup99-k10 done
+[ 1758.8s] instance kddcup99-k25: n=4898431 d=38 k=25 smax/S=0.0357 S=112.0 smallest cluster=1 (138.8 s)
+[ 1767.1s] F1 raw kddcup99-k25 done
+[ 1851.3s] F1 pipeline kddcup99-k25 random done
+[ 1923.6s] F1 pipeline kddcup99-k25 cluster-sorted done
+[ 2027.8s] F3 sample kddcup99-k25 done
+[ 2050.8s] F3 sweep kddcup99-k25 done
+[ 2060.0s] instance kddcup99-500k-k25: n=500000 d=38 k=25 smax/S=0.0357 S=112.0 smallest cluster=1 (9.2 s)
+[ 2158.2s] REAL kddcup99-k25 done
+[ 2177.0s] instance higgs-1m-k10: n=1000000 d=28 k=10 smax/S=8.96e-06 S=52.0 smallest cluster=21955 (18.9 s)
+[ 2178.6s] F1 raw higgs-1m-k10 done
+[ 2188.4s] F1 pipeline higgs-1m-k10 random done
+[ 2198.1s] F1 pipeline higgs-1m-k10 cluster-sorted done
+[ 2205.3s] F3 sample higgs-1m-k10 done
+[ 2206.7s] F3 sweep higgs-1m-k10 done
+[ 2215.2s] instance higgs-500k-k10: n=500000 d=28 k=10 smax/S=2.11e-05 S=52.0 smallest cluster=10669 (8.4 s)
+[ 2264.9s] REAL higgs-1m-k10 done
+[ 2307.5s] instance higgs-1m-k25: n=1000000 d=28 k=25 smax/S=7.76e-06 S=112.0 smallest cluster=5150 (42.6 s)
+[ 2309.2s] F1 raw higgs-1m-k25 done
+[ 2331.5s] F1 pipeline higgs-1m-k25 random done
+[ 2352.9s] F1 pipeline higgs-1m-k25 cluster-sorted done
+[ 2367.9s] F3 sample higgs-1m-k25 done
+[ 2372.2s] F3 sweep higgs-1m-k25 done
+[ 2394.1s] instance higgs-500k-k25: n=500000 d=28 k=25 smax/S=7.75e-05 S=112.0 smallest cluster=2289 (22.0 s)
+[ 2498.6s] REAL higgs-1m-k25 done
+[ 2697.4s] instance higgs-k10: n=11000000 d=28 k=10 smax/S=1.75e-06 S=52.0 smallest cluster=240020 (198.9 s)
+[ 2716.1s] F3 sweep higgs-k10 done
+[ 2716.1s] VERDICT REAL/covertype-k10/A1 kappa law: PASS | calibration 0.985, 0.945, 0.993
+[ 2716.1s] VERDICT REAL/covertype-k10/A1 s_max shape: FAIL | ratio 2.70 (exact law 2.65); c = 0.361 at phi=1/8 with s_max/S = 0.000476
+[ 2716.1s] VERDICT REAL/covertype-k10/A1 downstream: PASS | 1.0060 (no loss 1.0063, max 1.0102)
+[ 2716.1s] VERDICT REAL/covertype-k10/A1' cluster-sorted: FAIL | P[ds > 2] = 0.00 vs P[whole cluster lost] = 0.58; P[> 2 | whole] = 0.00; max ds 1.15
+[ 2716.1s] VERDICT REAL/covertype-k10/F2/A3: PASS | 8/8 loss-rate cells within 20%; error ratio 0.71
+[ 2716.1s] VERDICT REAL/covertype-k10/F3/B1 slope: PASS | m=1000: 0.428 [0.273, 0.584]; m=4000: 0.503 [0.352, 0.655]
+[ 2716.1s] VERDICT REAL/covertype-k10/F3/C3 rateless: FAIL | m=1000: slope -0.194 [-0.373, -0.008]
+[ 2716.1s] VERDICT REAL/covertype-k10/F3/B1 bursts: PASS | GE/Bernoulli mean excess 1.045; sd 0.0545 vs 0.0464
+[ 2716.1s] VERDICT REAL/covertype-k10/F3/B2 formula: PASS | split 0.0259 (B2 0.0241), merged 0.0249 (B2 0.0260), floor 0.0098, kappa_pt 0.000222
+[ 2716.1s] VERDICT REAL/covertype-k10/F5/E1 random order: INCONCLUSIVE | covertype-k10: m=1000 slope 0.46 [-0.14, 1.03], m=4000 -0.29 [-0.93, 0.40]
+[ 2716.1s] VERDICT REAL/covertype-k10/F5/E1 kappa: PASS | Var = 0.034 (S/m) sum kappa, R^2 0.957
+[ 2716.1s] VERDICT REAL/covertype-k25/A1 kappa law: PASS | calibration 1.124, 1.082, 0.875
+[ 2716.1s] VERDICT REAL/covertype-k25/A1 s_max shape: FAIL | ratio 1.90 (exact law 2.65); c = 0.129 at phi=1/8 with s_max/S = 0.0119
+[ 2716.1s] VERDICT REAL/covertype-k25/A1 downstream: PASS | 1.0093 (no loss 1.0093, max 1.0203)
+[ 2716.1s] VERDICT REAL/covertype-k25/A1' cluster-sorted: FAIL | P[ds > 2] = 0.00 vs P[whole cluster lost] = 0.92; P[> 2 | whole] = 0.00; max ds 1.38
+[ 2716.1s] VERDICT REAL/covertype-k25/F2/A3: PASS | 8/8 loss-rate cells within 20%; error ratio 0.85
+[ 2716.1s] VERDICT REAL/covertype-k25/F3/B1 slope: PASS | m=1000: 0.537 [0.401, 0.671]; m=4000: 0.570 [0.460, 0.672]
+[ 2716.1s] VERDICT REAL/covertype-k25/F3/C3 rateless: PASS | m=1000: slope -0.013 [-0.163, 0.141]
+[ 2716.1s] VERDICT REAL/covertype-k25/F3/B1 bursts: PASS | GE/Bernoulli mean excess 1.016; sd 0.0587 vs 0.0578
+[ 2716.1s] VERDICT REAL/covertype-k25/F3/B2 formula: PASS | split 0.0318 (B2 0.0308), merged 0.0328 (B2 0.0346), floor 0.0157, kappa_pt 0.000574
+[ 2716.2s] VERDICT REAL/covertype-k25/F5/E1 random order: PASS | covertype-k25: m=1000 slope 0.05 [-0.50, 0.61], m=4000 0.14 [-0.30, 0.53]
+[ 2716.2s] VERDICT REAL/covertype-k25/F5/E1 kappa: PASS | Var = 0.024 (S/m) sum kappa, R^2 0.979
+[ 2716.2s] VERDICT REAL/census1990-k10/A1 kappa law: PASS | calibration 0.981, 0.953, 1.029
+[ 2716.2s] VERDICT REAL/census1990-k10/A1 s_max shape: FAIL | ratio 2.76 (exact law 2.65); c = 0.093 at phi=1/8 with s_max/S = 1.21e-05
+[ 2716.2s] VERDICT REAL/census1990-k10/A1 downstream: PASS | 0.9915 (no loss 0.9904, max 1.0051)
+[ 2716.2s] VERDICT REAL/census1990-k10/A1' cluster-sorted: FAIL | P[ds > 2] = 0.00 vs P[whole cluster lost] = 0.30; P[> 2 | whole] = 0.00; max ds 1.15
+[ 2716.2s] VERDICT REAL/census1990-k10/F2/A3: PASS | 8/8 loss-rate cells within 20%; error ratio 0.85
+[ 2716.2s] VERDICT REAL/census1990-k10/F3/B1 slope: PASS | m=1000: 0.425 [0.299, 0.544]; m=4000: 0.490 [0.375, 0.616]
+[ 2716.2s] VERDICT REAL/census1990-k10/F3/C3 rateless: PASS | m=1000: slope 0.035 [-0.102, 0.181]
+[ 2716.2s] VERDICT REAL/census1990-k10/F3/B1 bursts: PASS | GE/Bernoulli mean excess 1.051; sd 0.0235 vs 0.0209
+[ 2716.2s] VERDICT REAL/census1990-k10/F3/B2 formula: PASS | split 0.0137 (B2 0.0158), merged 0.0181 (B2 0.0158), floor 0.0007, kappa_pt 9.98e-07
+[ 2716.2s] VERDICT REAL/census1990-k10/F5/E1 random order: INCONCLUSIVE | census1990-500k-k10: m=1000 slope 0.34 [-0.11, 0.79], m=4000 -0.22 [-0.66, 0.23]
+[ 2716.2s] VERDICT REAL/census1990-k10/F5/E1 kappa: PASS | Var = 0.014 (S/m) sum kappa, R^2 0.960
+[ 2716.2s] VERDICT REAL/census1990-k25/A1 kappa law: PASS | calibration 0.988, 0.897, 0.954
+[ 2716.2s] VERDICT REAL/census1990-k25/A1 s_max shape: FAIL | ratio 2.76 (exact law 2.65); c = 0.110 at phi=1/8 with s_max/S = 7.28e-06
+[ 2716.2s] VERDICT REAL/census1990-k25/A1 downstream: PASS | 1.0148 (no loss 1.0116, max 1.0356)
+[ 2716.2s] VERDICT REAL/census1990-k25/A1' cluster-sorted: FAIL | P[ds > 2] = 0.00 vs P[whole cluster lost] = 0.90; P[> 2 | whole] = 0.00; max ds 1.41
+[ 2716.2s] VERDICT REAL/census1990-k25/F2/A3: PASS | 8/8 loss-rate cells within 20%; error ratio 0.97
+[ 2716.2s] VERDICT REAL/census1990-k25/F3/B1 slope: PASS | m=1000: 0.433 [0.314, 0.558]; m=4000: 0.549 [0.434, 0.675]
+[ 2716.2s] VERDICT REAL/census1990-k25/F3/C3 rateless: FAIL | m=1000: slope -0.155 [-0.295, -0.021]
+[ 2716.2s] VERDICT REAL/census1990-k25/F3/B1 bursts: PASS | GE/Bernoulli mean excess 0.983; sd 0.0321 vs 0.0283
+[ 2716.2s] VERDICT REAL/census1990-k25/F3/B2 formula: PASS | split 0.0129 (B2 0.0157), merged 0.0145 (B2 0.0157), floor 0.0006, kappa_pt 9.00e-07
+[ 2716.2s] VERDICT REAL/census1990-k25/F5/E1 random order: INCONCLUSIVE | census1990-500k-k25: m=1000 slope 0.30 [-0.26, 0.91], m=4000 -0.42 [-0.85, 0.03]
+[ 2716.2s] VERDICT REAL/census1990-k25/F5/E1 kappa: PASS | Var = 0.009 (S/m) sum kappa, R^2 0.972
+[ 2716.2s] VERDICT REAL/kddcup99-k10/A1 kappa law: PASS | calibration 0.960, 1.013, 0.968
+[ 2716.2s] VERDICT REAL/kddcup99-k10/A1 s_max shape: FAIL | ratio 2.63 (exact law 2.65); c = 0.508 at phi=1/8 with s_max/S = 0.00735
+[ 2716.2s] VERDICT REAL/kddcup99-k10/A1 downstream: PASS | 1.0169 (no loss 1.0119, max 1.0621)
+[ 2716.2s] VERDICT REAL/kddcup99-k10/A1' cluster-sorted: FAIL | P[ds > 2] = 0.00 vs P[whole cluster lost] = 0.58; P[> 2 | whole] = 0.00; max ds 1.86
+[ 2716.2s] VERDICT REAL/kddcup99-k10/F2/A3: PASS | 8/8 loss-rate cells within 20%; error ratio 1.03
+[ 2716.2s] VERDICT REAL/kddcup99-k10/F3/B1 slope: PASS | m=1000: 0.586 [0.459, 0.710]; m=4000: 0.572 [0.432, 0.699]
+[ 2716.2s] VERDICT REAL/kddcup99-k10/F3/C3 rateless: PASS | m=1000: slope 0.124 [-0.026, 0.286]
+[ 2716.2s] VERDICT REAL/kddcup99-k10/F3/B1 bursts: PASS | GE/Bernoulli mean excess 0.959; sd 0.0669 vs 0.0701
+[ 2716.2s] VERDICT REAL/kddcup99-k10/F3/B2 formula: PASS | split 0.0324 (B2 0.0294), merged 0.0953 (B2 0.0878), floor 0.0827, kappa_pt 0.0160
+[ 2716.3s] VERDICT REAL/kddcup99-k10/F5/E1 random order: FAIL | kddcup99-500k-k10: m=1000 slope 0.54 [0.08, 1.04], m=4000 0.14 [-0.38, 0.60]
+[ 2716.3s] VERDICT REAL/kddcup99-k10/F5/E1 kappa: PASS | Var = 0.051 (S/m) sum kappa, R^2 0.955
+[ 2716.3s] VERDICT REAL/kddcup99-k25/A1 kappa law: PASS | calibration 0.876, 1.048, 1.028
+[ 2716.3s] VERDICT REAL/kddcup99-k25/A1 s_max shape: PASS | ratio 3.22 (exact law 2.65); c = 0.146 at phi=1/8 with s_max/S = 0.0357
+[ 2716.3s] VERDICT REAL/kddcup99-k25/A1 downstream: PASS | 1.0038 (no loss 0.9828, max 1.1248)
+[ 2716.3s] VERDICT REAL/kddcup99-k25/A1' cluster-sorted: FAIL | P[ds > 2] = 0.60 vs P[whole cluster lost] = 0.82; P[> 2 | whole] = 0.73; max ds 6.95
+[ 2716.3s] VERDICT REAL/kddcup99-k25/F2/A3: PASS | 8/8 loss-rate cells within 20%; error ratio 0.97
+[ 2716.3s] VERDICT REAL/kddcup99-k25/F3/B1 slope: PASS | m=1000: 0.516 [0.388, 0.635]; m=4000: 0.542 [0.419, 0.662]
+[ 2716.3s] VERDICT REAL/kddcup99-k25/F3/C3 rateless: PASS | m=1000: slope 0.030 [-0.112, 0.174]
+[ 2716.3s] VERDICT REAL/kddcup99-k25/F3/B1 bursts: PASS | GE/Bernoulli mean excess 1.020; sd 0.0785 vs 0.0776
+[ 2716.3s] VERDICT REAL/kddcup99-k25/F3/B2 formula: PASS | split 0.0307 (B2 0.0309), merged 0.0604 (B2 0.0560), floor 0.0468, kappa_pt 0.00510
+[ 2716.3s] VERDICT REAL/kddcup99-k25/F5/E1 random order: PASS | kddcup99-500k-k25: m=1000 slope 0.24 [-0.17, 0.71], m=4000 0.12 [-0.31, 0.54]
+[ 2716.3s] VERDICT REAL/kddcup99-k25/F5/E1 kappa: PASS | Var = 0.036 (S/m) sum kappa, R^2 0.945
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/A1 kappa law: PASS | calibration 1.004, 0.987, 0.932
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/A1 s_max shape: FAIL | ratio 2.57 (exact law 2.65); c = 0.121 at phi=1/8 with s_max/S = 8.96e-06
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/A1 downstream: PASS | 1.0045 (no loss 1.0037, max 1.0070)
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/A1' cluster-sorted: FAIL | P[ds > 2] = 0.00 vs P[whole cluster lost] = 0.45; P[> 2 | whole] = 0.00; max ds 1.12
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/F2/A3: PASS | 8/8 loss-rate cells within 20%; error ratio 0.86
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/F3/B1 slope: PASS | m=1000: 0.416 [0.296, 0.542]; m=4000: 0.425 [0.307, 0.543]
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/F3/C3 rateless: PASS | m=1000: slope 0.018 [-0.115, 0.157]
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/F3/B1 bursts: PASS | GE/Bernoulli mean excess 1.035; sd 0.0177 vs 0.0172
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/F3/B2 formula: PASS | split 0.0146 (B2 0.0124), merged 0.0118 (B2 0.0124), floor 0.0008, kappa_pt 1.62e-06
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/F5/E1 random order: FAIL | higgs-500k-k10: m=1000 slope 0.05 [-0.35, 0.47], m=4000 0.58 [0.05, 1.15]
+[ 2716.3s] VERDICT REAL/higgs-1m-k10/F5/E1 kappa: PASS | Var = 0.008 (S/m) sum kappa, R^2 0.983
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/A1 kappa law: PASS | calibration 0.941, 1.040, 0.967
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/A1 s_max shape: FAIL | ratio 2.76 (exact law 2.65); c = 0.127 at phi=1/8 with s_max/S = 7.76e-06
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/A1 downstream: PASS | 1.0155 (no loss 1.0139, max 1.0195)
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/A1' cluster-sorted: FAIL | P[ds > 2] = 0.00 vs P[whole cluster lost] = 1.00; P[> 2 | whole] = 0.00; max ds 1.14
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/F2/A3: PASS | 8/8 loss-rate cells within 20%; error ratio 1.11
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/F3/B1 slope: PASS | m=1000: 0.403 [0.269, 0.536]; m=4000: 0.465 [0.340, 0.592]
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/F3/C3 rateless: PASS | m=1000: slope -0.022 [-0.175, 0.144]
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/F3/B1 bursts: PASS | GE/Bernoulli mean excess 1.035; sd 0.0171 vs 0.0161
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/F3/B2 formula: PASS | split 0.0114 (B2 0.0126), merged 0.0116 (B2 0.0126), floor 0.0008, kappa_pt 1.65e-06
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/F5/E1 random order: PASS | higgs-500k-k25: m=1000 slope 0.12 [-0.40, 0.72], m=4000 0.03 [-0.49, 0.58]
+[ 2716.3s] VERDICT REAL/higgs-1m-k25/F5/E1 kappa: PASS | Var = 0.005 (S/m) sum kappa, R^2 0.990
+[ 2716.3s] VERDICT REAL/higgs-k10/F3/B1 single rho: FAIL | m=1000 per-draw: excess x1.490; m=1000 merged: excess x1.358; m=4000 per-draw: excess x1.266; m=4000 merged: excess x1.323; 
+[ 2716.3s] VERDICT REAL/higgs-k10/F3/B2 formula: PASS | split 0.0111 (B2 0.0124), merged 0.0128 (B2 0.0124), floor 0.0003, kappa_pt 1.59e-07
+[ 2716.5s] REAL: done in 2716.5 s
+     2717.14 real     15351.12 user       148.80 sys
+         25403916288  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             3818257  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               11716  signals received
+               15885  voluntary context switches
+            21957404  involuntary context switches
+     268075566748716  instructions retired
+      47584580732408  cycles elapsed
+         25236836656  peak memory footprint

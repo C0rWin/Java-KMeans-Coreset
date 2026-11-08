@@ -37,6 +37,11 @@ final class F3Erasure {
     private F3Erasure() {
     }
 
+    /** Which channels, packetizations and loss rates a sample run covers, and whether it solves downstream. */
+    record Grid(List<String> channels, List<Layout> layouts, double[] rhos, boolean rateless, boolean downstream) {
+        static final Grid FULL = new Grid(List.of(CHANNELS), List.of(Layout.values()), RHOS, true, true);
+    }
+
     static Channel channel(String id, double rho) {
         return switch (id) {
             case "bernoulli" -> Channel.bernoulli(rho);
@@ -50,12 +55,12 @@ final class F3Erasure {
     static void run(FaultLab lab) throws IOException {
         try (Recorder rec = lab.recorder("F3")) {
             int[] ms = lab.quick() ? new int[] {100, 200} : new int[] {1000, 4000};
-            sample(lab, rec, "zipf", ms, lab.seeds(100, 6));
-            sample(lab, rec, "zipf-heavy", ms, lab.seeds(60, 4));
-            sample(lab, rec, "esa22", ms, lab.seeds(60, 4));
+            sample(lab, rec, "zipf", ms, lab.seeds(100, 6), Grid.FULL);
+            sample(lab, rec, "zipf-heavy", ms, lab.seeds(60, 4), Grid.FULL);
+            sample(lab, rec, "esa22", ms, lab.seeds(60, 4), Grid.FULL);
             int[] sweep = lab.quick() ? new int[] {50, 100, 200} : new int[] {250, 500, 1000, 2000, 4000, 8000};
             for (String id : List.of("zipf", "zipf-heavy", "esa22", "zipf-outliers")) {
-                sweep(lab, rec, id, sweep, lab.seeds(100, 6));
+                sweep(lab, rec, id, sweep, new double[] {0.0, 0.1, 0.3}, lab.seeds(100, 6));
             }
             mean(lab, rec, "zipf", lab.seeds(10, 2), lab.seeds(20, 5));
             mean(lab, rec, "zipf-heavy", lab.seeds(10, 2), lab.seeds(20, 5));
@@ -105,12 +110,12 @@ final class F3Erasure {
         };
     }
 
-    private static void sample(FaultLab lab, Recorder rec, String id, int[] ms, int seeds) {
+    static void sample(FaultLab lab, Recorder rec, String id, int[] ms, int seeds, Grid grid) {
         Instance inst = lab.instance(id);
         final int cols = inst.candidates();
         final long pointBytes = Measure.pointBytes(inst.dim());
         final int dsSeeds = lab.seeds(20, 2);
-        final boolean solveHere = !id.equals("zipf-heavy");
+        final boolean solveHere = grid.downstream() && !id.equals("zipf-heavy");
         List<List<Recorder.Row>> out = lab.parallel(seeds, s -> {
             List<Recorder.Row> rows = new ArrayList<>();
             Sample.Proposal p = proposal(lab, inst, s);
@@ -126,13 +131,13 @@ final class F3Erasure {
                 Sample smp = Sample.merge(p, first, m);
                 double[] unit = unitCosts(inst, smp);
                 List<Packets> layouts = new ArrayList<>();
-                for (Layout l : Layout.values()) {
+                for (Layout l : grid.layouts()) {
                     layouts.add(Packets.of(l, smp, inst.cluster, LabSeeds.rng(lab.seed, "F3/pack/" + l.id(), s, m)));
                 }
                 int[] recv = new int[smp.size()];
                 boolean[] lost = new boolean[3 * m];
-                for (String ch : CHANNELS) {
-                    for (double rho : RHOS) {
+                for (String ch : grid.channels()) {
+                    for (double rho : grid.rhos()) {
                         Channel channel = channel(ch, rho);
                         for (Packets pk : layouts) {
                             channel.erase(lost, pk.packets(), LabSeeds.rng(lab.seed, "F3/fault/" + ch + "/" + id, s, m));
@@ -162,8 +167,10 @@ final class F3Erasure {
                                         realized && ch.equals("bernoulli") ? r : null));
                             }
                         }
-                        rows.add(rateless(lab, inst, p, seq, m, ch, rho, s, pointBytes, solveHere && s < dsSeeds
-                                && m == ms[0] && (ch.equals("bernoulli") || ch.equals("ge-b20"))));
+                        if (grid.rateless()) {
+                            rows.add(rateless(lab, inst, p, seq, m, ch, rho, s, pointBytes, solveHere && s < dsSeeds
+                                    && m == ms[0] && (ch.equals("bernoulli") || ch.equals("ge-b20"))));
+                        }
                     }
                 }
             }
@@ -240,10 +247,9 @@ final class F3Erasure {
     }
 
     /** Theorem B2: merged versus split packets as m grows, Bernoulli loss, prior and realized decoders. */
-    private static void sweep(FaultLab lab, Recorder rec, String id, int[] ms, int seeds) {
+    static void sweep(FaultLab lab, Recorder rec, String id, int[] ms, double[] rhos, int seeds) {
         Instance inst = lab.instance(id);
         final int cols = inst.candidates();
-        double[] rhos = {0.0, 0.1, 0.3};
         List<List<Recorder.Row>> out = lab.parallel(seeds, s -> {
             List<Recorder.Row> rows = new ArrayList<>();
             Sample.Proposal p = proposal(lab, inst, s);
@@ -497,7 +503,7 @@ final class F3Erasure {
     }
 
     /** Slope of log mean(distortion - 1) against log 1/(1 - rho), with a seed-bootstrap 95% interval. */
-    private static double[] b1Slope(Recorder rec, String inst, int m, String pk) {
+    static double[] b1Slope(Recorder rec, String inst, int m, String pk) {
         List<double[]> per = new ArrayList<>();
         for (double rho : RHOS) {
             per.add(rec.values(sCell(inst, m, "bernoulli", rho, pk, "ht-realized"), "distortion"));
@@ -614,12 +620,12 @@ final class F3Erasure {
                 p99s >= 3 * p99r ? "PASS" : "FAIL");
     }
 
-    private static Map<String, Object> swCell(String inst, int m, double rho, String pk, String dec) {
+    static Map<String, Object> swCell(String inst, int m, double rho, String pk, String dec) {
         return cell("part", "sweep", "instance", inst, "m", m, "rho", rho, "packetization", pk, "decoder", dec);
     }
 
     /** Mean square of the erasure perturbation r_rho(Q_j) - r_0(Q_j): same sample, so pure erasure noise. */
-    private static double erasureMS(Recorder rec, String inst, int m, double rho, String pk, String dec, int j) {
+    static double erasureMS(Recorder rec, String inst, int m, double rho, String pk, String dec, int j) {
         List<double[]> a = rec.get(swCell(inst, m, rho, pk, dec)).rs;
         List<double[]> b = rec.get(swCell(inst, m, 0.0, pk, dec)).rs;
         double s = 0.0;

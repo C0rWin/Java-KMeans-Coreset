@@ -129,7 +129,8 @@ final class F5Depth {
             int[] ms = lab.quick() ? new int[] {50, 100} : new int[] {500, 1000, 4000};
             int seeds = lab.seeds(200, 3);
             for (Kind order : List.of(Kind.RANDOM, Kind.CLUSTER_SORTED)) {
-                List<List<Recorder.Row>> out = lab.parallel(seeds, s -> runSeed(lab, inst, order, blocks, ms, s));
+                List<List<Recorder.Row>> out = lab.parallel(seeds, s -> runSeed(lab, inst, order, blocks, ms, s,
+                        List.of("sensitivity", "uniform", "sensitivity-lossy")));
                 out.forEach(rec::addAll);
                 lab.log("F5 %s done", order.id());
             }
@@ -152,8 +153,8 @@ final class F5Depth {
         return out;
     }
 
-    private static List<Recorder.Row> runSeed(FaultLab lab, Instance inst, Kind order, int[] blockCounts, int[] ms,
-                                              int s) {
+    static List<Recorder.Row> runSeed(FaultLab lab, Instance inst, Kind order, int[] blockCounts, int[] ms, int s,
+                                      List<String> algos) {
         int[] ord = Partitions.order(order, inst.cluster, inst.points, LabSeeds.rng(lab.seed, "F5/order/" + order.id(),
                 s, 0));
         double[] w = new double[ord.length];
@@ -198,7 +199,7 @@ final class F5Depth {
                         }
                     }
                 }
-                for (String algo : List.of("sensitivity", "uniform", "sensitivity-lossy")) {
+                for (String algo : algos) {
                     if (algo.equals("sensitivity-lossy") && m != ms[ms.length > 1 ? 1 : 0]) {
                         continue;
                     }

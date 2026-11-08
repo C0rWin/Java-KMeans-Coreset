@@ -24,7 +24,8 @@ public final class FaultsCommand implements Callable<Integer> {
     @Option(names = "--out", required = true, description = "Output directory.")
     Path out;
 
-    @Option(names = "--experiments", split = ",", description = "Subset of F1,F2,F3,F4,F5,F6. Default: all.")
+    @Option(names = "--experiments", split = ",", description = "Subset of F1,F2,F3,F4,F5,F6 (default: all), or REAL "
+            + "for the real-data pass (cached public datasets, never downloaded).")
     List<String> experiments = FaultLab.EXPERIMENTS;
 
     @Option(names = "--scale", description = "full (the documented run) or quick (tiny instances, for tests).")

@@ -77,6 +77,7 @@ final class FaultLab implements AutoCloseable {
                 case "F4" -> F4Stragglers.run(this);
                 case "F5" -> F5Depth.run(this);
                 case "F6" -> F6Tree.run(this);
+                case "REAL" -> RealData.run(this);
                 default -> throw new IllegalArgumentException("unknown experiment " + e + ", expected " + EXPERIMENTS);
             }
             log("%s: done in %.1f s", e, (System.nanoTime() - s) / 1e9);
@@ -89,19 +90,42 @@ final class FaultLab implements AutoCloseable {
             Instance inst = instances.get(id);
             if (inst == null) {
                 long s = System.nanoTime();
-                Object[] spec = spec(id.equals("zipf-outliers") ? "zipf" : id);
-                DatasetSpec ds = (DatasetSpec) spec[0];
-                int k = (Integer) spec[1];
-                Dataset data = id.equals("zipf-outliers") ? withOutliers(datasets.load(ds), quick() ? 5 : 50)
-                        : datasets.load(ds);
-                inst = Instance.prepare(id, data, k, quick() ? 3 : 10, quick() ? 10 : 30,
-                        quick() ? 2 : 5, LabSeeds.of(seed, "instance", LabSeeds.hash(id), 0), pool);
+                if (RealData.isReal(id)) {
+                    inst = prepareReal(id);
+                } else {
+                    Object[] spec = spec(id.equals("zipf-outliers") ? "zipf" : id);
+                    DatasetSpec ds = (DatasetSpec) spec[0];
+                    int k = (Integer) spec[1];
+                    Dataset data = id.equals("zipf-outliers") ? withOutliers(datasets.load(ds), quick() ? 5 : 50)
+                            : datasets.load(ds);
+                    inst = Instance.prepare(id, data, k, quick() ? 3 : 10, quick() ? 10 : 30,
+                            quick() ? 2 : 5, LabSeeds.of(seed, "instance", LabSeeds.hash(id), 0), pool);
+                }
                 instances.put(id, inst);
                 log("instance %s: n=%d d=%d k=%d smax/S=%.3g S=%.1f smallest cluster=%d (%.1f s)", id, inst.n,
-                        inst.dim(), k, inst.sMax, inst.sensTotal, inst.clusterSize[inst.smallestCluster],
+                        inst.dim(), inst.k, inst.sMax, inst.sensTotal, inst.clusterSize[inst.smallestCluster],
                         (System.nanoTime() - s) / 1e9);
             }
             return inst;
+        }
+    }
+
+    /** Real instances: zscore variant, reference = best of 10 Lloyd restarts (30 iterations) on the data used. */
+    private Instance prepareReal(String id) {
+        RealData.Id rid = RealData.Id.parse(id);
+        Dataset full = datasets.load(RealData.spec(rid.name()));
+        Dataset data = rid.rows() == 0 ? full : RealData.subsample(full, id, rid.rows(), seed);
+        return Instance.prepare(id, data, rid.k(), 10, 30, 10, LabSeeds.of(seed, "instance", LabSeeds.hash(id), 0),
+                pool, true);
+    }
+
+    /** Releases a prepared instance and, with {@code dataset}, the loaded real dataset behind it. */
+    void drop(String id, boolean dataset) {
+        synchronized (instances) {
+            instances.remove(id);
+        }
+        if (dataset) {
+            datasets.evict(RealData.spec(RealData.Id.parse(id).name()));
         }
     }
 
@@ -204,11 +228,13 @@ final class FaultLab implements AutoCloseable {
                     .append("\",\"").append(v.measured().replace("\"", "'")).append("\"\n");
         }
         md.append("\n").append(report);
-        md.append("## Instances\n\n| id | n | d | k | s_max/S | S | smallest cluster | prepare s |\n"
-                + "|---|---|---|---|---|---|---|---|\n");
-        for (Instance i : instances.values().stream().sorted((a, b) -> a.id.compareTo(b.id)).toList()) {
-            md.append(String.format(Locale.ROOT, "| %s | %d | %d | %d | %.3g | %.1f | %d | %.1f |%n", i.id, i.n,
-                    i.dim(), i.k, i.sMax, i.sensTotal, i.clusterSize[i.smallestCluster], i.prepareMs / 1e3));
+        if (!instances.isEmpty()) {
+            md.append("## Instances\n\n| id | n | d | k | s_max/S | S | smallest cluster | prepare s |\n"
+                    + "|---|---|---|---|---|---|---|---|\n");
+            for (Instance i : instances.values().stream().sorted((a, b) -> a.id.compareTo(b.id)).toList()) {
+                md.append(String.format(Locale.ROOT, "| %s | %d | %d | %d | %.3g | %.1f | %d | %.1f |%n", i.id, i.n,
+                        i.dim(), i.k, i.sMax, i.sensTotal, i.clusterSize[i.smallestCluster], i.prepareMs / 1e3));
+            }
         }
         Files.writeString(out.resolve("summary.md"), md.toString(), StandardCharsets.UTF_8);
         Files.writeString(out.resolve("verdicts.csv"), csv.toString(), StandardCharsets.UTF_8);

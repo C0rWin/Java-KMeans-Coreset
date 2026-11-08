@@ -312,8 +312,9 @@ cell), `summary.md` (all tables and the verdicts) and `verdicts.csv`.
 
 ### Data
 
-Committed in [`data/fault-injection/`](data/fault-injection/) (1.6 MB): the per-cell aggregates
-`F1-cells.csv` ... `F6-cells.csv`, `summary.md` (every table and the verdicts), `verdicts.csv`, `run.log`, the
+Committed in [`data/fault-injection/`](data/fault-injection/) (0.5 MB): the per-cell aggregates
+`F1-cells.csv.gz` ... `F6-cells.csv.gz` (gzipped; `raw-SHA256SUMS` hashes the uncompressed CSVs),
+`summary.md` (every table and the verdicts), `verdicts.csv`, `run.log`, the
 SHA-256 list of the full output `raw-SHA256SUMS`, and a deterministic sample of the raw runs, `F<k>-seed0.jsonl.gz`:
 every JSONL line with `"seed":0`, cut with
 `gzcat F1.jsonl.gz | grep -E '"seed":0[,}]' | gzip -9n > F1-seed0.jsonl.gz`.
@@ -351,3 +352,108 @@ print(h.hexdigest())"
 | F4.jsonl.gz | `7d8b7115cb008b3ed8b034dfa85b4b17305187cf750661cf6637725429f89eba` |
 | F5.jsonl.gz | `12a15c6ab6458c83ebb29b40bc2ab1f5c66fb5903fec8bf74e87133c548fa65d` (this run; `wallMs` differs per run) |
 | F6.jsonl.gz | `47a8d9f5661f9bd3945aa1c50a597631b36c8b61daec9e40689eb67cf4080f60` |
+
+## Real datasets
+
+The same predictions, checked on four public datasets (z-scored variants from the testbed's binary cache, see
+`docs/datasets.md`), for k in {10, 25} and m in {1000, 4000}. 90 checks: 67 PASS, 20 FAIL, 3 INCONCLUSIVE. Full
+per-instance numbers are in [`data/fault-injection-real/summary.md`](data/fault-injection-real/summary.md).
+
+### Instances
+
+| instance | n | d | k | s_max/S | max kappa_pt | smallest cluster | used by |
+|---|---|---|---|---|---|---|---|
+| covertype | 581,012 | 54 | 10 / 25 | 4.8e-4 / 1.2e-2 | 2.2e-4 / 5.7e-4 | 6,575 / 474 | F1, F2, F3, F5 |
+| census1990 | 2,458,285 | 68 | 10 / 25 | 1.2e-5 / 7.3e-6 | 1.0e-6 / 9.0e-7 | 105,494 / 3,711 | F1, F2, F3 |
+| kddcup99 | 4,898,431 | 38 | 10 / 25 | 7.4e-3 / 3.6e-2 | 1.6e-2 / 5.1e-3 | 1 / 1 | F1, F2, F3 |
+| higgs, 1M subsample | 1,000,000 | 28 | 10 / 25 | 9.0e-6 / 7.8e-6 | 1.6e-6 / 1.7e-6 | 21,955 / 5,150 | F1, F2, F3 |
+| census1990 / kddcup99 / higgs, 500k subsamples | 500,000 | | 10 / 25 | | | | F5 |
+| higgs, all rows | 11,000,000 | 28 | 10 | 1.8e-6 | 1.6e-7 | 240,020 | F3 (B1/B2 at rho = 0.3) |
+
+Clusters and the cluster-sorted partition come from the reference solution (best of 10 Lloyd restarts, 30
+iterations, each restart k-means++ seeded) on the data actually used. kddcup99 has clusters of a single point (its
+duplicate-heavy records), which makes it the extreme-imbalance case.
+
+### Grid
+
+| part | setting | seeds |
+|---|---|---|
+| F1 exact data | n = 16, random and cluster-sorted partitions, phi in {1/8, 1/4, 1/2}, f in {0.1, 0.3}, decoders ht-realized and ht-size | 50 |
+| F1 coreset pipeline | n = 16, sensitivity m = 500 per node, random and cluster-sorted, losses none, phi 1/8, phi 1/2, f 0.3 | 20 |
+| F2 | n = 16, random, f in {0.05, 0.1, 0.2, 0.3}, r in {0, 1, 2} | 20 x 10 fault draws |
+| F3 | m in {1000, 4000}, 7 loss rates, Bernoulli and GE (burst 20), per-draw and merged, rateless; B2 at rho in {0, 0.3} | 100 (B2: 30) |
+| F5 | blocks in {1, 8, 16, 32, 64, 128}, m in {1000, 4000}, random and cluster-sorted order, sensitivity | 60 |
+
+The run took 45.3 minutes wall (4.3 CPU-hours, 10 threads), peak RSS 25.4 GB.
+
+### Verdicts
+
+| check | covertype k10 | covertype k25 | census k10 | census k25 | kddcup k10 | kddcup k25 | higgs-1M k10 | higgs-1M k25 |
+|---|---|---|---|---|---|---|---|---|
+| A1 kappa law: calibration in 0.85-1.15 at phi = 1/8, 1/4, 1/2 | PASS 0.94-0.99 | PASS 0.88-1.12 | PASS 0.95-1.03 | PASS 0.90-0.99 | PASS 0.96-1.01 | PASS 0.88-1.05 | PASS 0.93-1.00 | PASS 0.94-1.04 |
+| A1 s_max shape: ratio phi 1/2 : 1/8 = 3.50 +/- 10% | FAIL 2.70 | FAIL 1.90 | FAIL 2.76 | FAIL 2.76 | FAIL 2.63 | PASS 3.22 | FAIL 2.57 | FAIL 2.76 |
+| A1 downstream < 1.02 at phi = 1/8 | PASS 1.006 | PASS 1.009 | PASS 0.992 | PASS 1.015 | PASS 1.017 | PASS 1.004 | PASS 1.005 | PASS 1.016 |
+| A1' cluster-sorted: downstream > 2 when a whole cluster is lost | FAIL max 1.15 | FAIL max 1.38 | FAIL max 1.15 | FAIL max 1.41 | FAIL max 1.86 | FAIL 0.73 of whole-loss runs > 2, max 6.95 | FAIL max 1.12 | FAIL max 1.14 |
+| F2/A3: loss rate f^(r+1), error = A1 at phi_eff | PASS 0.71 | PASS 0.85 | PASS 0.85 | PASS 0.97 | PASS 1.03 | PASS 0.97 | PASS 0.86 | PASS 1.11 |
+| F3/B1 slope 0.5 +/- 0.1 (m 1000 / 4000) | PASS 0.43 / 0.50 | PASS 0.54 / 0.57 | PASS 0.43 / 0.49 | PASS 0.43 / 0.55 | PASS 0.59 / 0.57 | PASS 0.52 / 0.54 | PASS 0.42 / 0.43 | PASS 0.40 / 0.47 |
+| F3 rateless: no dependence on rho | FAIL -0.19 | PASS -0.01 | PASS 0.04 | FAIL -0.16 | PASS 0.12 | PASS 0.03 | PASS 0.02 | PASS -0.02 |
+| F3 bursts: GE mean excess within 15% of Bernoulli | PASS 1.05 | PASS 1.02 | PASS 1.05 | PASS 0.98 | PASS 0.96 | PASS 1.02 | PASS 1.04 | PASS 1.04 |
+| F3/B2 formula: split and merged within 35% | PASS | PASS | PASS | PASS | PASS (merged 0.095 vs B2 0.088, floor 0.083) | PASS (merged 0.060 vs 0.056, floor 0.047) | PASS | PASS |
+| F5/E1: random-order Var flat for L >= 3 (m 1000 / 4000) | INCONCL. 0.46 / -0.29 | PASS 0.05 / 0.14 | INCONCL. 0.34 / -0.22 | INCONCL. 0.30 / -0.42 | FAIL 0.54 [0.08, 1.04] / 0.14 | PASS 0.24 / 0.12 | FAIL 0.05 / 0.58 [0.05, 1.15] | PASS 0.12 / 0.03 |
+| F5/E1: Var proportional to (S/m) sum_l kappa_l (R^2 >= 0.9) | PASS 0.034, R^2 0.96 | PASS 0.024, 0.98 | PASS 0.014, 0.96 | PASS 0.009, 0.97 | PASS 0.051, 0.96 | PASS 0.036, 0.95 | PASS 0.008, 0.98 | PASS 0.005, 0.99 |
+
+All 11M HIGGS rows (k = 10, 30 seeds): the B2 formula holds (split 0.011 vs 0.012, merged 0.013 vs 0.012, **PASS**);
+the excess growth from rho = 0 to 0.3 is x1.27-1.49 against the predicted x1.195 (**FAIL** at the +/- 0.1 tolerance).
+A seed bootstrap gives standard errors of 0.07-0.11 for these ratios; three of the four 95% intervals contain 1.195,
+per-draw at m = 1000 (1.29-1.70) does not.
+
+The F3 slope and F5 flatness rules use a seed bootstrap: PASS when both point estimates are within tolerance, FAIL
+when a 95% interval excludes the predicted value, INCONCLUSIVE otherwise. The other thresholds are those of the
+synthetic run.
+
+### What the real data adds
+
+1. **The kappa_pt law is exact on real data too.** Per-candidate calibration is 0.88-1.12 on all eight instances,
+   including kddcup99 with single-point clusters; the s_max shape fails on 7 of 8 (ratio 1.9-2.8, exact law 2.65),
+   and its constant c ranges over 0.09-0.51 between datasets.
+2. **Adversarial partitions are not catastrophic on real data.** Losing a node that holds >= 90% of a reference
+   cluster leaves the downstream ratio below 1.9 on every instance except kddcup99 at k = 25, where it exceeds 2 in
+   73% of such runs (max 6.95). The Delta^2/k lower bound of A1' needs well-separated clusters, which real
+   clusterings rarely have; kddcup99's far, tiny clusters are the exception.
+3. **Erasure invariance and the B2 formula transfer unchanged.** Slopes 0.40-0.59 on every instance, bursty loss with
+   random packing costs nothing extra, and the merged-packet floor appears exactly where Theorem B2 puts it: on
+   kddcup99 (kappa_pt 5e-3 to 1.6e-2) merged packets lose 2-3x more than split ones, elsewhere merged ~ split.
+4. **Merge-and-reduce variance tracks sum_l kappa_l (R^2 0.95-0.99) at 0.005-0.051 (S/m).** Depth flatness under
+   random order is supported on 3 instances, inconclusive on 3 (bootstrap intervals about +/- 0.5 even with 60
+   seeds) and rejected on 2, where one of the two m values shows a slope of about 0.55.
+5. **Two rateless cells show a small negative slope** (-0.19 and -0.16 with intervals excluding 0): distortion
+   slightly lower at higher loss. All rho share the first draws of one sequence, so this reads as a fluctuation of
+   the rho = 0 sample in those seeds rather than a mechanism; it is reported as FAIL.
+
+### Deviations (real data)
+
+- HIGGS is subsampled to 1M rows (seeded, file order kept) for F1, F2 and F3; one F3 B2 run uses all 11M rows.
+- F5 runs on seeded 500k-row subsamples of census1990, kddcup99 and HIGGS (each a separate instance with its own
+  reference solution); covertype runs F5 on all rows.
+- F1 uses one coreset algorithm (sensitivity) and four loss settings in the pipeline; no downstream solves in F3.
+- The reference and the k-means++ candidates run as parallel tasks with derived seeds (synthetic instances keep the
+  sequential single-generator preparation, whose outputs are unchanged).
+- The cluster-sorted partition sorts by the reference solution's labels (k-means++ seeding refined by Lloyd), not by
+  raw k-means++ labels.
+
+### Reproduce (real data)
+
+The four z-scored binaries must be in the cache (`coreset-testbed datasets convert <name> --variant zscore`).
+
+```bash
+java -Xmx48g -jar coreset-testbed/target/coreset-testbed.jar faults --experiments REAL \
+    --out ~/.cache/coreset-testbed/faults-raw/real-seed42 --scale full --seed 42 --threads 10
+```
+
+Committed in [`data/fault-injection-real/`](data/fault-injection-real/) (0.35 MB): `REAL-F*-cells.csv.gz`,
+`summary.md`, `verdicts.csv`, `run.log`, `raw-SHA256SUMS` and the seed-0 samples `REAL-F*-seed0.jsonl.gz`. The raw
+JSONL (11 MB) is in `~/.cache/coreset-testbed/faults-raw/real-seed42/`. Its SHA-256 values are in `raw-SHA256SUMS`;
+`REAL-F5.jsonl.gz` carries `wallMs`, and its content without that field hashes to
+`b9b641214a99d8fbf88a11f12f90e16b6eb476b7413e608aa9dfa9dbbee2fea0` (script above). The real pass ran once, so these
+hashes are not cross-checked by a second run; the code paths are the seeded ones whose synthetic outputs reproduced
+byte for byte.

@@ -215,4 +215,15 @@ class FaultLayerTest {
         assertEquals(6, F6Tree.depth(64, 2));
         assertEquals(1, F6Tree.depth(64, 64));
     }
+
+    @Test
+    void realInstanceIdsRoundTrip() {
+        assertEquals(new RealData.Id("higgs", 1_000_000, 10), RealData.Id.parse("higgs-1m-k10"));
+        assertEquals(new RealData.Id("kddcup99", 500_000, 25), RealData.Id.parse("kddcup99-500k-k25"));
+        assertEquals(new RealData.Id("covertype", 0, 10), RealData.Id.parse("covertype-k10"));
+        assertEquals("census1990-500k-k25", RealData.Id.of("census1990", 500_000, 25));
+        assertEquals("higgs-1m-k10", RealData.Id.of("higgs", 1_000_000, 10));
+        assertTrue(RealData.isReal("covertype-k25"));
+        assertTrue(!RealData.isReal("zipf-heavy") && !RealData.isReal("zipf-400k"));
+    }
 }

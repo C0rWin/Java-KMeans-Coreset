@@ -46,7 +46,11 @@ final class F1NodeLoss {
                     seeds);
             raw(lab, rec, "esa22", List.of(Kind.RANDOM, Kind.CLUSTER_SORTED, Kind.INPUT), new int[] {16}, LOSSES,
                     sized, seeds);
-            pipeline(lab, rec, "zipf", lab.seeds(30, 4));
+            List<Loss> pipeLosses = List.of(Loss.none(), Loss.fixed(0.125), Loss.fixed(0.25), Loss.fixed(0.5),
+                    Loss.iid(0.1), Loss.iid(0.3));
+            pipeline(lab, rec, "zipf", lab.seeds(30, 4), lab.quick() ? 4 : 16, lab.quick() ? 100 : 500,
+                    List.of(Kind.RANDOM, Kind.CLUSTER_SORTED, Kind.ZIPF_SIZES), List.of(NodeCoreset.Algo.values()),
+                    pipeLosses);
             List<Loss> repl = List.of(Loss.fixed(0.125), Loss.fixed(0.25), Loss.fixed(0.5), Loss.iid(0.1),
                     Loss.iid(0.3));
             replication(lab, rec, "zipf-heavy", List.of(Kind.RANDOM, Kind.CLUSTER_SORTED), repl, seeds);
@@ -65,8 +69,8 @@ final class F1NodeLoss {
                 LabSeeds.hash(inst.id));
     }
 
-    private static void raw(FaultLab lab, Recorder rec, String id, List<Kind> kinds, int[] nodes, List<Loss> losses,
-                            List<Decoder> decoders, int seeds) {
+    static void raw(FaultLab lab, Recorder rec, String id, List<Kind> kinds, int[] nodes, List<Loss> losses,
+                    List<Decoder> decoders, int seeds) {
         Instance inst = lab.instance(id);
         for (Kind kind : kinds) {
             for (int n : nodes) {
@@ -101,21 +105,17 @@ final class F1NodeLoss {
     }
 
     /** Level "coreset": every node builds a coreset of its part; lost nodes send nothing. */
-    private static void pipeline(FaultLab lab, Recorder rec, String id, int seeds) {
+    static void pipeline(FaultLab lab, Recorder rec, String id, int seeds, int n, int m, List<Kind> kinds,
+                         List<NodeCoreset.Algo> algos, List<Loss> losses) {
         Instance inst = lab.instance(id);
-        final int n = lab.quick() ? 4 : 16;
-        final int m = lab.quick() ? 100 : 500;
         final int mMean = lab.quick() ? 20 : 50;
-        List<Loss> losses = new ArrayList<>();
-        losses.add(Loss.none());
-        losses.addAll(List.of(Loss.fixed(0.125), Loss.fixed(0.25), Loss.fixed(0.5), Loss.iid(0.1), Loss.iid(0.3)));
-        for (Kind kind : List.of(Kind.RANDOM, Kind.CLUSTER_SORTED, Kind.ZIPF_SIZES)) {
+        for (Kind kind : kinds) {
             List<List<Recorder.Row>> out = lab.parallel(seeds, s -> {
                 Placement pl = new Placement(inst, Partitions.split(kind, inst.cluster, inst.points, n,
                         partitionRng(lab, inst, kind, n, s)));
                 boolean[] whole = pl.holdsWholeCluster(inst, WHOLE);
                 List<Recorder.Row> rows = new ArrayList<>();
-                for (NodeCoreset.Algo algo : NodeCoreset.Algo.values()) {
+                for (NodeCoreset.Algo algo : algos) {
                     List<NodeCoreset> nodes = new ArrayList<>(n);
                     for (int v = 0; v < n; v++) {
                         SplittableRandom rng = LabSeeds.rng(lab.seed, "node-sample/" + kind.id() + "/" + algo.id(),
@@ -335,8 +335,12 @@ final class F1NodeLoss {
     }
 
     /** Mean over seeds and candidates of |r|, and the per-candidate RMS divided by sqrt(phi kappa_j / (1 - phi)). */
-    private static double[] loss(Instance inst, Recorder.Cell c, double phi) {
-        int cols = inst.candidates();
+    static double[] loss(Instance inst, Recorder.Cell c, double phi) {
+        return loss(inst.kappa, inst.n, c, phi);
+    }
+
+    static double[] loss(double[] kappa, int n, Recorder.Cell c, double phi) {
+        int cols = kappa.length;
         double[] ms = new double[cols];
         double abs = 0.0;
         for (double[] r : c.rs) {
@@ -347,7 +351,7 @@ final class F1NodeLoss {
         }
         double calib = 0.0;
         for (int j = 0; j < cols; j++) {
-            double pred = Math.sqrt(phi / (1.0 - phi) * (inst.kappa[j] - 1.0 / inst.n) * inst.n / (inst.n - 1.0));
+            double pred = Math.sqrt(phi / (1.0 - phi) * (kappa[j] - 1.0 / n) * n / (n - 1.0));
             calib += Math.sqrt(ms[j] / c.rs.size()) / pred;
         }
         return new double[] {abs / (c.rs.size() * cols), calib / cols};
