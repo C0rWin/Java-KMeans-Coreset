@@ -13,6 +13,7 @@ Where the project stands, what was learned along the way, and what is worth doin
 | `coreset-flink` | Streaming and windowed coresets with exact recovery from checkpoints. |
 | `coreset-testbed` | Datasets, offline/stream/distributed runs, per-run validity reports, ESA'22-style aggregation. |
 | `coreset-bench` | JMH kernels, node and gRPC ingestion harnesses, JFR profiling. |
+| `coreset-experiments` | Engine comparison harness: gRPC cluster vs Spark vs Flink, same data and SPI algorithms, real fault injection ([experiments/engines.md](experiments/engines.md)). |
 
 ## What we learned (and what it changed)
 

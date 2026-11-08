@@ -16,7 +16,9 @@ merge-and-reduce scheme of Har-Peled & Mazumdar, used by Barger & Feldman,
 been compressed at most `floor(log2 b)` times, however the batches arrived.
 
 Status: **Spark and Flink are implemented** (`coreset-spark`,
-`coreset-flink`). The other sections are designs.
+`coreset-flink`). The other sections are designs. A measured comparison of both
+with the gRPC cluster, including injected failures, is in
+[experiments/engines.md](experiments/engines.md).
 
 ## Things every engine has to get right
 
