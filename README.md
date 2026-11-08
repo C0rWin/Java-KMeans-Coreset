@@ -57,6 +57,11 @@ The project consists of the following modules:
 8. **coreset-examples** - a third-party algorithm (the lightweight coreset of
    Bachem, Lucic and Krause, KDD 2018) plugged in through the SPI only, with
    tests running it through every layer above.
+9. **coreset-planner** - resilience planner: estimates a workload profile from a
+   pilot sample, picks the cheapest coreset family, size, packetization,
+   transport, redundancy and topology for a loss/failure environment and an
+   accuracy target (certified or calibrated), and validates the choice
+   in-process with injected faults; see [docs/planner.md](docs/planner.md).
 
 Documentation
 ---
