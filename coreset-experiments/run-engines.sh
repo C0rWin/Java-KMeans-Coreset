@@ -3,8 +3,9 @@
 #
 #   coreset-experiments/run-engines.sh [preset|config.yaml] [--out DIR] [--only REGEX] [--summary-only] [--no-build]
 #
-# Presets: grid (configs/preset-grid.yaml, the full systems x N x algorithms x datasets grid), smoke-1m
-# (configs/smoke-1m.yaml, one 1M x 20 dataset). Writes DIR/results.jsonl, DIR/summary.md, DIR/environment.json and
+# Presets: grid (configs/preset-grid.yaml, the full systems x N x algorithms x synthetic datasets grid), smoke-1m
+# (configs/smoke-1m.yaml, one 1M x 20 dataset), real (configs/real-grid.yaml, the converted UCI datasets) and
+# real-smoke (configs/real-smoke.yaml, covertype at N = 2). Writes DIR/results.jsonl, DIR/summary.md, DIR/environment.json and
 # per-cell logs under DIR/cells/. Needs JAVA_HOME (Java 17) and Maven; never installs into ~/.m2.
 set -euo pipefail
 
@@ -16,6 +17,8 @@ preset="${1:-smoke-1m}"
 case "$preset" in
     grid) config="$here/configs/preset-grid.yaml" ;;
     smoke-1m) config="$here/configs/smoke-1m.yaml" ;;
+    real) config="$here/configs/real-grid.yaml" ;;
+    real-smoke) config="$here/configs/real-smoke.yaml" ;;
     *) config="$(cd "$(dirname "$preset")" && pwd)/$(basename "$preset")" ;;
 esac
 [[ -f "$config" ]] || {

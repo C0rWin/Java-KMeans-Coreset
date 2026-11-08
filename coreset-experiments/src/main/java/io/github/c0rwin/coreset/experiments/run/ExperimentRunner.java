@@ -142,6 +142,9 @@ public final class ExperimentRunner {
 
     private void add(List<CellSpec> cells, DatasetConfig ds, SystemConfig sys, int n, AlgorithmConfig algo,
                      FaultConfig fault) {
+        if (ds.excludes(sys, algo)) {
+            return;
+        }
         String id = (ds.id() + "__" + sys.label() + "__N" + n + "__" + (algo == null ? "native" : algo.label())
                 + (fault == null ? "" : "__" + fault.label())).replaceAll("[^A-Za-z0-9._-]+", "-");
         if (only != null && !only.matcher(id).find()) {

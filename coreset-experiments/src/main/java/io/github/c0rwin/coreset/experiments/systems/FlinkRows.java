@@ -169,10 +169,10 @@ final class FlinkRows {
                     if (reader != null) {
                         reader.close();
                     }
-                    reader = src.open(index, src.size());
+                    reader = src.open(index, src.size(), chunkRows);
                 }
                 blockStart = index;
-                block = reader.next(chunkRows);
+                block = reader.next();
             }
             return block.point((int) (index - blockStart));
         }

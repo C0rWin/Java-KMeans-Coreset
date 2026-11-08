@@ -34,12 +34,20 @@ public final class FullCost {
 
     public static Result evaluate(PointSource src, List<List<SparseVector>> centerSets, int threads) {
         int sets = centerSets.size();
-        SparseVector[][] cs = new SparseVector[sets][];
+        // dense centers: a row's distance then costs O(its nnz), which matters for sparse high-dimensional data
+        double[][][] cs = new double[sets][][];
+        double[][] norms = new double[sets][];
         for (int s = 0; s < sets; s++) {
-            if (centerSets.get(s).isEmpty()) {
+            List<SparseVector> set = centerSets.get(s);
+            if (set.isEmpty()) {
                 throw new IllegalArgumentException("center set " + s + " is empty");
             }
-            cs[s] = centerSets.get(s).toArray(new SparseVector[0]);
+            cs[s] = new double[set.size()][];
+            norms[s] = new double[set.size()];
+            for (int j = 0; j < set.size(); j++) {
+                cs[s][j] = set.get(j).toDense();
+                norms[s][j] = set.get(j).squaredNorm();
+            }
         }
         int t = (int) Math.max(1, Math.min(threads, src.size()));
         ExecutorService pool = Executors.newFixedThreadPool(t, r -> {
@@ -52,7 +60,7 @@ public final class FullCost {
             for (int i = 0; i < t; i++) {
                 long from = PointSource.shardStart(src.size(), i, t);
                 long to = PointSource.shardStart(src.size(), i + 1, t);
-                parts.add(pool.submit(() -> range(src, from, to, cs)));
+                parts.add(pool.submit(() -> range(src, from, to, cs, norms)));
             }
             double[] costs = new double[sets];
             double weight = 0.0;
@@ -75,10 +83,10 @@ public final class FullCost {
     }
 
     /** Per-set costs of rows {@code [from, to)} followed by their total weight. */
-    private static double[] range(PointSource src, long from, long to, SparseVector[][] cs) {
+    private static double[] range(PointSource src, long from, long to, double[][][] cs, double[][] norms) {
         double[] acc = new double[cs.length + 1];
-        try (ChunkReader r = src.open(from, to)) {
-            for (PointBlock b = r.next(CHUNK_ROWS); b != null; b = r.next(CHUNK_ROWS)) {
+        try (ChunkReader r = src.open(from, to, CHUNK_ROWS)) {
+            for (PointBlock b = r.next(); b != null; b = r.next()) {
                 for (int i = 0, n = b.size(); i < n; i++) {
                     double w = b.weight(i);
                     acc[cs.length] += w;
@@ -86,10 +94,10 @@ public final class FullCost {
                         continue;
                     }
                     for (int s = 0; s < cs.length; s++) {
-                        SparseVector[] c = cs[s];
-                        double best = b.squaredDistance(i, c[0]);
+                        double[][] c = cs[s];
+                        double best = b.squaredDistance(i, c[0], norms[s][0]);
                         for (int j = 1; j < c.length; j++) {
-                            double d = b.squaredDistance(i, c[j]);
+                            double d = b.squaredDistance(i, c[j], norms[s][j]);
                             if (d < best) {
                                 best = d;
                             }

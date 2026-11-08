@@ -154,7 +154,7 @@ public final class QualityEvaluator {
      * sample), by exact full cost; cached per dataset checksum, k and settings.
      */
     private Reference loadOrComputeReference(Path cacheDir) throws IOException {
-        Object sha = src.provenance().getOrDefault("sha256", "");
+        Object sha = src.provenance().getOrDefault("checksum", "");
         String key = src.id() + "-" + String.valueOf(sha).substring(0, Math.min(12, String.valueOf(sha).length()))
                 + "-k" + k + "-r" + q.referenceRuns() + "x" + q.referenceRestarts() + "-i" + q.referenceIterations()
                 + (src.size() > q.maxInMemoryPoints() ? "-s" + q.maxInMemoryPoints() : "") + ".json";

@@ -387,8 +387,8 @@ final class GrpcSystem implements EngineSystem {
             long to = PointSource.shardStart(src.size(), i + 1, n);
             int target = i;
             boolean dropping = false;
-            try (ChunkReader r = src.open(from, to)) {
-                for (PointBlock b = r.next(cell.batchSize()); b != null; b = r.next(cell.batchSize())) {
+            try (ChunkReader r = src.open(from, to, cell.batchSize())) {
+                for (PointBlock b = r.next(); b != null; b = r.next()) {
                     if (dropping) { // the shard's owner is gone: account its remaining rows as lost input
                         droppedRows.addAndGet(b.size());
                         droppedWeight.add(b.totalWeight());

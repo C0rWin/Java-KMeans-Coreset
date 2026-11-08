@@ -186,6 +186,14 @@ public final class PointFile {
         return new Reader(file, chunkRows);
     }
 
+    /**
+     * Opens a chunked reader over rows {@code [from, to)} only. Dense rows are fixed-width and sparse rows are found
+     * through the row offsets, so nothing before {@code from} is read: parallel readers each stream their own range.
+     */
+    public static Reader open(Path file, int chunkRows, long from, long to) throws IOException {
+        return new Reader(file, chunkRows).range(from, to);
+    }
+
     /** All rows as one point set whose segments are the chunks; no per-point objects. */
     public static PointSet readAll(Path file) throws IOException {
         try (Reader r = open(file, DEFAULT_CHUNK_ROWS)) {
@@ -235,6 +243,7 @@ public final class PointFile {
         private final Header header;
         private final int chunkRows;
         private long row;
+        private long end;
         private ByteBuffer io = ByteBuffer.allocate(0);
         // Scratch of the last loaded chunk: dense values, or CSR offsets (relative), indices and values.
         private double[] dense = new double[0];
@@ -257,6 +266,17 @@ public final class PointFile {
             int d = Math.max(1, header.d());
             this.chunkRows = header.layout() == Layout.DENSE
                     ? Math.max(1, Math.min(chunkRows, MAX_CHUNK_ENTRIES / d)) : chunkRows;
+            this.end = header.n();
+        }
+
+        private Reader range(long from, long to) throws IOException {
+            if (from < 0 || from > to || to > header.n()) {
+                ch.close();
+                throw new IllegalArgumentException("rows [" + from + ", " + to + ") outside [0, " + header.n() + "]");
+            }
+            row = from;
+            end = to;
+            return this;
         }
 
         public Header header() {
@@ -264,10 +284,10 @@ public final class PointFile {
         }
 
         public boolean hasNext() {
-            return row < header.n();
+            return row < end;
         }
 
-        /** Rows already returned. */
+        /** Index of the next row; rows already returned when reading from row 0. */
         public long position() {
             return row;
         }
@@ -319,7 +339,7 @@ public final class PointFile {
         /** Reads the next dense chunk into {@link #dense}; returns its rows. */
         private int loadDense() throws IOException {
             final int d = header.d();
-            final int rows = (int) Math.min(chunkRows, header.n() - row);
+            final int rows = (int) Math.min(chunkRows, end - row);
             final int len = rows * d;
             ByteBuffer b = buffer((long) len * Double.BYTES);
             readFully(ch, b, HEADER_BYTES + row * d * Double.BYTES, file);
@@ -333,7 +353,7 @@ public final class PointFile {
 
         /** Reads the next sparse chunk into {@link #offsets}, {@link #indices}, {@link #values}; returns its rows. */
         private int loadSparse() throws IOException {
-            int rows = (int) Math.min(chunkRows, header.n() - row);
+            int rows = (int) Math.min(chunkRows, end - row);
             ByteBuffer b = buffer((long) (rows + 1) * Long.BYTES);
             readFully(ch, b, HEADER_BYTES + row * Long.BYTES, file);
             b.flip();

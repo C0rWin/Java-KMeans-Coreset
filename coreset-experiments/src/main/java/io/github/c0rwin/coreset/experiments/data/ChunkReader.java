@@ -12,11 +12,11 @@ import java.util.NoSuchElementException;
 /** Sequential reader over a row range, handing out rows as CSR blocks (no object per point). */
 public interface ChunkReader extends Closeable {
 
-    /** Next at most {@code maxRows} rows as a fresh block (callers may keep it), or null at the end of the range. */
-    PointBlock next(int maxRows) throws IOException;
+    /** Next chunk of rows as a fresh block (callers may keep it), or null at the end of the range. */
+    PointBlock next() throws IOException;
 
     /** Rows as engine-facing points: one {@link WeightedPoint} view per row, created only when the engine asks. */
-    static Iterator<WeightedPoint> points(ChunkReader reader, int chunkRows) {
+    static Iterator<WeightedPoint> points(ChunkReader reader) {
         return new Iterator<>() {
             private PointBlock block;
             private int pos;
@@ -26,7 +26,7 @@ public interface ChunkReader extends Closeable {
             public boolean hasNext() {
                 while (!done && (block == null || pos == block.size())) {
                     try {
-                        block = reader.next(chunkRows);
+                        block = reader.next();
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
                     }

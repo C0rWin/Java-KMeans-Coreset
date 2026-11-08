@@ -70,6 +70,7 @@ final class FlinkSystem implements EngineSystem {
                 conf.set(RestOptions.BIND_PORT, "0");
                 conf.setString("metrics.reporter." + REPORTER + ".factory.class",
                         FlinkBytesReporter.Factory.class.getName());
+                largeResults(conf);
                 mini = new MiniCluster(new MiniClusterConfiguration.Builder().setConfiguration(conf)
                         .setNumTaskManagers(1).setNumSlotsPerTaskManager(n).build());
                 mini.start();
@@ -97,6 +98,7 @@ final class FlinkSystem implements EngineSystem {
     private StreamExecutionEnvironment env(boolean checkpoints) {
         Configuration conf = new Configuration();
         conf.set(PipelineOptions.GENERIC_TYPES, false);
+        largeResults(conf);
         long interval = sys.longOption("checkpointMs", 0);
         if (checkpoints && interval == 0) {
             interval = 200; // a fault needs checkpoints to restore from
@@ -189,6 +191,17 @@ final class FlinkSystem implements EngineSystem {
             }
         }
         return new RunOutput(coreset, null, seconds, Double.NaN, Double.NaN, m, f);
+    }
+
+    /**
+     * The final snapshot is one record of up to tens of MB (union of the merge stage's levels); the collect sink,
+     * REST and RPC limits default to 2, 100 and 10 MB.
+     */
+    private static void largeResults(Configuration conf) {
+        conf.setString("collect-sink.batch-size.max", "1gb");
+        conf.setString("rest.client.max-content-length", "1073741824");
+        conf.setString("rest.server.max-content-length", "1073741824");
+        conf.setString("pekko.framesize", "1073741824b");
     }
 
     /** Keeps the final snapshot only. */

@@ -50,17 +50,28 @@ orchestrator (`ExperimentRunner`) stays idle meanwhile, so systems never share a
 4. for a fault cell: `baselineRepetitions` undisturbed repetitions, then the fault repetitions, all on the same seed.
    The final coresets can then be compared bit for bit.
 
-**Data path.** Datasets are materialised once per configuration and cached as a dense little-endian `f64` file
-(`<cacheDir>/datasets/<id>-<key>.f64`, plus a `.sha256`). Every system reads that file through the same
-`PointSource` interface in contiguous shards. Shard *i* of N goes to node *i* (one coordinator thread per shard
-reads it and streams it with its own `IngestStream`), to Spark partition *i* (read inside the task) and to Flink
-subtask *i* (a source with a static split assignment, then a chained reader). Rows come out as CSR `PointBlock`
-chunks. Engine APIs get per-row views (`WeightedPoint`) only where they take them. Nothing materialises the dataset on
-a driver. Synthetic data comes from `coreset-testbed`: Gaussian mixtures with Zipf cluster sizes, the ESA'22 hard
-instance, and any testbed dataset spec via `type: testbed`. The real datasets' binary format (`.cbin` / `.csr`,
-`PointFile` in `coreset-testbed`, now on master) plugs in as another `PointSource` with the same row-range contract.
-That adapter is the next step. It needs a ranged `PointFile.open(file, chunkRows, from, to)`; the reader already
-addresses rows absolutely. Until then a `dense-file` dataset reads any file in this harness's dense format.
+**Data path.** Every dataset is a testbed `PointFile`: `.cbin` (dense) or `.csr` (sparse), the format of the
+converted public datasets (see [../datasets.md](../datasets.md)). Every system reads it through the same
+`PointSource` in contiguous shards, using the ranged reader `PointFile.open(file, chunkRows, from, to)`. That reader
+positions directly at a shard's first row: dense rows are fixed-width and sparse rows are found through the row
+offsets. Shard *i* of N goes to node *i* (one coordinator thread per shard reads it and streams it with its own
+`IngestStream`), to Spark partition *i* (read inside the task) and to Flink subtask *i* (a source with a static split
+assignment, then a chained reader). Rows come out as CSR `PointBlock` chunks. Engine APIs get per-row views
+(`WeightedPoint`) only where they take them. Nothing materialises the dataset on a driver.
+
+Dataset types:
+
+- `public` reads a converted testbed binary in place: `name`, `variant` (`raw`, `zscore` or `tfidf`), and the
+  default cache `~/.cache/coreset-testbed/<name>/<name>[.<variant>].cbin|.csr`. The harness never downloads or
+  converts; it points you to `coreset-testbed datasets convert`.
+- `gaussian-mixture` and `esa22` are the testbed generators. They are written once to
+  `<cacheDir>/datasets/<id>-<key>.cbin`.
+- `testbed` takes any testbed spec. It is written once as `.cbin`, or as `.csr` when under half of the entries are
+  non-zero.
+- `file` reads an existing `.cbin` or `.csr`.
+
+The header CRC32C identifies the content in records and in the reference cache. A dataset's `exclude` list skips
+systems or algorithms on it. The real grid uses it to skip `mean` on the sparse NYTimes data.
 
 **Timing split** (per repetition, seconds):
 
@@ -109,7 +120,7 @@ with no system.
 
 | rule | how the harness enforces it |
 |---|---|
-| same data | one materialised file, same contiguous shards for every system, recorded SHA-256 |
+| same data | one point file, same contiguous shards for every system, recorded CRC32C |
 | same algorithm and parameters | SPI id and parameter map passed unchanged to nodes (`SessionSpec`), `SparkCoresets.build` and `CoresetConfig` |
 | same solver | `WeightedLloyd.bestOf` with the same restarts, iterations and seed for every coreset; MLlib uses its own k-means\|\| with `maxIter = solver.iterations` (it has no restarts) |
 | same parallelism | N nodes × `workersPerNode` (default 1) workers, N coordinator shard threads; `local[N]`; N single-core executors; Flink parallelism N with N slots |
@@ -173,7 +184,9 @@ All faults are real: processes are killed with SIGKILL (`destroyForcibly`) or ta
 
 ```
 JAVA_HOME=<jdk17> coreset-experiments/run-engines.sh                      # smoke-1m preset
-JAVA_HOME=<jdk17> coreset-experiments/run-engines.sh grid                 # full preset grid (hours)
+JAVA_HOME=<jdk17> coreset-experiments/run-engines.sh grid                 # full synthetic preset grid (hours)
+JAVA_HOME=<jdk17> coreset-experiments/run-engines.sh real                 # real-dataset grid (many hours)
+JAVA_HOME=<jdk17> coreset-experiments/run-engines.sh real-smoke           # covertype, N = 2, every system and fault
 coreset-experiments/run-engines.sh my-grid.yaml --out results/engines/x --only 'grpc|flink'
 coreset-experiments/run-engines.sh smoke-1m --no-build --summary-only --out results/engines/smoke-1m
 ```
@@ -182,8 +195,19 @@ The script builds with `mvn -B -pl coreset-experiments -am package -DskipTests` 
 `ExperimentRunner` with `target/classes` plus `target/runtime-classpath.txt`, which the build writes. Cells, nodes and
 executors inherit that class path. `--only` filters cells by a regex on the cell id. Results go to
 `results/engines/<name>/` (git-ignored). Configs: [configs/preset-grid.yaml](../../coreset-experiments/configs/preset-grid.yaml)
-(systems × N ∈ {1, 2, 4, 8} × {uniform, sensitivity, mean, lightweight} × datasets, with commented placeholders for
-the real datasets) and [configs/smoke-1m.yaml](../../coreset-experiments/configs/smoke-1m.yaml).
+(systems × N ∈ {1, 2, 4, 8} × {uniform, sensitivity, mean, lightweight} × synthetic datasets),
+[configs/smoke-1m.yaml](../../coreset-experiments/configs/smoke-1m.yaml),
+[configs/real-grid.yaml](../../coreset-experiments/configs/real-grid.yaml) and
+[configs/real-smoke.yaml](../../coreset-experiments/configs/real-smoke.yaml).
+
+The real grid uses covertype, census1990, kddcup99, yearmsd, susy and higgs (all 11M rows), z-scored, plus
+nytimes with tf-idf (sparse, d = 102,660). It runs grpc, Spark local-cluster and Flink at N ∈ {1, 4, 8} with uniform
+and sensitivity (k = 25, m = 4000), mean (m = 500) and lightweight (m = 4000), and the MLlib k-means|| baseline, all
+with 3 repetitions. Fault cells are node kills (1 of 4 and 2 of 8, each before any snapshot and after one), a Spark
+executor kill and a Flink task failure. Every system handles the sparse rows: MLlib gets sparse vectors, and the
+quality pass compares sparse rows with dense centers in O(nnz) per row. Only `mean` is excluded on nytimes, because
+its compressions keep m dense centroid sums of 102,660 doubles each. The real grid has not been run at full scale
+yet.
 
 `spark/local-cluster` launches executors like a Spark distribution would. The runner gives every cell JVM
 `SPARK_HOME=<out>/spark-home` (an empty `jars/`), `SPARK_SCALA_VERSION` and `SPARK_LOCAL_IP=127.0.0.1`.
@@ -207,7 +231,7 @@ fill in `cluster:` (an example is commented at the end of the preset):
 - **Flink:** `flinkJobManager: host:port` (REST) and `flinkJars`. Byte counts need a Prometheus reporter on the
   cluster; task-failure timing needs the in-JVM MiniCluster.
 - The dataset file must exist at the same path on every worker (shared file system or a copy).
-  `PointSources.open` on the submitting host materialises it.
+  Generated data is materialised by `PointSources.open` on the submitting host.
 
 ## Output
 
@@ -259,6 +283,27 @@ timings:
   other executor and the final coreset is bit-identical to the undisturbed run;
 - a Flink task failure restores from the 200 ms checkpoint in about 0.16 s. It replays the rows after the
   checkpoint, and the final snapshot is bit-identical to the undisturbed run.
+
+Real-data check (`real-smoke`): covertype z-scored (581,012 × 54), N = 2, sensitivity (k = 25, m = 4000), one
+repetition after warm-up, on the same loaded host. These numbers are functional, not a benchmark:
+
+| system | build s | gather s | solve s | coreset pts | cost ratio | distortion max | bytes summary |
+|---|---|---|---|---|---|---|---|
+| grpc/spawn | 0.68 | 0.73 | 1.68 | 22,385 | 1.01 | 1.05 | 10.8 MiB (plus 281.5 MiB raw ingest) |
+| spark/local-cluster | 0.93 | – | 0.15 | 1,796 | 1.04 | 1.11 | 2.1 MiB |
+| flink/minicluster | 1.27 | – | 1.10 | 10,052 | 1.01 | 1.04 | 19.9 MiB |
+| spark-mllib/local | – | – | 10.58 (fit) | – | 1.03 | – | 0.7 MiB |
+
+Faults on the same data:
+
+- killing one of two nodes after a snapshot at 50 % (kill at 75 %, `drop`) lost 31 % of the weight, and the cost
+  ratio went from 1.01 to 1.04;
+- the Spark executor kill slowed the build 2.3×, the replacement registered 2.0 s after the kill, and the coreset
+  was bit-identical;
+- the Flink task failure restored in 0.24 s, and the snapshot was bit-identical.
+
+The final coreset sizes show the asymmetry described above. Spark compresses on the driver; gRPC and Flink return
+unions of tree levels, which costs them solve time and gives slightly better cost ratios.
 
 Run `coreset-experiments/run-engines.sh smoke-1m` for the full grid.
 

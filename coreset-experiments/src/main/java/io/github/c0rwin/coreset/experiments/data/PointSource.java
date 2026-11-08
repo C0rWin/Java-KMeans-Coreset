@@ -17,8 +17,11 @@ public interface PointSource extends Serializable {
 
     int dim();
 
-    /** Streams rows {@code [from, to)}; cheap to open, so every partition or subtask opens its own reader. */
-    ChunkReader open(long from, long to) throws IOException;
+    /**
+     * Streams rows {@code [from, to)} in chunks of at most {@code chunkRows}; cheap to open, so every partition or
+     * subtask opens its own reader.
+     */
+    ChunkReader open(long from, long to, int chunkRows) throws IOException;
 
     /** Where the rows come from (file, generator, checksum), recorded with every result. */
     Map<String, Object> provenance();

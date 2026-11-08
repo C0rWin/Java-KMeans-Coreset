@@ -64,12 +64,25 @@ public record ExperimentConfig(String name, String output, String cacheDir, Inte
         return m.readValue(file.toFile(), ExperimentConfig.class);
     }
 
-    /** A dataset: {@code type} plus string parameters, resolved by {@code PointSources}. */
-    public record DatasetConfig(String id, String type, Map<String, String> params) {
+    /**
+     * A dataset: {@code type} plus string parameters, resolved by {@code PointSources}. {@code exclude} lists system
+     * types, system labels or algorithm labels not run on it (e.g. ones that cannot handle sparse data).
+     */
+    public record DatasetConfig(String id, String type, Map<String, String> params, List<String> exclude) {
         public DatasetConfig {
             Objects.requireNonNull(id, "dataset id");
             Objects.requireNonNull(type, "dataset type");
             params = params != null ? Map.copyOf(params) : Map.of();
+            exclude = exclude != null ? List.copyOf(exclude) : List.of();
+        }
+
+        public DatasetConfig(String id, String type, Map<String, String> params) {
+            this(id, type, params, null);
+        }
+
+        public boolean excludes(SystemConfig s, AlgorithmConfig a) {
+            return exclude.contains(s.type()) || exclude.contains(s.label())
+                    || (a != null && exclude.contains(a.label()));
         }
     }
 

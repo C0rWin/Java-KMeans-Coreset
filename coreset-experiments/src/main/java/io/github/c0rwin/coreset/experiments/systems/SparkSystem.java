@@ -323,7 +323,7 @@ final class SparkSystem implements EngineSystem {
                     while (!current.hasNext() && ranges.hasNext()) {
                         long[] r = ranges.next();
                         try {
-                            current = ChunkReader.points(src.open(r[0], r[1]), chunkRows);
+                            current = ChunkReader.points(src.open(r[0], r[1], chunkRows));
                         } catch (IOException e) {
                             throw new UncheckedIOException(e);
                         }
@@ -346,7 +346,17 @@ final class SparkSystem implements EngineSystem {
 
         @Override
         public Row call(WeightedPoint p) {
-            return RowFactory.create(Vectors.dense(p.vector().toDense()), p.weight());
+            SparseVector v = p.vector();
+            if (2L * v.nnz() >= v.dim()) {
+                return RowFactory.create(Vectors.dense(v.toDense()), p.weight());
+            }
+            int[] idx = new int[v.nnz()];
+            double[] val = new double[v.nnz()];
+            for (int e = 0; e < idx.length; e++) {
+                idx[e] = v.indexAt(e);
+                val[e] = v.valueAt(e);
+            }
+            return RowFactory.create(Vectors.sparse(v.dim(), idx, val), p.weight());
         }
     }
 }

@@ -23,9 +23,9 @@ final class InMemory {
     static Coreset load(PointSource src, long maxPoints, long seed) throws IOException {
         long n = src.size();
         List<PointSet> parts = new ArrayList<>();
-        try (ChunkReader r = src.open(0, n)) {
+        try (ChunkReader r = src.open(0, n, FullCost.CHUNK_ROWS)) {
             if (n <= maxPoints) {
-                for (PointBlock b = r.next(FullCost.CHUNK_ROWS); b != null; b = r.next(FullCost.CHUNK_ROWS)) {
+                for (PointBlock b = r.next(); b != null; b = r.next()) {
                     parts.add(PointSet.of(b));
                 }
                 return Coreset.of(PointSet.concat(parts));
@@ -38,7 +38,7 @@ final class InMemory {
             int picked = 0;
             int[] idx = new int[src.dim()];
             double[] val = new double[src.dim()];
-            for (PointBlock b = r.next(FullCost.CHUNK_ROWS); b != null; b = r.next(FullCost.CHUNK_ROWS)) {
+            for (PointBlock b = r.next(); b != null; b = r.next()) {
                 for (int i = 0; i < b.size(); i++, seen++) {
                     if (rnd.nextDouble() * (n - seen) < s - picked) { // Knuth's algorithm S: exactly s rows
                         int nnz = 0;
