@@ -209,11 +209,27 @@ java -jar coreset-planner/target/coreset-planner.jar validate <same options> --t
 ## Validation on covertype
 
 Covertype z-score, k = 10, delta = 0.05, eps = 0.05, 16 nodes, RTT 0.5 ms, 1 Gbit/s, 1400-byte datagrams.
-Each row has 30 trials (20 for the all-family rows). "Measured" is the empirical 95% quantile of the worst error
+Each calibrated row has 30 trials. "Measured" is the empirical 95% quantile of the worst error
 over the 7 pilot candidates, evaluated on the full data.
 
-See the handoff in `.claude/notes/Planner.md` for the exact table produced by the last run, and
-`PredictedVsMeasuredTest` for the synthetic check in CI.
+Regimes: A is rho = 0; B is rho = 0.1 with mean burst 4; C is rho = 0.3 with node failure probability 0.1, split
+between pre and post.
+
+| regime | mode / families | plan | bytes | eps point | eps bound | measured | measured/point |
+|---|---|---|---|---|---|---|---|
+| A | calibrated / all | mean/cells/datagram, m=1521 | 698 KB | 0.0496 | not certifiable | 0.0336 | 0.68 |
+| A | calibrated / sampling | lightweight/per-draw/datagram, m=1857 | 866 KB | 0.0499 | 11.2 | 0.0385 | 0.77 |
+| A | certified / all | sensitivity/per-draw/reliable/replicas mu=2, m=8.0e6 | 6.1 GB | 0.0008 | 0.0500 | 0.0006 | 0.68 |
+| B | calibrated / all | mean/cells/reliable, m=1521 | 777 KB | 0.0496 | not certifiable | 0.0336 | 0.68 |
+| B | calibrated / sampling | lightweight/per-draw/reliable, m=1857 | 964 KB | 0.0499 | 11.2 | 0.0385 | 0.77 |
+| C | calibrated / all | mean/cells/reliable, m=1713 | 1.12 MB | 0.0498 | not certifiable | 0.0353 | 0.71 |
+| C | calibrated / sampling | lightweight/per-draw/reliable, m=2817 | 1.87 MB | 0.0499 | 11.0 | 0.0351 | 0.70 |
+| C | calibrated / sampling, min time | lightweight/per-draw/datagram/post-r1, m=3345 | 3.11 MB | 0.0499 | 16.2 | 0.0285 | 0.57 |
+| C | certified / all | none certified within m <= 2^23 (closest bound 0.0604) | — | — | — | — | — |
+
+The certified row of A uses 10 trials. Mean-coreset plans are calibrated only, because their bias is measured on the
+pilot. In regime B, one-shot datagrams lose to reliable transport: the bursty Cantelli margin of cor:loss-eps(d)
+forces heavy oversampling. `PredictedVsMeasuredTest` runs the synthetic check in CI.
 
 The test checks that the measured quantile is at most the certified bound and within [0.4, 1.3] times the point
 prediction:
