@@ -2,10 +2,12 @@ package io.github.c0rwin.coreset.spark;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
+import io.github.c0rwin.coreset.core.CoresetAlgorithmFactory;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.Cost;
+import io.github.c0rwin.coreset.core.RegisteredAlgorithm;
 import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
-import io.github.c0rwin.coreset.core.algo.Algorithms;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
 import io.github.c0rwin.coreset.core.kmeans.WeightedLloyd;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
@@ -18,7 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.SplittableRandom;
-import java.util.TreeMap;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.broadcast.Broadcast;
@@ -57,35 +58,50 @@ public final class SparkCoresets {
     }
 
     /**
-     * Builds one coreset of {@code points}: one pass over the input; every partial is encoded once by its task and
-     * decoded once by its consumer, and the driver holds at most {@code fanIn} partials plus the result.
+     * {@link #build(JavaRDD, CoresetAlgorithmFactory, long, int, int)} for a registered algorithm: {@code algorithmId}
+     * is resolved with {@link CoresetAlgorithms#load()} on the driver and again on every executor, so a provider jar
+     * must be on the executors' class path as well (e.g. {@code spark-submit --jars}).
      *
-     * @param algorithmId {@code uniform}, {@code sensitivity} or {@code mean}; see {@link Algorithms#create}
+     * @param algorithmId any id registered with {@link CoresetAlgorithms}, e.g. {@code uniform}, {@code sensitivity}
+     *                    or {@code mean}
      * @param params      algorithm parameters, validated on the driver before any job starts
-     * @param seed        global seed; equal inputs, partitioning and seed give an identical coreset
-     * @param treeDepth   depth of the aggregation tree, as in {@code RDD.treeAggregate}: 1 merges all partition
-     *                    coresets on the driver, larger values add executor-side rounds
-     * @param chunkSize   points per level-0 batch of each partition's merge-reduce tree
-     * @throws IllegalArgumentException for invalid parameters, a point dimension mismatch within a partition, or
-     *                                  partitions of different dimensions
      */
     public static BuildResult build(JavaRDD<WeightedPoint> points, String algorithmId, Map<String, String> params,
                                     long seed, int treeDepth, int chunkSize) {
+        return build(points, new RegisteredAlgorithm(algorithmId, params), seed, treeDepth, chunkSize);
+    }
+
+    /**
+     * Builds one coreset of {@code points}: one pass over the input; every partial is encoded once by its task and
+     * decoded once by its consumer, and the driver holds at most {@code fanIn} partials plus the result.
+     *
+     * @param algorithm recipe called once on the driver (before any job starts, so invalid recipes fail early) and
+     *                  once per task on the executors; it is serialized into the tasks, so its class must be on the
+     *                  executors' class path
+     * @param seed      global seed; equal inputs, partitioning and seed give an identical coreset
+     * @param treeDepth depth of the aggregation tree, as in {@code RDD.treeAggregate}: 1 merges all partition
+     *                  coresets on the driver, larger values add executor-side rounds
+     * @param chunkSize points per level-0 batch of each partition's merge-reduce tree
+     * @throws IllegalArgumentException for an invalid recipe, a point dimension mismatch within a partition, or
+     *                                  partitions of different dimensions
+     */
+    public static BuildResult build(JavaRDD<WeightedPoint> points, CoresetAlgorithmFactory algorithm, long seed,
+                                    int treeDepth, int chunkSize) {
         Objects.requireNonNull(points, "points");
+        Objects.requireNonNull(algorithm, "algorithm");
         if (treeDepth < 1) {
             throw new IllegalArgumentException("treeDepth must be >= 1: " + treeDepth);
         }
         if (chunkSize < 1) {
             throw new IllegalArgumentException("chunkSize must be >= 1: " + chunkSize);
         }
-        CoresetAlgorithm algorithm = Algorithms.create(algorithmId, params);
-        TreeMap<String, String> p = new TreeMap<>(params);
+        CoresetAlgorithm driverAlgorithm = algorithm.create();
         long start = System.nanoTime();
         int partitions = points.getNumPartitions();
         int fanIn = Math.max(2, (int) Math.ceil(Math.pow(partitions, 1.0 / treeDepth)));
 
         JavaRDD<Partial> current = points.mapPartitionsWithIndex((index, it) -> List.of(
-                Partial.ofPartition(index, it, Algorithms.create(algorithmId, p), seed, chunkSize)).iterator(), false);
+                Partial.ofPartition(index, it, algorithm.create(), seed, chunkSize)).iterator(), false);
         int count = partitions;
         int stage = 0;
         while (count > fanIn) {
@@ -94,10 +110,10 @@ public final class SparkCoresets {
             final int s = stage;
             current = current.mapToPair(x -> new Tuple2<>(x.index / fanIn, x))
                     .groupByKey(groups)
-                    .map(g -> Partial.merge(g._2(), g._1(), s, Algorithms.create(algorithmId, p), seed, true));
+                    .map(g -> Partial.merge(g._2(), g._1(), s, algorithm.create(), seed, true));
             count = groups;
         }
-        Partial last = Partial.merge(current.collect(), 0, stage + 1, algorithm, seed, false);
+        Partial last = Partial.merge(current.collect(), 0, stage + 1, driverAlgorithm, seed, false);
         Coreset coreset = last.coreset();
         return new BuildResult(coreset, metrics(last, partitions, chunkSize, fanIn, stage, System.nanoTime() - start));
     }
@@ -112,6 +128,12 @@ public final class SparkCoresets {
     public static BuildResult build(Dataset<Row> data, PointColumns columns, String algorithmId,
                                     Map<String, String> params, long seed, int treeDepth, int chunkSize) {
         return build(points(data, columns), algorithmId, params, seed, treeDepth, chunkSize);
+    }
+
+    /** {@link #build(JavaRDD, CoresetAlgorithmFactory, long, int, int)} over the points in {@code columns}. */
+    public static BuildResult build(Dataset<Row> data, PointColumns columns, CoresetAlgorithmFactory algorithm,
+                                    long seed, int treeDepth, int chunkSize) {
+        return build(points(data, columns), algorithm, seed, treeDepth, chunkSize);
     }
 
     /**
@@ -172,6 +194,16 @@ public final class SparkCoresets {
     }
 
     /**
+     * {@link #kMeans(JavaRDD, CoresetAlgorithmFactory, long, int, int, int, int, int)} for a registered algorithm
+     * (see {@link #build(JavaRDD, String, Map, long, int, int)}) with {@link #defaultChunkSize(Map)}.
+     */
+    public static CoresetKMeans kMeans(JavaRDD<WeightedPoint> points, String algorithmId, Map<String, String> params,
+                                       long seed, int treeDepth, int k, int restarts, int maxIterations) {
+        return kMeans(points, new RegisteredAlgorithm(algorithmId, params), seed, treeDepth, defaultChunkSize(params),
+                k, restarts, maxIterations);
+    }
+
+    /**
      * Builds a coreset, keeps the best of {@code restarts} k-means++ plus weighted Lloyd runs on it (by coreset cost)
      * and evaluates the winner on the full data. Restart {@code i} uses the generator derived from
      * {@code (seed, SOLVER_STREAM, 0, i)}. The input is read twice (build, evaluation); cache it if that is costly.
@@ -179,13 +211,13 @@ public final class SparkCoresets {
      * @throws IllegalArgumentException if {@code k < 1}, {@code restarts < 1}, {@code maxIterations < 0} or the input
      *                                  has no positive-weight point
      */
-    public static CoresetKMeans kMeans(JavaRDD<WeightedPoint> points, String algorithmId, Map<String, String> params,
-                                       long seed, int treeDepth, int k, int restarts, int maxIterations) {
+    public static CoresetKMeans kMeans(JavaRDD<WeightedPoint> points, CoresetAlgorithmFactory algorithm, long seed,
+                                       int treeDepth, int chunkSize, int k, int restarts, int maxIterations) {
         if (k < 1 || restarts < 1 || maxIterations < 0) {
             throw new IllegalArgumentException(
                     "need k >= 1, restarts >= 1, maxIterations >= 0: " + k + ", " + restarts + ", " + maxIterations);
         }
-        BuildResult built = build(points, algorithmId, params, seed, treeDepth);
+        BuildResult built = build(points, algorithm, seed, treeDepth, chunkSize);
         Coreset coreset = built.coreset();
         long solveStart = System.nanoTime();
         KMeansResult best = null;

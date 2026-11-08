@@ -75,7 +75,7 @@
                 </filter>
               </filters>
               <transformers>
-                <!-- Algorithm resolvers and gRPC transports are found through META-INF/services. -->
+                <!-- Algorithm providers and gRPC transports are found through META-INF/services. -->
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>io.github.c0rwin.coreset.testbed.cli.TestbedCommand</mainClass>

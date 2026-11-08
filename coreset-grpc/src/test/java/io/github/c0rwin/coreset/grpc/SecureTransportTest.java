@@ -10,7 +10,7 @@ import io.github.c0rwin.coreset.grpc.cli.NodeCommand;
 import io.github.c0rwin.coreset.grpc.proto.StatsResponse;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.github.c0rwin.coreset.node.testing.TestData;
-import io.github.c0rwin.coreset.node.testing.TestResolver;
+import io.github.c0rwin.coreset.node.testing.TestProvider;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.net.InetSocketAddress;
@@ -36,7 +36,7 @@ class SecureTransportTest {
         List<String> all = new ArrayList<>(List.of("--port", "0", "--metrics-port", "0", "--shutdown-grace-ms", "200"));
         all.addAll(List.of(args));
         new CommandLine(cmd).parseArgs(all.toArray(String[]::new));
-        return cmd.start(new TestResolver());
+        return cmd.start(TestProvider.registry());
     }
 
     private static CoordinatorOptions fast() {

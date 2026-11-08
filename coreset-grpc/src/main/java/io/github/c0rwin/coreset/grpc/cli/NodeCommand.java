@@ -1,5 +1,6 @@
 package io.github.c0rwin.coreset.grpc.cli;
 
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
 import io.github.c0rwin.coreset.grpc.CoresetNodeServer;
@@ -7,10 +8,8 @@ import io.github.c0rwin.coreset.grpc.MetricsHttpServer;
 import io.github.c0rwin.coreset.grpc.MicrometerMetricsSink;
 import io.github.c0rwin.coreset.grpc.NodeServerOptions;
 import io.github.c0rwin.coreset.grpc.ServerSecurity;
-import io.github.c0rwin.coreset.node.AlgorithmResolver;
 import io.github.c0rwin.coreset.node.CoresetNode;
 import io.github.c0rwin.coreset.node.NodeLimits;
-import io.github.c0rwin.coreset.node.ServiceLoaderAlgorithmResolver;
 import io.github.c0rwin.coreset.node.TeeMetricsSink;
 import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
@@ -31,7 +30,7 @@ import picocli.CommandLine.Option;
 
 /**
  * {@code coreset-node}: serves one {@link CoresetNode} over gRPC and Prometheus metrics over HTTP. Algorithms come
- * from {@link java.util.ServiceLoader} providers of {@link AlgorithmResolver} on the classpath.
+ * from {@link CoresetAlgorithms#load()}: the built-ins plus every provider jar on the class path.
  */
 @Command(name = "coreset-node", mixinStandardHelpOptions = true,
         description = "Coreset ingestion node: gRPC service plus Prometheus /metrics.")
@@ -204,12 +203,12 @@ public final class NodeCommand implements Callable<Integer> {
     }
 
     /** Starts servers without blocking. */
-    public Running start(AlgorithmResolver resolver) throws IOException {
+    public Running start(CoresetAlgorithms algorithms) throws IOException {
         NodeServerOptions serverOptions = serverOptions(); // validates the security flags before anything starts
         PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         RecordingMetrics recorder = new RecordingMetrics();
         MetricsSink sink = TeeMetricsSink.of(recorder, new MicrometerMetricsSink(registry));
-        CoresetNode node = new CoresetNode(resolver, sink, Duration.ofMillis(shutdownGraceMs), limits());
+        CoresetNode node = new CoresetNode(algorithms, sink, Duration.ofMillis(shutdownGraceMs), limits());
         CoresetNodeServer server = null;
         try {
             server = CoresetNodeServer.start(serverOptions, node, recorder, sink);
@@ -228,7 +227,7 @@ public final class NodeCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        Running running = start(ServiceLoaderAlgorithmResolver.load());
+        Running running = start(CoresetAlgorithms.load());
         Runtime.getRuntime().addShutdownHook(new Thread(running::close, "coreset-node-shutdown"));
         PrintWriter out = new PrintWriter(System.out, true);
         out.printf("coreset-node listening on %s, metrics on %s%n", running.listenAddresses(),

@@ -24,8 +24,10 @@ The project consists of the following modules:
    lightweight metrics (`MetricsSink`, `RecordingMetrics`, spans).
    - `algo`: `UniformCoreset`, `SensitivityCoreset` (k-means++ or bicriteria
      seeding, with sampling provenance) and `MeanCoreset` (Barger-Feldman,
-     fixed or adaptive m, with the additive offset); `Algorithms.create(id,
-     params)` resolves them by id (`uniform`, `sensitivity`, `mean`).
+     fixed or adaptive m, with the additive offset), registered by id
+     (`uniform`, `sensitivity`, `mean`) through the algorithm SPI:
+     `CoresetAlgorithms.load().create(id, params)` resolves built-in and
+     plugged-in algorithms (`CoresetAlgorithmProvider`, `java.util.ServiceLoader`).
    - `sampling`: Vose alias sampler for multinomial draws.
    - `validate`: empirical distortion over candidate center sets, integrity
      checks (weight and moments, one-sided oracle), per-query confidence
@@ -52,10 +54,15 @@ The project consists of the following modules:
 7. **coreset-bench** - JMH benchmarks of the kernels, the node/gRPC ingestion
    and end-to-end harnesses and JFR profiling, driven by `coreset-bench/run-benchmarks.sh`; see
    [docs/performance.md](docs/performance.md).
+8. **coreset-examples** - a third-party algorithm (the lightweight coreset of
+   Bachem, Lucic and Krause, KDD 2018) plugged in through the SPI only, with
+   tests running it through every layer above.
 
 Documentation
 ---
 
+- [docs/api.md](docs/api.md): entry points per use case and how to plug in an
+  algorithm.
 - [docs/performance.md](docs/performance.md): JMH kernels, ingestion
   throughput, JFR hotspots and the optimizations behind them.
 - [docs/benchmarks/README.md](docs/benchmarks/README.md): coreset quality
@@ -73,8 +80,8 @@ APIs
 
    Points are `WeightedPoint`s over immutable `SparseVector`s (`SparseVector.of(dim,
    indices, values)` or `SparseVector.dense(values)`); a `Coreset` is an immutable
-   weighted point set. `Algorithms.create(id, params)` builds a
-   `CoresetAlgorithm` from string parameters:
+   weighted point set. `CoresetAlgorithms.load().create(id, params)` builds a
+   `CoresetAlgorithm` from string parameters; the built-in ids are:
 
    | id | parameters |
    |---|---|
@@ -86,16 +93,20 @@ APIs
    `WeightedLloyd.bestOf` clusters the result:
 
    ```java
-   CoresetAlgorithm algorithm = Algorithms.create("sensitivity", Map.of("k", "10", "m", "200"));
+   CoresetAlgorithm algorithm = CoresetAlgorithms.load().create("sensitivity", Map.of("k", "10", "m", "200"));
    MergeReduceTree tree = new MergeReduceTree(algorithm, new SplittableRandom(7));
    long seq = 0;
    for (List<WeightedPoint> batch : batches) {
        tree.add(algorithm.compress(Coreset.of(batch), new SplittableRandom(seq++)));
    }
    Coreset coreset = tree.snapshot();
-   KMeansResult result = WeightedLloyd.bestOf(coreset.points(), 10, 50, 10, new SplittableRandom(1),
+   KMeansResult result = WeightedLloyd.bestOf(coreset.pointSet(), 10, 50, 10, new SplittableRandom(1),
            MetricsSink.NOOP);
    ```
+
+   Other algorithms plug in as `CoresetAlgorithmProvider`s registered in
+   `META-INF/services`; node, coordinator, Spark, Flink and the testbed then
+   accept their ids. See [docs/api.md](docs/api.md).
 
 2. ### Distributed protocol (coreset-grpc)
 
@@ -126,10 +137,10 @@ How to run
    idempotent batches, snapshots with completeness counters) and
    `coreset-grpc` serves it over gRPC. Packaging produces two executable jars,
    `coreset-grpc/target/coreset-node.jar` and
-   `coreset-grpc/target/coreset-coordinator.jar`. Algorithms are looked up via
-   `java.util.ServiceLoader` providers of
-   `io.github.c0rwin.coreset.node.AlgorithmResolver`; the bundled
-   `CoreAlgorithmsResolver` serves the coreset-core ids above.
+   `coreset-grpc/target/coreset-coordinator.jar`. Algorithms are resolved with
+   `CoresetAlgorithms.load()`: the coreset-core ids above plus any provider jar
+   on the class path (run the main class with `-cp`, see
+   [docs/api.md](docs/api.md#implement-your-own-algorithm)).
 
    Start one node per machine (or several on one host with different ports),
    then run the coordinator over a points file:

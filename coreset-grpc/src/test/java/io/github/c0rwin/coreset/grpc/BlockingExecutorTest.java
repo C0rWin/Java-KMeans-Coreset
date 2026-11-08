@@ -13,7 +13,7 @@ import io.github.c0rwin.coreset.node.CoresetNode;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.github.c0rwin.coreset.node.testing.TestAlgorithms;
 import io.github.c0rwin.coreset.node.testing.TestData;
-import io.github.c0rwin.coreset.node.testing.TestResolver;
+import io.github.c0rwin.coreset.node.testing.TestProvider;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.Status;
@@ -36,7 +36,7 @@ class BlockingExecutorTest {
     @Test
     void blockingCallsBeyondTheQueueAreRefused() throws Exception {
         TestAlgorithms.Gated gated = new TestAlgorithms.Gated(TestAlgorithms.IDENTITY);
-        CoresetNode node = new CoresetNode(new TestResolver(Map.of("gated", gated)), MetricsSink.NOOP,
+        CoresetNode node = new CoresetNode(TestProvider.registry(Map.of("gated", gated)), MetricsSink.NOOP,
                 Duration.ofMillis(200));
         CoresetNodeGrpcService service = new CoresetNodeGrpcService(node, () -> "{}",
                 CoresetNodeGrpcService.Config.defaults().withBlocking(1, 1));

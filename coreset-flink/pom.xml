@@ -14,10 +14,6 @@
   <name>coreset-flink</name>
   <description>Streaming and windowed coreset construction on Apache Flink (DataStream API)</description>
 
-  <properties>
-    <flink.version>2.3.0</flink.version>
-  </properties>
-
   <dependencies>
     <dependency>
       <groupId>io.github.c0rwin.coreset</groupId>

@@ -3,6 +3,7 @@ package io.github.c0rwin.coreset.bench.perf;
 import io.github.c0rwin.coreset.bench.Workloads;
 import io.github.c0rwin.coreset.bench.jmh.CodecBenchmark;
 import io.github.c0rwin.coreset.core.Coreset;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.metrics.RecordingMetrics;
@@ -16,7 +17,6 @@ import io.github.c0rwin.coreset.grpc.GatheredSnapshot;
 import io.github.c0rwin.coreset.grpc.IngestStream;
 import io.github.c0rwin.coreset.grpc.ProtoCodec;
 import io.github.c0rwin.coreset.grpc.proto.Batch;
-import io.github.c0rwin.coreset.node.CoreAlgorithmsResolver;
 import io.github.c0rwin.coreset.node.CoresetNode;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.github.c0rwin.coreset.node.TreeMode;
@@ -140,7 +140,7 @@ public final class GrpcEndToEndHarness {
         Map<String, String> params = algorithm.equals("uniform")
                 ? Map.of("m", Integer.toString(m))
                 : Map.of("k", Integer.toString(k), "m", Integer.toString(m));
-        try (CoresetNode node = new CoresetNode(new CoreAlgorithmsResolver(), MetricsSink.NOOP);
+        try (CoresetNode node = new CoresetNode(CoresetAlgorithms.load(), MetricsSink.NOOP);
              CoresetNodeServer server = CoresetNodeServer.start(
                      io.github.c0rwin.coreset.grpc.NodeServerOptions.builder().port(0).build(), node,
                      new RecordingMetrics(), MetricsSink.NOOP);

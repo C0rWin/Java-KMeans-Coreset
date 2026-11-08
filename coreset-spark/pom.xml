@@ -14,13 +14,6 @@
   <name>coreset-spark</name>
   <description>Distributed (RDD/Dataset) and Structured Streaming coreset construction on Apache Spark</description>
 
-  <properties>
-    <spark.version>4.0.5</spark.version>
-    <scala.binary.version>2.13</scala.binary.version>
-    <!-- Module opens Spark needs on Java 17 (same list as Spark's launcher JavaModuleOptions). -->
-    <spark.test.jvm.args>-XX:+IgnoreUnrecognizedVMOptions --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/jdk.internal.ref=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.nio.cs=ALL-UNNAMED --add-opens=java.base/sun.security.action=ALL-UNNAMED --add-opens=java.base/sun.util.calendar=ALL-UNNAMED -Djdk.reflect.useDirectMethodHandle=false -Dio.netty.tryReflectionSetAccessible=true</spark.test.jvm.args>
-  </properties>
-
   <dependencies>
     <dependency>
       <groupId>io.github.c0rwin.coreset</groupId>

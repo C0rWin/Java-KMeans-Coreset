@@ -2,7 +2,9 @@ package io.github.c0rwin.coreset.node;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.SparseVector;
+import io.github.c0rwin.coreset.core.UnknownAlgorithmException;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import java.time.Duration;
@@ -55,7 +57,7 @@ public final class CoresetNode implements AutoCloseable {
     /** Default time a closing session waits for a busy worker before interrupting it. */
     public static final Duration DEFAULT_SHUTDOWN_GRACE = Duration.ofSeconds(10);
 
-    private final AlgorithmResolver resolver;
+    private final CoresetAlgorithms algorithms;
     private final Duration shutdownGrace;
     private final MetricsSink metrics;
     private final NodeLimits limits;
@@ -65,22 +67,23 @@ public final class CoresetNode implements AutoCloseable {
     private final ScheduledExecutorService reaper;
     private volatile boolean closed;
 
-    public CoresetNode(AlgorithmResolver resolver) {
-        this(resolver, MetricsSink.NOOP);
+    /** @param algorithms resolves {@link SessionSpec#algorithmId()}, usually {@link CoresetAlgorithms#load()} */
+    public CoresetNode(CoresetAlgorithms algorithms) {
+        this(algorithms, MetricsSink.NOOP);
     }
 
-    public CoresetNode(AlgorithmResolver resolver, MetricsSink metrics) {
-        this(resolver, metrics, DEFAULT_SHUTDOWN_GRACE);
+    public CoresetNode(CoresetAlgorithms algorithms, MetricsSink metrics) {
+        this(algorithms, metrics, DEFAULT_SHUTDOWN_GRACE);
     }
 
     /** @param shutdownGrace how long closing waits for a worker inside the algorithm before interrupting it */
-    public CoresetNode(AlgorithmResolver resolver, MetricsSink metrics, Duration shutdownGrace) {
-        this(resolver, metrics, shutdownGrace, NodeLimits.defaults());
+    public CoresetNode(CoresetAlgorithms algorithms, MetricsSink metrics, Duration shutdownGrace) {
+        this(algorithms, metrics, shutdownGrace, NodeLimits.defaults());
     }
 
     /** @param limits resource bounds enforced before anything is allocated for a caller */
-    public CoresetNode(AlgorithmResolver resolver, MetricsSink metrics, Duration shutdownGrace, NodeLimits limits) {
-        this.resolver = Objects.requireNonNull(resolver, "resolver");
+    public CoresetNode(CoresetAlgorithms algorithms, MetricsSink metrics, Duration shutdownGrace, NodeLimits limits) {
+        this.algorithms = Objects.requireNonNull(algorithms, "algorithms");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.shutdownGrace = Objects.requireNonNull(shutdownGrace, "shutdownGrace");
         this.limits = Objects.requireNonNull(limits, "limits");
@@ -123,8 +126,9 @@ public final class CoresetNode implements AutoCloseable {
      *                  derived from {@code (seed, partition)}, so give each node a distinct value to keep their random
      *                  streams independent. 0 derives from the seed alone.
      * @throws IllegalStateException    if the id exists with a different spec, or the node is closed
-     * @throws IllegalArgumentException if the id or spec is outside the limits, the partition is negative, or the
-     *                                  resolver rejects the algorithm
+     * @throws IllegalArgumentException if the id or spec is outside the limits, the partition is negative, the
+     *                                  algorithm id is unknown ({@link UnknownAlgorithmException}) or its parameters
+     *                                  are rejected
      * @throws NodeLimitException       if the node has no room for another session or for its workers
      */
     public boolean createSession(String sessionId, SessionSpec spec, long partition) {
@@ -146,10 +150,7 @@ public final class CoresetNode implements AutoCloseable {
         reserve(spec.workers());
         Session session;
         try {
-            CoresetAlgorithm algorithm = resolver.resolve(spec.algorithmId(), spec.params());
-            if (algorithm == null) {
-                throw new IllegalStateException("resolver returned null for " + Messages.bounded(spec.algorithmId()));
-            }
+            CoresetAlgorithm algorithm = algorithms.create(spec.algorithmId(), spec.params());
             session = new Session(sessionId, spec, partition, algorithm, metrics, limits);
         } catch (Throwable t) {
             release(spec.workers());

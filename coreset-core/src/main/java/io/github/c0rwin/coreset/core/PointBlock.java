@@ -346,7 +346,7 @@ public final class PointBlock implements Serializable {
     }
 
     /** {@code sum of c^2} over the entries of row {@code j} outside the support of row {@code i} of {@code p}. */
-    double offSupport(int j, PointBlock p, int i) {
+    public double offSupport(int j, PointBlock p, int i) {
         return Kernels.offSupportSparse(p.indices, p.offsets[p.base + i], p.offsets[p.base + i + 1], indices, values,
                 offsets[base + j], offsets[base + j + 1]);
     }
