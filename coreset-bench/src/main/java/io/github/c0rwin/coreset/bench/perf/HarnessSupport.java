@@ -1,14 +1,11 @@
 package io.github.c0rwin.coreset.bench.perf;
 
-import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.Logger;
 import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.LoggerFactory;
 
 /** Argument parsing, environment banner, logging and statistics shared by the harness entry points. */
 final class HarnessSupport {
@@ -37,9 +34,8 @@ final class HarnessSupport {
         return Arrays.stream(csv.split(",")).map(String::trim).mapToInt(Integer::parseInt).toArray();
     }
 
-    /** The legacy server logs every batch at INFO; that would dominate its timings. */
+    /** gRPC and Netty log through java.util.logging; INFO lines would interleave with the markdown output. */
     static void quietLogs() {
-        ((Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME)).setLevel(Level.WARN);
         java.util.logging.Logger.getLogger("").setLevel(java.util.logging.Level.WARNING);
     }
 

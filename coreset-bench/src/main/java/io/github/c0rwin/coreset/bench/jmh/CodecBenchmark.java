@@ -1,7 +1,6 @@
 package io.github.c0rwin.coreset.bench.jmh;
 
 import com.google.protobuf.InvalidProtocolBufferException;
-import io.github.c0rwin.coreset.bench.LegacyConvert;
 import io.github.c0rwin.coreset.bench.Workloads;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.grpc.ProtoCodec;
@@ -10,10 +9,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.SplittableRandom;
 import java.util.concurrent.TimeUnit;
-import org.apache.thrift.TDeserializer;
-import org.apache.thrift.TException;
-import org.apache.thrift.TSerializer;
-import org.apache.thrift.protocol.TBinaryProtocol;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -25,15 +20,11 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
-import univ.ml.distributed.coreset.CoresetPoints;
-import univ.ml.distributed.coreset.CoresetUtils;
-import univ.ml.sparse.SparseWeightableVector;
 
 /**
- * Encode and decode of one ingest batch, from and to the domain types each stack computes on: protobuf
- * ({@link ProtoCodec} + {@link Batch}, packed O(nnz) arrays) vs legacy Thrift ({@code TBinaryProtocol}, a
- * {@code map<i32,double>} per point, decoded into commons-math {@link SparseWeightableVector}s as the legacy server
- * does). Sizes per batch are printed by {@code CodecSizes}.
+ * Protobuf encode and decode of one ingest batch ({@link ProtoCodec} + {@link Batch}, packed O(nnz) arrays), from and
+ * to the {@link WeightedPoint}s the node computes on. Serialized sizes per batch are printed by
+ * {@code GrpcEndToEndHarness}.
  */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
@@ -51,18 +42,12 @@ public class CodecBenchmark {
 
     private List<WeightedPoint> points;
     private byte[] protoBytes;
-    private byte[] thriftBytes;
-    private TSerializer serializer;
-    private TDeserializer deserializer;
     private long seq;
 
     @Setup
-    public void setup() throws TException {
+    public void setup() {
         points = batch(nnz, 13L);
-        serializer = new TSerializer(new TBinaryProtocol.Factory());
-        deserializer = new TDeserializer(new TBinaryProtocol.Factory());
         protoBytes = protoEncode();
-        thriftBytes = thriftEncode();
     }
 
     public static List<WeightedPoint> batch(int nnz, long seed) {
@@ -88,17 +73,5 @@ public class CodecBenchmark {
     public List<WeightedPoint> protoDecode() throws InvalidProtocolBufferException {
         return ProtoCodec.pointsFromProto(Batch.parseFrom(protoBytes).getPointsList(),
                 io.github.c0rwin.coreset.node.NodeLimits.defaults().maxDim());
-    }
-
-    @Benchmark
-    public byte[] thriftEncode() throws TException {
-        return serializer.serialize(new CoresetPoints(seq++, LegacyConvert.toThrift(points)));
-    }
-
-    @Benchmark
-    public List<SparseWeightableVector> thriftDecode() throws TException {
-        CoresetPoints msg = new CoresetPoints();
-        deserializer.deserialize(msg, thriftBytes);
-        return CoresetUtils.toSparseWeightableVectors(msg);
     }
 }

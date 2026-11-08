@@ -11,8 +11,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
- * Loopback TCP relay counting the bytes that cross it in each direction, so Thrift and gRPC (HTTP/2 framing,
- * headers, acks included) are measured the same way on the wire. Thread per direction per connection.
+ * Loopback TCP relay counting the bytes that cross it in each direction, so wire numbers include gRPC's HTTP/2
+ * framing, headers and acks. Thread per direction per connection.
  */
 final class CountingProxy implements AutoCloseable {
 
