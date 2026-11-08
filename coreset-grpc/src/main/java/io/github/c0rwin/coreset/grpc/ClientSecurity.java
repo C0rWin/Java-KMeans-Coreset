@@ -1,9 +1,13 @@
 package io.github.c0rwin.coreset.grpc;
 
+import io.grpc.ChannelCredentials;
+import io.grpc.InsecureChannelCredentials;
+import io.grpc.TlsChannelCredentials;
+import java.io.IOException;
 import java.nio.file.Path;
 
 /**
- * Transport security of the coordinator's channels.
+ * Transport security of client channels (the coordinator's, and a node's channels to its peers).
  *
  * @param trustCa    PEM trust anchors for node certificates; enables TLS (otherwise plaintext)
  * @param certChain  PEM client certificate chain for mutual TLS, with {@code privateKey}
@@ -30,5 +34,17 @@ public record ClientSecurity(Path trustCa, Path certChain, Path privateKey, Stri
 
     public boolean tls() {
         return trustCa != null;
+    }
+
+    /** Plaintext, or TLS trusting {@code trustCa} with the client certificate if one is set. */
+    public ChannelCredentials channelCredentials() throws IOException {
+        if (!tls()) {
+            return InsecureChannelCredentials.create();
+        }
+        TlsChannelCredentials.Builder tls = TlsChannelCredentials.newBuilder().trustManager(trustCa.toFile());
+        if (certChain != null) {
+            tls.keyManager(certChain.toFile(), privateKey.toFile());
+        }
+        return tls.build();
     }
 }

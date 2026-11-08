@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.DoubleAdder;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
 import java.util.random.RandomGenerator;
@@ -21,6 +22,8 @@ import java.util.random.RandomGenerator;
 final class Session {
 
     static final int MAX_PRODUCER_ID_LENGTH = 128;
+    /** Replicas one session may hold: bounds the memory peers can make a node keep. */
+    static final int MAX_REPLICAS = 1024;
     /** Power of two: the O(points) snapshot size estimate is recorded for one snapshot in this many. */
     private static final int BYTES_SAMPLE_EVERY = 16;
 
@@ -39,6 +42,11 @@ final class Session {
     private final AtomicInteger producerCount = new AtomicInteger();
     private final AtomicInteger snapshots = new AtomicInteger();
     private final DoubleAdder acceptedWeight = new DoubleAdder();
+    private final LongAdder acceptedPoints = new LongAdder();
+    /** This node's message as fixed by {@link #freeze}; served instead of a fresh one so replicas stay identical. */
+    private final AtomicReference<NodeMessage> frozen = new AtomicReference<>();
+    /** Messages of other nodes stored here as replicas, by owner. */
+    private final ConcurrentHashMap<Long, NodeMessage> replicas = new ConcurrentHashMap<>();
     private final AtomicInteger dim = new AtomicInteger(-1);
     private final AtomicReference<Throwable> failure = new AtomicReference<>();
     private final ConcurrentLinkedQueue<Thread> waiters = new ConcurrentLinkedQueue<>();
@@ -151,6 +159,7 @@ final class Session {
         Worker w = workers[producer.worker(seq, workers.length)];
         // Counted before the offer so a snapshot never sees the batch applied but not accepted.
         acceptedWeight.add(weight);
+        acceptedPoints.add(points.size());
         boolean offered = false;
         try {
             offered = w.queue.offer(new Worker.PendingBatch(seq, producer.salt, points, weight));
@@ -161,6 +170,7 @@ final class Session {
                 // Also on an Error between claim and offer: an abandoned claim would answer BUSY forever.
                 dedupe.release(seq);
                 acceptedWeight.add(-weight);
+                acceptedPoints.add(-points.size());
             }
         }
         if (!offered) {
@@ -325,6 +335,41 @@ final class Session {
     /** Worker {@code i}'s last published view (tests). */
     Worker.View workerView(int i) {
         return workers[i].view();
+    }
+
+    /** The message of sampling stream {@code stream}: the frozen one if it matches, else built from a snapshot. */
+    NodeMessage message(long stream) {
+        NodeMessage f = frozen.get();
+        return f != null && f.stream() == stream ? f : buildMessage(stream);
+    }
+
+    /** Builds the message from the current snapshot and keeps serving it for {@code stream} from now on. */
+    NodeMessage freeze(long stream) {
+        NodeMessage m = buildMessage(stream);
+        frozen.set(m);
+        return m;
+    }
+
+    private NodeMessage buildMessage(long stream) {
+        return MessageBuilder.build(spec.message(), snapshot(), acceptedPoints.sum(), partitionSeed, stream,
+                metrics);
+    }
+
+    /** @throws NodeLimitException if the message is too large or the session holds too many replicas */
+    void storeReplica(long owner, NodeMessage message) {
+        if (message.recordCount() > limits.maxSnapshotPoints()) {
+            throw new NodeLimitException("replica of " + message.recordCount() + " records exceeds the limit of "
+                    + limits.maxSnapshotPoints());
+        }
+        if (!replicas.containsKey(owner) && replicas.size() >= MAX_REPLICAS) {
+            throw new NodeLimitException("session already holds " + MAX_REPLICAS + " replicas");
+        }
+        replicas.put(owner, message);
+    }
+
+    /** The replica stored for {@code owner}, or null. */
+    NodeMessage replica(long owner) {
+        return replicas.get(owner);
     }
 
     /**

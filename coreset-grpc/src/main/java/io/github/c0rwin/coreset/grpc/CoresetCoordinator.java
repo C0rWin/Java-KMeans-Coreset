@@ -14,22 +14,32 @@ import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.grpc.proto.CloseSessionRequest;
 import io.github.c0rwin.coreset.grpc.proto.CoresetNodeServiceGrpc;
 import io.github.c0rwin.coreset.grpc.proto.CreateSessionRequest;
+import io.github.c0rwin.coreset.grpc.proto.MessageHeader;
 import io.github.c0rwin.coreset.grpc.proto.PartialCostRequest;
 import io.github.c0rwin.coreset.grpc.proto.PartialCostResponse;
 import io.github.c0rwin.coreset.grpc.proto.PointList;
+import io.github.c0rwin.coreset.grpc.proto.ReplicateRequest;
+import io.github.c0rwin.coreset.grpc.proto.ReplicateResponse;
+import io.github.c0rwin.coreset.grpc.proto.SnapshotChunk;
 import io.github.c0rwin.coreset.grpc.proto.SnapshotRequest;
 import io.github.c0rwin.coreset.grpc.proto.SnapshotResponse;
+import io.github.c0rwin.coreset.grpc.proto.SnapshotStreamRequest;
 import io.github.c0rwin.coreset.grpc.proto.StatsRequest;
 import io.github.c0rwin.coreset.grpc.proto.StatsResponse;
+import io.github.c0rwin.coreset.grpc.resilience.Census;
+import io.github.c0rwin.coreset.grpc.resilience.GroupLayout;
+import io.github.c0rwin.coreset.grpc.resilience.ResilienceOptions;
+import io.github.c0rwin.coreset.grpc.resilience.ResilientSnapshot;
+import io.github.c0rwin.coreset.grpc.resilience.SurvivorReweighting;
 import io.github.c0rwin.coreset.node.NodeSnapshot;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.grpc.Channel;
 import io.grpc.ChannelCredentials;
-import io.grpc.InsecureChannelCredentials;
+import io.grpc.ClientInterceptor;
 import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
-import io.grpc.TlsChannelCredentials;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -37,6 +47,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.SplittableRandom;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -56,6 +67,7 @@ public final class CoresetCoordinator implements AutoCloseable {
     public static final Duration KEEPALIVE_TIMEOUT = Duration.ofSeconds(10);
 
     private final List<ManagedChannel> ownedChannels;
+    private final List<String> targets;
     private final List<CoresetNodeServiceGrpc.CoresetNodeServiceStub> async;
     private final List<CoresetNodeServiceGrpc.CoresetNodeServiceFutureStub> futures;
     private final CoordinatorOptions options;
@@ -63,15 +75,16 @@ public final class CoresetCoordinator implements AutoCloseable {
 
     /** Uses channels owned by the caller (e.g. in-process channels in tests). */
     public CoresetCoordinator(List<? extends Channel> channels, CoordinatorOptions options) {
-        this(channels, List.of(), options);
+        this(channels, List.of(), List.of(), options);
     }
 
-    private CoresetCoordinator(List<? extends Channel> channels, List<ManagedChannel> owned,
+    private CoresetCoordinator(List<? extends Channel> channels, List<ManagedChannel> owned, List<String> targets,
                                CoordinatorOptions options) {
         if (channels.isEmpty()) {
             throw new IllegalArgumentException("at least one node is required");
         }
         this.ownedChannels = List.copyOf(owned);
+        this.targets = List.copyOf(targets);
         this.options = options;
         this.async = new ArrayList<>(channels.size());
         this.futures = new ArrayList<>(channels.size());
@@ -94,7 +107,17 @@ public final class CoresetCoordinator implements AutoCloseable {
      */
     public static CoresetCoordinator connect(List<String> targets, CoordinatorOptions options, ClientSecurity security,
                                              MetricsSink metrics) throws IOException {
-        ChannelCredentials credentials = credentials(security);
+        return connect(targets, options, security, metrics, List.of());
+    }
+
+    /**
+     * {@link #connect(List, CoordinatorOptions, ClientSecurity, MetricsSink)} with further client interceptors on
+     * every channel, outermost first (e.g. a {@link io.github.c0rwin.coreset.grpc.resilience.LossyTransport}).
+     */
+    public static CoresetCoordinator connect(List<String> targets, CoordinatorOptions options, ClientSecurity security,
+                                             MetricsSink metrics, List<? extends ClientInterceptor> interceptors)
+            throws IOException {
+        ChannelCredentials credentials = security.channelCredentials();
         List<ManagedChannel> channels = new ArrayList<>(targets.size());
         try {
             for (String target : targets) {
@@ -106,24 +129,14 @@ public final class CoresetCoordinator implements AutoCloseable {
                 if (security.authToken() != null) {
                     b.intercept(TokenAuth.client(security.authToken()));
                 }
+                b.intercept(List.copyOf(interceptors)); // last added runs first
                 channels.add(b.build());
             }
         } catch (RuntimeException e) {
             channels.forEach(ManagedChannel::shutdownNow);
             throw e;
         }
-        return new CoresetCoordinator(channels, channels, options);
-    }
-
-    private static ChannelCredentials credentials(ClientSecurity security) throws IOException {
-        if (!security.tls()) {
-            return InsecureChannelCredentials.create();
-        }
-        TlsChannelCredentials.Builder tls = TlsChannelCredentials.newBuilder().trustManager(security.trustCa().toFile());
-        if (security.certChain() != null) {
-            tls.keyManager(security.certChain().toFile(), security.privateKey().toFile());
-        }
-        return tls.build();
+        return new CoresetCoordinator(channels, channels, targets, options);
     }
 
     public int nodes() {
@@ -135,14 +148,30 @@ public final class CoresetCoordinator implements AutoCloseable {
      * derive independent random streams from the shared seed.
      */
     public void createSession(String sessionId, SessionSpec spec) throws InterruptedException {
+        createSession(sessionId, spec, GroupLayout.independent(nodes()));
+    }
+
+    /**
+     * Creates the session on every node with the partition of its group, so the members of a group derive the same
+     * summary randomness ({@link GroupLayout#partitionOf}).
+     */
+    public void createSession(String sessionId, SessionSpec spec, GroupLayout layout) throws InterruptedException {
+        requireLayout(layout);
         CreateSessionRequest.Builder req = CreateSessionRequest.newBuilder()
                 .setSessionId(sessionId)
                 .setSpec(ProtoCodec.toProto(spec));
         List<ListenableFuture<?>> calls = new ArrayList<>(futures.size());
         for (int i = 0; i < futures.size(); i++) {
-            calls.add(deadline(futures.get(i), options.rpcDeadline()).createSession(req.setPartition(i).build()));
+            calls.add(deadline(futures.get(i), options.rpcDeadline())
+                    .createSession(req.setPartition((int) layout.partitionOf(i)).build()));
         }
         awaitAll(calls);
+    }
+
+    private void requireLayout(GroupLayout layout) {
+        if (layout.nodes() != nodes()) {
+            throw new IllegalArgumentException("layout has " + layout.nodes() + " nodes, coordinator " + nodes());
+        }
     }
 
     public void closeSession(String sessionId) throws InterruptedException {
@@ -165,15 +194,124 @@ public final class CoresetCoordinator implements AutoCloseable {
      * already sent batches into this session makes the nodes answer DUPLICATE, which fails the stream.
      */
     public IngestStream openIngest(String sessionId, String producerId) {
+        return openIngest(sessionId, producerId, GroupLayout.independent(nodes()));
+    }
+
+    /**
+     * Opens an ingest stream that sends every batch to all members of the next group in round-robin order, under
+     * one seq per group, so the members hold the same summary if their batches arrive in the same order.
+     */
+    public IngestStream openIngest(String sessionId, String producerId, GroupLayout layout) {
         Objects.requireNonNull(producerId, "producerId");
         if (producerId.isEmpty()) {
             throw new IllegalArgumentException("producer id must not be empty");
         }
-        return new IngestStream(sessionId, producerId, async, options, scheduler);
+        requireLayout(layout);
+        return new IngestStream(sessionId, producerId, async, layout.groups(), options, scheduler);
     }
 
     /**
-     * Snapshots the session on every node in parallel and unions the coresets.
+     * Header of every node's message (weight and points) without its packets, to be taken before failures for
+     * {@link SurvivorReweighting#REALIZED_WEIGHT}. Nodes that do not answer within the deadline get NaN.
+     */
+    public Census census(String sessionId, GroupLayout layout, Duration awaitApplied) throws InterruptedException {
+        requireLayout(layout);
+        int n = nodes();
+        List<CompletableFuture<MessageHeader>> calls = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            calls.add(header(i, SnapshotStreamRequest.newBuilder().setSessionId(sessionId).setOwner(i)
+                    .setStream(layout.streamOf(i)).setHeaderOnly(true).setAwaitAppliedMs(awaitApplied.toMillis())
+                    .build(), options.rpcDeadline().plus(awaitApplied)));
+        }
+        double[] weight = new double[n];
+        long[] points = new long[n];
+        for (int i = 0; i < n; i++) {
+            try {
+                MessageHeader h = calls.get(i).get();
+                weight[i] = h.getNodeWeight();
+                points[i] = h.getNodePoints();
+            } catch (ExecutionException e) {
+                weight[i] = Double.NaN;
+                points[i] = -1;
+            }
+        }
+        return new Census(weight, points);
+    }
+
+    /** The header of a header-only {@code SnapshotStream} call to node {@code i}. */
+    private CompletableFuture<MessageHeader> header(int i, SnapshotStreamRequest req, Duration deadline) {
+        CompletableFuture<MessageHeader> out = new CompletableFuture<>();
+        async.get(i).withDeadlineAfter(deadline.toNanos(), TimeUnit.NANOSECONDS).snapshotStream(req,
+                new StreamObserver<>() {
+                    @Override
+                    public void onNext(SnapshotChunk chunk) {
+                        if (chunk.hasHeader()) {
+                            out.complete(chunk.getHeader());
+                        }
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                        out.completeExceptionally(t);
+                    }
+
+                    @Override
+                    public void onCompleted() {
+                        out.completeExceptionally(new IllegalStateException("stream ended without a header"));
+                    }
+                });
+        return out;
+    }
+
+    /**
+     * Freezes every node's message and has node {@code i} store copies on nodes {@code i+1 .. i+r} (mod nodes), the
+     * targets as the nodes reach each other (prop:post-replication). The holders then serve node {@code i}'s message
+     * to {@link #gatherResilient} if {@code i} is gone.
+     *
+     * @param peerTargets address of every node as seen from the other nodes, in node order
+     * @return per node, the reply naming the copies stored and the peers that failed
+     */
+    public List<ReplicateResponse> replicate(String sessionId, int r, List<String> peerTargets, GroupLayout layout,
+                                             Duration awaitApplied) throws InterruptedException {
+        int n = nodes();
+        requireLayout(layout);
+        if (peerTargets.size() != n || r < 0 || r >= n) {
+            throw new IllegalArgumentException("need one target per node and 0 <= r < nodes");
+        }
+        List<ListenableFuture<ReplicateResponse>> calls = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            ReplicateRequest.Builder req = ReplicateRequest.newBuilder().setSessionId(sessionId).setOwner(i)
+                    .setStream(layout.streamOf(i)).setAwaitAppliedMs(awaitApplied.toMillis());
+            for (int j = 1; j <= r; j++) {
+                req.addPeers(peerTargets.get((i + j) % n));
+            }
+            calls.add(deadline(futures.get(i), options.rpcDeadline().plus(awaitApplied)).replicate(req.build()));
+        }
+        return awaitAll(calls);
+    }
+
+    /** {@link #replicate(String, int, List, GroupLayout, Duration)} to the targets this coordinator connected to. */
+    public List<ReplicateResponse> replicate(String sessionId, int r, GroupLayout layout, Duration awaitApplied)
+            throws InterruptedException {
+        if (targets.isEmpty()) {
+            throw new IllegalStateException("coordinator built from channels: pass the peer targets");
+        }
+        return replicate(sessionId, r, targets, layout, awaitApplied);
+    }
+
+    /**
+     * Gathers every node's message as a packet stream and decodes it per {@code options}: lost packets are handled
+     * by the decoder, a crashed node by its replica holders, and lost groups by survivor reweighting. Unlike
+     * {@link #gather}, a node failure does not fail the call.
+     */
+    public ResilientSnapshot gatherResilient(String sessionId, ResilienceOptions options)
+            throws InterruptedException {
+        return new ResilientGather(async, sessionId, options, this.options.maxDim()).run();
+    }
+
+    /**
+     * Snapshots the session on every node in parallel and unions the coresets; any node failure fails the call (see
+     * {@link #gatherResilient} for the fault-tolerant path).
      *
      * @param awaitApplied how long each node may wait for its accepted batches to be applied first; zero snapshots
      *                     immediately (continuous mode: check {@link GatheredSnapshot#complete()})

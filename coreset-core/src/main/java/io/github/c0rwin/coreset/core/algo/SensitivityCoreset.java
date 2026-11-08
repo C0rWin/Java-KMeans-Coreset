@@ -63,14 +63,29 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
 
     /** Same coreset as {@link #compress} for the same generator state, plus the sampling provenance. */
     public SampledCoreset compressWithProvenance(Coreset input, RandomGenerator rng, MetricsSink metrics) {
+        return sample(input, rng, rng, metrics, true);
+    }
+
+    /**
+     * Always draws m points i.i.d., even from an input of at most m points (an input without positive weight still
+     * gives an exact empty coreset). The seeding, hence the distribution q, comes from {@code seedingRng} and the
+     * draws from {@code samplingRng}: replicas sharing {@code seedingRng}'s state sample one q independently.
+     */
+    public SampledCoreset sample(Coreset input, RandomGenerator seedingRng, RandomGenerator samplingRng,
+                                 MetricsSink metrics) {
+        return sample(input, seedingRng, samplingRng, metrics, false);
+    }
+
+    private SampledCoreset sample(Coreset input, RandomGenerator seedingRng, RandomGenerator samplingRng,
+                                  MetricsSink metrics, boolean passThroughSmall) {
         try (Span ignored = metrics.span(MetricNames.SENSITIVITY_COMPRESS)) {
             PointSet points = input.pointSet();
             final int n = points.size();
-            if (n <= m) {
+            if (passThroughSmall && n <= m) {
                 metrics.count(MetricNames.SENSITIVITY_PASSTHROUGH, 1);
                 return SampledCoreset.exact(input);
             }
-            Clustering b = seeding.cluster(points, k, rng, metrics);
+            Clustering b = seeding.cluster(points, k, seedingRng, metrics);
             if (b.centers().isEmpty()) {
                 return SampledCoreset.exact(new Coreset(PointBlock.EMPTY, input.offset())); // no positive weight
             }
@@ -83,7 +98,7 @@ public final class SensitivityCoreset implements CoresetAlgorithm {
             long scanned = b.clusterWeights == null ? 2L * n : n;
             metrics.record(MetricNames.SENSITIVITY_TOTAL, total);
 
-            int[] draws = AliasSampler.ofOwned(s.clone(), b.assignment).sortedDraws(m, rng);
+            int[] draws = AliasSampler.ofOwned(s.clone(), b.assignment).sortedDraws(m, samplingRng);
             int distinct = 0;
             for (int j = 0; j < m; j++) {
                 distinct += j == 0 || draws[j] != draws[j - 1] ? 1 : 0;

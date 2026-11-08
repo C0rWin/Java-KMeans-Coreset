@@ -24,11 +24,13 @@ import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.LockSupport;
 
 /**
- * Distributes batches of one session round-robin over the coordinator's nodes, one bidirectional stream per node.
+ * Distributes batches of one session round-robin over the coordinator's node groups, one bidirectional stream per
+ * node; a batch goes to every member of its group (one node per group unless a replica layout says otherwise).
  *
- * <p>Every batch gets a per-node dense seq (0, 1, 2, ... on each node, which keeps the node's dedupe state
- * compact) under this stream's {@link #producerId()} (random by default), so a later stream into the same session
- * numbers its batches independently instead of colliding with this one. A batch stays in that node's outstanding map until
+ * <p>Every batch gets a per-group dense seq (0, 1, 2, ... in each group, so every member's dedupe state stays
+ * compact and the members see the same seq for the same batch) under this stream's {@link #producerId()} (random by
+ * default), so a later stream into the same session numbers its batches independently instead of colliding with
+ * this one. A batch stays in that node's outstanding map until
  * acknowledged ACCEPTED or DUPLICATE. BUSY acks resend the same seq after a backoff; a broken or expired stream is
  * reopened and all outstanding batches are resent with their original seqs, so nothing is lost and nothing is double
  * counted. A DUPLICATE ack for a batch that was sent only once cannot be a retry and fails the stream. At most
@@ -44,6 +46,8 @@ public final class IngestStream implements AutoCloseable {
     private final CoordinatorOptions options;
     private final ScheduledExecutorService scheduler;
     private final NodeStream[] nodes;
+    private final int[][] groups;
+    private final AtomicLong[] groupSeqs;
     private final AtomicLong roundRobin = new AtomicLong();
     private final AtomicReference<IngestFailedException> failure = new AtomicReference<>();
     private final ConcurrentLinkedQueue<Thread> flushers = new ConcurrentLinkedQueue<>();
@@ -54,7 +58,7 @@ public final class IngestStream implements AutoCloseable {
     private volatile boolean closed;
 
     IngestStream(String sessionId, String producerId, List<CoresetNodeServiceGrpc.CoresetNodeServiceStub> stubs,
-                 CoordinatorOptions options, ScheduledExecutorService scheduler) {
+                 int[][] groups, CoordinatorOptions options, ScheduledExecutorService scheduler) {
         this.sessionId = sessionId;
         this.producerId = producerId;
         this.options = options;
@@ -62,6 +66,11 @@ public final class IngestStream implements AutoCloseable {
         this.nodes = new NodeStream[stubs.size()];
         for (int i = 0; i < nodes.length; i++) {
             nodes[i] = new NodeStream(i, stubs.get(i));
+        }
+        this.groups = groups;
+        this.groupSeqs = new AtomicLong[groups.length];
+        for (int g = 0; g < groups.length; g++) {
+            groupSeqs[g] = new AtomicLong();
         }
     }
 
@@ -71,8 +80,8 @@ public final class IngestStream implements AutoCloseable {
     }
 
     /**
-     * Queues one batch for the next node in round-robin order, blocking while that node has the maximum number of
-     * unacknowledged batches. The points are encoded once, straight into the outgoing message.
+     * Queues one batch for every member of the next group in round-robin order, blocking while a member has the
+     * maximum number of unacknowledged batches. The points are encoded once, straight into the outgoing message.
      *
      * @throws IngestFailedException if the stream already failed, or no capacity freed up within
      *                               {@link CoordinatorOptions#submitTimeout()} (the stream is then failed)
@@ -86,8 +95,11 @@ public final class IngestStream implements AutoCloseable {
         for (int i = 0, n = batch.size(); i < n; i++) {
             message.addPoints(ProtoCodec.toProto(batch.get(i)));
         }
-        NodeStream node = nodes[(int) Math.floorMod(roundRobin.getAndIncrement(), (long) nodes.length)];
-        node.submit(message);
+        int g = (int) Math.floorMod(roundRobin.getAndIncrement(), (long) groups.length);
+        long seq = groupSeqs[g].getAndIncrement();
+        for (int member : groups[g]) {
+            nodes[member].submit(message, seq);
+        }
     }
 
     /**
@@ -198,7 +210,6 @@ public final class IngestStream implements AutoCloseable {
         final CoresetNodeServiceGrpc.CoresetNodeServiceStub stub;
         final Semaphore permits = new Semaphore(options.maxInFlightPerNode());
         final ConcurrentSkipListMap<Long, Pending> outstanding = new ConcurrentSkipListMap<>();
-        final AtomicLong nextSeq = new AtomicLong();
         private StreamObserver<Batch> requests; // guarded by this
         private int generation; // guarded by this
         private int brokenGeneration; // guarded by this
@@ -209,13 +220,12 @@ public final class IngestStream implements AutoCloseable {
             this.stub = stub;
         }
 
-        void submit(Batch.Builder message) throws InterruptedException, IngestFailedException {
+        void submit(Batch.Builder message, long seq) throws InterruptedException, IngestFailedException {
             if (!permits.tryAcquire(options.submitTimeout().toNanos(), TimeUnit.NANOSECONDS)) {
                 fail("node " + index + " acknowledged nothing for " + options.submitTimeout() + " with "
                         + options.maxInFlightPerNode() + " batches in flight", null);
             }
             throwIfFailed();
-            long seq = nextSeq.getAndIncrement();
             Pending p = new Pending(message.setSeq(seq).build());
             outstanding.put(seq, p);
             send(p);

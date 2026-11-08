@@ -10,8 +10,10 @@ import io.github.c0rwin.coreset.grpc.proto.AckStatus;
 import io.github.c0rwin.coreset.grpc.proto.SnapshotResponse;
 import io.github.c0rwin.coreset.node.IngestResult;
 import io.github.c0rwin.coreset.node.Messages;
+import io.github.c0rwin.coreset.node.MessageSpec;
 import io.github.c0rwin.coreset.node.NodeLimits;
 import io.github.c0rwin.coreset.node.NodeSnapshot;
+import io.github.c0rwin.coreset.node.Packetization;
 import io.github.c0rwin.coreset.node.SessionSpec;
 import io.github.c0rwin.coreset.node.SessionState;
 import io.github.c0rwin.coreset.node.TreeMode;
@@ -204,7 +206,59 @@ public final class ProtoCodec {
                 .setTreeMode(s.treeMode() == TreeMode.CAS
                         ? io.github.c0rwin.coreset.grpc.proto.TreeMode.TREE_MODE_CAS
                         : io.github.c0rwin.coreset.grpc.proto.TreeMode.TREE_MODE_SINGLE_WRITER)
+                .setMessage(toProto(s.message()))
                 .build();
+    }
+
+    public static io.github.c0rwin.coreset.grpc.proto.MessageSpec toProto(MessageSpec m) {
+        return io.github.c0rwin.coreset.grpc.proto.MessageSpec.newBuilder()
+                .setPacketization(toProto(m.packetization()))
+                .setSize(m.size())
+                .setK(m.k())
+                .setRecordsPerPacket(m.recordsPerPacket())
+                .setLloydIterations(m.lloydIterations())
+                .build();
+    }
+
+    /**
+     * Absent fields mean the summary baseline and the default packet size.
+     *
+     * @throws IllegalArgumentException if the spec is invalid or its size or k exceeds {@code maxRecords}
+     */
+    public static MessageSpec fromProto(io.github.c0rwin.coreset.grpc.proto.MessageSpec m, int maxRecords) {
+        int size = m.getSize();
+        int k = m.getK();
+        int b = m.getRecordsPerPacket();
+        int lloyd = m.getLloydIterations();
+        // uint32 values above 2^31 arrive negative and fail the bounds below.
+        if (size < 0 || size > maxRecords || k < 0 || k > maxRecords || b < 0 || b > maxRecords || lloyd < 0) {
+            throw new IllegalArgumentException("message size, k and records per packet must be in [0, " + maxRecords
+                    + "]");
+        }
+        return new MessageSpec(fromProto(m.getPacketization()), size, k,
+                b == 0 ? MessageSpec.DEFAULT_RECORDS_PER_PACKET : b, lloyd);
+    }
+
+    public static io.github.c0rwin.coreset.grpc.proto.Packetization toProto(Packetization p) {
+        return switch (p) {
+            case SUMMARY -> io.github.c0rwin.coreset.grpc.proto.Packetization.PACKETIZATION_SUMMARY;
+            case MERGED -> io.github.c0rwin.coreset.grpc.proto.Packetization.PACKETIZATION_MERGED;
+            case PER_DRAW -> io.github.c0rwin.coreset.grpc.proto.Packetization.PACKETIZATION_PER_DRAW;
+            case MEAN_GLOBAL_OFFSET -> io.github.c0rwin.coreset.grpc.proto.Packetization
+                    .PACKETIZATION_MEAN_GLOBAL_OFFSET;
+            case MEAN_CF_TRIPLES -> io.github.c0rwin.coreset.grpc.proto.Packetization.PACKETIZATION_MEAN_CF_TRIPLES;
+        };
+    }
+
+    public static Packetization fromProto(io.github.c0rwin.coreset.grpc.proto.Packetization p) {
+        return switch (p) {
+            case PACKETIZATION_UNSPECIFIED, PACKETIZATION_SUMMARY -> Packetization.SUMMARY;
+            case PACKETIZATION_MERGED -> Packetization.MERGED;
+            case PACKETIZATION_PER_DRAW -> Packetization.PER_DRAW;
+            case PACKETIZATION_MEAN_GLOBAL_OFFSET -> Packetization.MEAN_GLOBAL_OFFSET;
+            case PACKETIZATION_MEAN_CF_TRIPLES -> Packetization.MEAN_CF_TRIPLES;
+            default -> throw new IllegalArgumentException("unknown packetization: " + p);
+        };
     }
 
     /**
@@ -224,7 +278,7 @@ public final class ProtoCodec {
                     + " exceeds the node limit of " + limits.maxQueueCapacity());
         }
         return new SessionSpec(s.getAlgorithmId(), s.getParamsMap(), s.getSeed(), s.getWorkers(),
-                s.getQueueCapacity(), mode);
+                s.getQueueCapacity(), mode, fromProto(s.getMessage(), limits.maxSnapshotPoints()));
     }
 
     public static Ack ack(long seq, IngestResult r) {

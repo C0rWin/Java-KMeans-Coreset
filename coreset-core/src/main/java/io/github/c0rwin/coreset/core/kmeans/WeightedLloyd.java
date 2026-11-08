@@ -294,12 +294,27 @@ public final class WeightedLloyd {
      *     overflows ({@link Guards#requireSummable})
      */
     public static Coreset meansOf(PointSet points, int[] assignment, int parts) {
+        MeanCells cells = meanCells(points, assignment, parts);
+        double phi = 0.0;
+        for (double o : cells.offsets()) {
+            phi += o;
+        }
+        return new Coreset(cells.means(), phi);
+    }
+
+    /**
+     * {@link #meansOf} with the offset kept per part: row {@code g} of {@code means} is the mean of the {@code g}-th
+     * positive-weight part, {@code offsets[g]} its {@code sum_p w_p ||p - mean||^2}. Same cost as {@link #meansOf}.
+     *
+     * @throws IllegalArgumentException as {@link #meansOf}
+     */
+    public static MeanCells meanCells(PointSet points, int[] assignment, int parts) {
         final int n = points.size();
         if (assignment.length != n) {
             throw new IllegalArgumentException("assignment has " + assignment.length + " entries for " + n + " points");
         }
         if (n == 0) {
-            return Coreset.of(PointBlock.EMPTY);
+            return new MeanCells(PointBlock.EMPTY, new double[0]);
         }
         double totalWeight = 0.0;
         double moment = 0.0;
@@ -319,14 +334,15 @@ public final class WeightedLloyd {
         ClusterSums sums = new ClusterSums(points);
         double[] partWeight = sums.group(assignment, parts);
         PointBlock.Builder out = PointBlock.builder(points.dim(), parts, 0);
-        double phi = 0.0;
+        double[] offsets = new double[parts];
+        int cells = 0;
         for (int j = 0; j < parts; j++) {
             if (partWeight[j] > 0.0) {
                 ClusterSums.Mean mean = sums.mean(j, true);
                 out.addRow(mean.indices, mean.values, 0, mean.indices.length, partWeight[j]);
-                phi += mean.cost;
+                offsets[cells++] = mean.cost;
             }
         }
-        return new Coreset(out.build(), phi);
+        return new MeanCells(out.build(), cells == parts ? offsets : Arrays.copyOf(offsets, cells));
     }
 }

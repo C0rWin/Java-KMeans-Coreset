@@ -18,11 +18,12 @@ import java.util.Objects;
  * @param maxConnectionIdle               idle connections are closed after this
  * @param maxConnectionAge                connections are recycled after this (clients reconnect)
  * @param maxConnectionAgeGrace           time in-flight calls get after a connection reached its age
+ * @param peerSecurity                    client security of the channels to peers that store replicas
  */
 public record NodeServerOptions(String bindHost, int port, int maxInboundMessageBytes, ServerSecurity security,
                                 int handlerThreads, int blockingThreads, int blockingQueue,
                                 int maxConcurrentCallsPerConnection, Duration maxConnectionIdle,
-                                Duration maxConnectionAge, Duration maxConnectionAgeGrace) {
+                                Duration maxConnectionAge, Duration maxConnectionAgeGrace, ClientSecurity peerSecurity) {
 
     /** Server keepalive ping interval and ack timeout; clients may ping no more often than {@link #PERMIT_KEEPALIVE}. */
     public static final Duration KEEPALIVE_TIME = Duration.ofSeconds(60);
@@ -32,6 +33,7 @@ public record NodeServerOptions(String bindHost, int port, int maxInboundMessage
     public NodeServerOptions {
         Objects.requireNonNull(bindHost, "bindHost");
         Objects.requireNonNull(security, "security");
+        Objects.requireNonNull(peerSecurity, "peerSecurity");
         Objects.requireNonNull(maxConnectionIdle, "maxConnectionIdle");
         Objects.requireNonNull(maxConnectionAge, "maxConnectionAge");
         Objects.requireNonNull(maxConnectionAgeGrace, "maxConnectionAgeGrace");
@@ -70,6 +72,7 @@ public record NodeServerOptions(String bindHost, int port, int maxInboundMessage
         private Duration maxConnectionAge = Duration.ofHours(2);
         // Longer than the coordinator's default 10-minute stream deadline, so a recycled connection drains.
         private Duration maxConnectionAgeGrace = Duration.ofMinutes(15);
+        private ClientSecurity peerSecurity = ClientSecurity.plaintext();
 
         private Builder() {
         }
@@ -129,10 +132,15 @@ public record NodeServerOptions(String bindHost, int port, int maxInboundMessage
             return this;
         }
 
+        public Builder peerSecurity(ClientSecurity v) {
+            peerSecurity = v;
+            return this;
+        }
+
         public NodeServerOptions build() {
             return new NodeServerOptions(bindHost, port, maxInboundMessageBytes, security, handlerThreads,
                     blockingThreads, blockingQueue, maxConcurrentCallsPerConnection, maxConnectionIdle,
-                    maxConnectionAge, maxConnectionAgeGrace);
+                    maxConnectionAge, maxConnectionAgeGrace, peerSecurity);
         }
     }
 }

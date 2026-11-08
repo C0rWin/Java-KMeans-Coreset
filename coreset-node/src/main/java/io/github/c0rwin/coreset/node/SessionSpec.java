@@ -17,9 +17,11 @@ import java.util.Objects;
  * @param workers       worker threads, {@code >= 1}; batch {@code seq} goes to worker {@code seq % workers}
  * @param queueCapacity bound of each worker queue; a power of two {@code >= 2} so it is exact for the ring buffer
  * @param treeMode      merge-reduce organisation
+ * @param message       shape of the snapshot message ({@link CoresetNode#message}); {@link MessageSpec#SUMMARY} is
+ *                      the non-resilient baseline
  */
 public record SessionSpec(String algorithmId, Map<String, String> params, long seed, int workers, int queueCapacity,
-                          TreeMode treeMode) {
+                          TreeMode treeMode, MessageSpec message) {
 
     public static final int MAX_WORKERS = 1024;
 
@@ -27,12 +29,18 @@ public record SessionSpec(String algorithmId, Map<String, String> params, long s
         Objects.requireNonNull(algorithmId, "algorithmId");
         params = Map.copyOf(params);
         Objects.requireNonNull(treeMode, "treeMode");
+        Objects.requireNonNull(message, "message");
         if (workers < 1 || workers > MAX_WORKERS) {
             throw new IllegalArgumentException("workers must be in [1, " + MAX_WORKERS + "]: " + workers);
         }
         if (queueCapacity < 2 || Integer.bitCount(queueCapacity) != 1) {
             throw new IllegalArgumentException("queueCapacity must be a power of two >= 2: " + queueCapacity);
         }
+    }
+
+    public SessionSpec(String algorithmId, Map<String, String> params, long seed, int workers, int queueCapacity,
+                       TreeMode treeMode) {
+        this(algorithmId, params, seed, workers, queueCapacity, treeMode, MessageSpec.SUMMARY);
     }
 
     public SessionSpec(String algorithmId, Map<String, String> params, long seed, int workers, int queueCapacity) {

@@ -310,6 +310,45 @@ public final class CoresetNode implements AutoCloseable {
     }
 
     /**
+     * The session's snapshot as a message per its {@link SessionSpec#message()}: the frozen message if
+     * {@link #freeze} fixed one for {@code stream}, else one built from the current snapshot. Messages of the same
+     * summary and stream are identical; distinct streams draw independently from the same q (thm:rateless).
+     *
+     * @param stream sampling stream; replicas of one partition that must sample independently use distinct streams
+     */
+    public NodeMessage message(String sessionId, long stream) {
+        Session s = session(sessionId);
+        s.touch();
+        return s.message(stream);
+    }
+
+    /** Builds the message of {@code stream} from the current snapshot and serves it from now on (replication). */
+    public NodeMessage freeze(String sessionId, long stream) {
+        Session s = session(sessionId);
+        s.touch();
+        return s.freeze(stream);
+    }
+
+    /**
+     * Keeps another node's message so it survives that node's crash (prop:post-replication).
+     *
+     * @throws NodeLimitException if the message or the number of replicas exceeds the limits
+     */
+    public void storeReplica(String sessionId, long owner, NodeMessage message) {
+        Objects.requireNonNull(message, "message");
+        Session s = session(sessionId);
+        s.touch();
+        s.storeReplica(owner, message);
+    }
+
+    /** The replica of {@code owner}'s message held for the session, or null. */
+    public NodeMessage replica(String sessionId, long owner) {
+        Session s = session(sessionId);
+        s.touch();
+        return s.replica(owner);
+    }
+
+    /**
      * Waits until every batch accepted before this call is reflected in {@link #snapshot}; never cancelled.
      *
      * @see #awaitApplied(String, Duration, BooleanSupplier)

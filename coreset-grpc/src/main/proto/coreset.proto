@@ -38,6 +38,25 @@ message SessionSpec {
   uint32 workers = 4;
   uint32 queue_capacity = 5;
   TreeMode tree_mode = 6;
+  MessageSpec message = 7; // absent: the summary as is (non-resilient baseline)
+}
+
+enum Packetization {
+  PACKETIZATION_UNSPECIFIED = 0; // summary
+  PACKETIZATION_SUMMARY = 1;
+  PACKETIZATION_MERGED = 2;
+  PACKETIZATION_PER_DRAW = 3;
+  PACKETIZATION_MEAN_GLOBAL_OFFSET = 4;
+  PACKETIZATION_MEAN_CF_TRIPLES = 5;
+}
+
+// How a node shapes its snapshot into records and packets (SnapshotStream).
+message MessageSpec {
+  Packetization packetization = 1;
+  uint32 size = 2;               // draws (merged, per-draw) or cells (mean-*)
+  uint32 k = 3;                  // seeding centers of the sampled forms
+  uint32 records_per_packet = 4; // 0 = default
+  uint32 lloyd_iterations = 5;
 }
 
 message CreateSessionRequest {
@@ -113,6 +132,67 @@ message SnapshotResponse {
   bool complete = 10;
 }
 
+// Reliable part of a snapshot message: the lossy transport never drops it. Packet j carries records
+// [j * records_per_packet, (j + 1) * records_per_packet).
+message MessageHeader {
+  uint64 owner = 1;    // node whose message this is
+  bool replica = 2;    // served by a replica holder rather than the owner
+  Packetization packetization = 3;
+  uint64 stream = 4;   // sampling stream
+  uint32 draws = 5;    // draws (sampled forms), cells or records: the realized-count numerator
+  uint32 records = 6;
+  uint32 packets = 7;
+  uint32 records_per_packet = 8;
+  double node_weight = 9;  // input weight the message stands for
+  uint64 node_points = 10;
+  double offset = 11;      // reliable additive offset
+  double record_weight = 12;
+  bool complete = 13;      // the summary reflected every accepted batch when the message was built
+  string session_id = 14;  // set only on StoreReplica
+}
+
+message Packet {
+  uint32 seq = 1;
+  repeated WeightedPoint records = 2;
+  repeated uint32 tags = 3 [packed = true];            // draw count (merged), distinct draw index (per-draw)
+  repeated double cell_offsets = 4 [packed = true];    // per-record cell offset (mean-cf)
+}
+
+message SnapshotChunk {
+  oneof body {
+    MessageHeader header = 1;
+    Packet packet = 2;
+  }
+}
+
+message SnapshotStreamRequest {
+  string session_id = 1;
+  // If > 0, first wait up to this long for every batch accepted before the call to be applied.
+  uint64 await_applied_ms = 2;
+  uint64 owner = 3;       // echoed in the header; with replica, whose stored message to serve
+  bool replica = 4;
+  uint64 stream = 5;      // sampling stream of the node's own message
+  bool header_only = 6;   // census: the header without packets
+}
+
+message ReplicateRequest {
+  string session_id = 1;
+  uint64 owner = 2;
+  uint64 stream = 3;
+  repeated string peers = 4;   // targets that store a copy
+  uint64 await_applied_ms = 5;
+}
+
+message ReplicateResponse {
+  uint32 stored = 1;
+  uint32 records = 2;
+  repeated string failed_peers = 3;
+}
+
+message StoreReplicaResponse {
+  uint32 records = 1;
+}
+
 message PointList {
   repeated WeightedPoint points = 1;
 }
@@ -149,4 +229,10 @@ service CoresetNodeService {
   rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
   rpc PartialCost(PartialCostRequest) returns (PartialCostResponse);
   rpc Stats(StatsRequest) returns (StatsResponse);
+  // The session's message: one header, then its packets in order (header only on request).
+  rpc SnapshotStream(SnapshotStreamRequest) returns (stream SnapshotChunk);
+  // Freezes this node's message and stores a copy on every peer.
+  rpc Replicate(ReplicateRequest) returns (ReplicateResponse);
+  // Header (with session_id) then every packet of another node's message.
+  rpc StoreReplica(stream SnapshotChunk) returns (StoreReplicaResponse);
 }
