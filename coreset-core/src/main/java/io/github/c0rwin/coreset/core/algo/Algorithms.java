@@ -7,7 +7,9 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Builds coreset algorithms from string ids and parameters (as carried over RPC or configuration).
+ * Builds the built-in coreset algorithms from string ids and parameters (as carried over RPC or configuration). This is
+ * the parser behind {@link BuiltInAlgorithms}; to resolve any registered id, built-in or plugged in, use
+ * {@link io.github.c0rwin.coreset.core.CoresetAlgorithms}.
  *
  * <ul>
  *   <li>{@code uniform}: {@code m} (required) — {@link UniformCoreset}.</li>
