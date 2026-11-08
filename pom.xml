@@ -25,6 +25,7 @@
     <module>coreset-flink</module>
     <module>coreset-bench</module>
     <module>coreset-testbed</module>
+    <module>coreset-planner</module>
     <module>coreset-examples</module>
     <module>coreset-experiments</module>
   </modules>

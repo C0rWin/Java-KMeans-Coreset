@@ -1,0 +1,44 @@
+{
+  "version": "fault-lab-2026-11-07-v1",
+  "provenance": {
+    "source": "docs/research/fault-tolerance-experiments.md, branch research/fault-injection, commit 82fe39d",
+    "run": "FaultLab full run, seed 42, synthetic + ESA'22 instances (F1-F6); real-data pass not yet included",
+    "raw": "~/.cache/coreset-testbed/faults-raw/full-seed42/ (raw-SHA256SUMS in docs/research/data/fault-injection/)",
+    "use": "calibrated mode only; certified bounds use no constant from this file"
+  },
+  "constants": {
+    "mergeReduceCoefficient": {
+      "value": 0.022,
+      "experiment": "F5/E1",
+      "meaning": "Var(root cost)/C^2 = coefficient * (S/m) * sum_l kappa_l; R^2 0.995; thm:martingale bounds it by 1",
+      "scope": "sensitivity family, random-order streams"
+    },
+    "kappaLawPoint": {
+      "value": 1.0,
+      "experiment": "F1/A1",
+      "meaning": "per-candidate RMS / sqrt(phi kappa_pt/(1-phi)); measured 0.99-1.02 (calibration 0.991, 1.001, 1.017 over N)"
+    },
+    "kappaLawLow": {
+      "value": 0.95,
+      "experiment": "F1/A1",
+      "meaning": "lower end of the measured calibration range; reported as the calibrated band"
+    },
+    "kappaLawHigh": {
+      "value": 1.03,
+      "experiment": "F1/A1",
+      "meaning": "upper end of the measured calibration range; reported as the calibrated band"
+    },
+    "erasureSlope": {
+      "value": 0.563,
+      "low": 0.46,
+      "high": 0.66,
+      "experiment": "F3/B1",
+      "meaning": "measured exponent of error vs 1/(1-rho); theory (cor:loss-eps) 0.5 lies in the CI, so the model uses 0.5 and records this value only"
+    },
+    "samplingLemmaConstant": {
+      "value": 1.0,
+      "experiment": "none",
+      "meaning": "the absolute constant c of ass:sampling is not known; 1.0 normalises the UNIFORM guarantee, which is then reported in units of sqrt(c)"
+    }
+  }
+}

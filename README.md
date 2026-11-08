@@ -63,6 +63,11 @@ The project consists of the following modules:
    failures (killed nodes and executors, task failures), driven by
    `coreset-experiments/run-engines.sh`; see
    [docs/experiments/engines.md](docs/experiments/engines.md).
+10. **coreset-planner** - resilience planner: estimates a workload profile from a
+   pilot sample, picks the cheapest coreset family, size, packetization,
+   transport, redundancy and topology for a loss/failure environment and an
+   accuracy target (certified or calibrated), and validates the choice
+   in-process with injected faults; see [docs/planner.md](docs/planner.md).
 
 Documentation
 ---
