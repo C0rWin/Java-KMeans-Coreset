@@ -82,9 +82,11 @@ final class NodeProcess {
         return process.isAlive();
     }
 
-    /** SIGKILL: no shutdown hook runs, sessions vanish with the process. */
-    void kill() {
-        process.destroyForcibly();
+    /** SIGKILL and wait for the exit, so no later call can still reach the node; sessions vanish with it. */
+    void kill() throws InterruptedException {
+        if (!process.destroyForcibly().waitFor(10, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("node " + index + " survived SIGKILL for 10 s");
+        }
     }
 
     void stop() throws InterruptedException {

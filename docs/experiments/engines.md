@@ -146,12 +146,18 @@ Known asymmetries, which are properties of the systems and are kept rather than 
 ## Faults
 
 All faults are real: processes are killed with SIGKILL (`destroyForcibly`) or tasks throw. Nothing is simulated.
+A fault can race past the work on a loaded host. For example, a Spark executor finishes its task between the
+listener event and the signal, or a Flink subtask reaches its failure point before any checkpoint completes. The
+system then marks the repetition `fault_missed`. The cell reruns it, up to `maxAttempts` times (default 3), and
+records `fault_attempts`. Only a missed record has no recovery figures; a record without `fault_missed` claims a
+fault that took effect.
 
 - **`kill-nodes` (grpc).** When a fraction `at` of the points has been submitted, `count` node processes are killed
   (the highest indices). The coordinator in `coreset-grpc` fails a whole ingest or gather when one node is gone. The
   harness therefore implements survivor handling itself, with no change to the coordinator. There is one single-node
   coordinator per node, and sessions are still created through one coordinator, so node *i* keeps partition *i*. A
-  node whose stream fails is declared dead; the detection time is recorded as `detect_s_node<i>`. Its remaining shard
+  node is killed and the harness waits for its process to exit before ingest continues, so no later call can reach
+  it. A node whose stream fails is declared dead; the detection time is recorded as `detect_s_node<i>`. Its remaining shard
   is dropped (`afterKill: drop`, recorded as `dropped_rows`) or rerouted round-robin to live nodes
   (`afterKill: reroute`). The final coreset is gathered from live nodes only. With `snapshotAt`, every node is
   snapshotted at that fraction first, in continuous mode with no wait, and a dead node's last snapshot is added to
@@ -214,7 +220,8 @@ yet.
 `spark.executor.extraClassPath` carries the harness class path.
 
 System options (`systems[].options`): grpc `workersPerNode`, `queueCapacity`, `maxInFlight`, `flushTimeoutSeconds`;
-spark `treeDepth`, `chunkSize`, `partitionsPerWorker`; spark-mllib `tol`; flink `chunksPerPartial`,
+spark `treeDepth`, `chunkSize`, `partitionsPerWorker`, `readPauseMicrosPerChunk` (test only: sleeps after every read
+chunk so tasks last long enough for a kill to land inside one); spark-mllib `tol`; flink `chunksPerPartial`,
 `snapshotEveryPartials`, `compressSnapshots`, `chunkSize`, `checkpointMs`, `restartDelayMs`. Faults can be
 restricted with `parallelism: [...]` and `algorithms: [...]`.
 

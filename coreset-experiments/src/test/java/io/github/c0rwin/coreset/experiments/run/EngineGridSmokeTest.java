@@ -3,6 +3,7 @@ package io.github.c0rwin.coreset.experiments.run;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -49,8 +50,9 @@ class EngineGridSmokeTest {
                   - {type: grpc}
                   - {type: spark}
                   - {type: spark-mllib, options: {tol: "1e-3"}}
-                  - {type: spark, mode: local-cluster}
-                  - {type: flink}
+                  # slower reads and frequent checkpoints keep the kill points inside the work on a loaded host
+                  - {type: spark, mode: local-cluster, options: {readPauseMicrosPerChunk: "5000"}}
+                  - {type: flink, options: {checkpointMs: "50"}}
                 parallelism: [2]
                 solver: {restarts: 2, iterations: 10}
                 quality: {referenceRuns: 1, referenceRestarts: 2, referenceIterations: 20, candidates: 1,
@@ -58,8 +60,8 @@ class EngineGridSmokeTest {
                 memory: {workersMB: 1024, driverMB: 512}
                 faults:
                   - {system: grpc, kind: kill-nodes, at: 0.5}
-                  - {system: spark/local-cluster, kind: kill-executor, at: 0.5}
-                  - {system: flink, kind: task-failure, at: 0.5}
+                  - {system: spark/local-cluster, kind: kill-executor, at: 0.5, maxAttempts: 5}
+                  - {system: flink, kind: task-failure, at: 0.5, maxAttempts: 5}
                 """;
         Path config = dir.resolve("grid.yaml");
         Files.writeString(config, yaml + "output: " + dir.resolve("out") + "\ncacheDir: " + dir.resolve("cache") + "\n");
@@ -103,11 +105,13 @@ class EngineGridSmokeTest {
         assertNotNull(nodeKill.get("detect_s_node1"));
 
         Map<String, Object> executorKill = fault(rows, "spark/local-cluster");
+        assertNull(executorKill.get("fault_missed"), "kill took effect within the attempts: " + executorKill);
         assertNotNull(executorKill.get("victim_pid"), "executor killed: " + executorKill);
         assertTrue(((Number) executorKill.get("tasks_failed")).intValue() >= 1, "lost task: " + executorKill);
         assertEquals(Boolean.TRUE, faultRecord(rows, "spark/local-cluster").get("equal_to_baseline"));
 
         Map<String, Object> taskFailure = fault(rows, "flink/minicluster");
+        assertNull(taskFailure.get("fault_missed"), "failure injected within the attempts: " + taskFailure);
         assertNotNull(taskFailure.get("restore_s"), "restored: " + taskFailure);
         assertEquals(Boolean.TRUE, faultRecord(rows, "flink/minicluster").get("equal_to_baseline"));
 

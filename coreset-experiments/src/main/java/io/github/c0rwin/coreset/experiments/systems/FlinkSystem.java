@@ -187,6 +187,7 @@ final class FlinkSystem implements EngineSystem {
                     f.put("replayed_rows", c.get("failIndex") - c.get("resumeIndex"));
                 }
             } else {
+                f.put("fault_missed", true);
                 f.put("fail_skipped", "no checkpoint completed before the subtask reached its failure point");
             }
         }

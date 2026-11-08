@@ -116,8 +116,16 @@ public final class CellMain {
             }
             int faultReps = fault.repetitions() != null ? fault.repetitions() : cell.repetitions();
             for (int i = 0; i < faultReps; i++, rep++) {
-                write(w, measure(cell, src, system, sampler, base, rep, cell.seed(), fault, "fault", fingerprint,
-                        out));
+                Map<String, Object> r = null;
+                // a fault that raced past the work (e.g. the victim finished its task first) is retried
+                for (int attempt = 1; attempt <= fault.maxAttempts(); attempt++) {
+                    r = measure(cell, src, system, sampler, base, rep, cell.seed(), fault, "fault", fingerprint, out);
+                    r.put("fault_attempts", attempt);
+                    if (!Boolean.TRUE.equals(((Map<?, ?>) r.get("fault")).get("fault_missed"))) {
+                        break;
+                    }
+                }
+                write(w, r);
             }
             return true;
         } catch (Exception e) {

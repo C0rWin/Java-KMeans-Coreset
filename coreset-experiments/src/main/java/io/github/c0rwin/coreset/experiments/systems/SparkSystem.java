@@ -170,7 +170,8 @@ final class SparkSystem implements EngineSystem {
         for (int i = 0; i < p; i++) {
             ranges.add(new long[] {PointSource.shardStart(src.size(), i, p), PointSource.shardStart(src.size(), i + 1, p)});
         }
-        return jsc.parallelize(ranges, p).mapPartitions(new ReadRanges(src, cell.batchSize()));
+        return jsc.parallelize(ranges, p).mapPartitions(new ReadRanges(src, cell.batchSize(),
+                sys.longOption("readPauseMicrosPerChunk", 0)));
     }
 
     @Override
@@ -257,8 +258,12 @@ final class SparkSystem implements EngineSystem {
                 spark.sparkContext().listenerBus().waitUntilEmpty();
                 stats.executorEventsAfter(killed).forEach(f::put);
                 f.put("tasks_failed", a.failedTasks);
-            } else if (!f.containsKey("kill_error")) {
-                f.put("kill_skipped", "no task of the repetition was running at the kill time");
+                if (a.failedTasks == 0) { // the victim's task finished before the signal landed
+                    f.put("fault_missed", true);
+                }
+            } else {
+                f.put("fault_missed", true);
+                f.putIfAbsent("kill_skipped", "no task of the repetition was running at the kill time");
             }
             f.remove("kill_epoch_ms");
         } else if (coreset != null && a.tasks > 0) {
@@ -302,21 +307,27 @@ final class SparkSystem implements EngineSystem {
         }
     }
 
-    /** Streams the row ranges of one partition. */
+    /**
+     * Streams the row ranges of one partition. {@code pauseMicros > 0} sleeps after every chunk: a test-only knob
+     * that makes tasks long enough for a kill to land inside one on a loaded host.
+     */
     static final class ReadRanges implements FlatMapFunction<Iterator<long[]>, WeightedPoint> {
         private static final long serialVersionUID = 1L;
         private final PointSource src;
         private final int chunkRows;
+        private final long pauseMicros;
 
-        ReadRanges(PointSource src, int chunkRows) {
+        ReadRanges(PointSource src, int chunkRows, long pauseMicros) {
             this.src = src;
             this.chunkRows = chunkRows;
+            this.pauseMicros = pauseMicros;
         }
 
         @Override
         public Iterator<WeightedPoint> call(Iterator<long[]> ranges) {
             return new Iterator<>() {
                 private Iterator<WeightedPoint> current = java.util.Collections.emptyIterator();
+                private long emitted;
 
                 @Override
                 public boolean hasNext() {
@@ -334,6 +345,9 @@ final class SparkSystem implements EngineSystem {
                 @Override
                 public WeightedPoint next() {
                     hasNext();
+                    if (pauseMicros > 0 && ++emitted % chunkRows == 0) {
+                        java.util.concurrent.locks.LockSupport.parkNanos(pauseMicros * 1000);
+                    }
                     return current.next();
                 }
             };

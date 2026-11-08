@@ -459,7 +459,12 @@ final class GrpcSystem implements EngineSystem {
                 if (external) {
                     killExternal(targets.get(v));
                 } else {
-                    nodes.get(v).kill();
+                    try {
+                        nodes.get(v).kill();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
                 }
             }
         }

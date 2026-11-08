@@ -191,10 +191,13 @@ public record ExperimentConfig(String name, String output, String cacheDir, Inte
      * subtask throws at fraction {@code at} of its rows, after a checkpoint completed). {@code afterKill}: {@code drop}
      * loses the victims' remaining shards, {@code reroute} sends them to survivors. {@code reweight} scales the
      * survivors' coreset to the full input weight. {@code parallelism} and {@code algorithms} (labels) restrict the
-     * cells the fault is applied to; empty means all.
+     * cells the fault is applied to; empty means all. A repetition whose fault did not take effect (the system
+     * reports {@code fault_missed}, e.g. the killed executor had already finished its task) is run again, up to
+     * {@code maxAttempts} times.
      */
     public record FaultConfig(String system, String kind, Double at, Double snapshotAt, Integer count,
                               String afterKill, Boolean reweight, Integer repetitions, Integer baselineRepetitions,
+                              Integer maxAttempts,
                               List<Integer> parallelism, List<String> algorithms, String label) {
         public FaultConfig {
             Objects.requireNonNull(system, "fault system");
@@ -204,6 +207,7 @@ public record ExperimentConfig(String name, String output, String cacheDir, Inte
             afterKill = afterKill != null ? afterKill : "drop";
             reweight = reweight != null ? reweight : false;
             baselineRepetitions = baselineRepetitions != null ? baselineRepetitions : 1;
+            maxAttempts = maxAttempts != null ? maxAttempts : 3;
             parallelism = parallelism != null ? List.copyOf(parallelism) : List.of();
             algorithms = algorithms != null ? List.copyOf(algorithms) : List.of();
             if (!(at > 0.0 && at < 1.0) || (snapshotAt != null && !(snapshotAt > 0.0 && snapshotAt <= at))) {
@@ -212,8 +216,8 @@ public record ExperimentConfig(String name, String output, String cacheDir, Inte
             if (!afterKill.equals("drop") && !afterKill.equals("reroute")) {
                 throw new IllegalArgumentException("afterKill must be drop or reroute: " + afterKill);
             }
-            if (baselineRepetitions < 1) {
-                throw new IllegalArgumentException("baselineRepetitions must be >= 1");
+            if (baselineRepetitions < 1 || maxAttempts < 1) {
+                throw new IllegalArgumentException("baselineRepetitions and maxAttempts must be >= 1");
             }
             label = label != null ? label : kind + "@" + at + (snapshotAt != null ? "/snap@" + snapshotAt : "")
                     + (kind.equals("kill-nodes") ? "/x" + count + "/" + afterKill + (reweight ? "/reweight" : "")
