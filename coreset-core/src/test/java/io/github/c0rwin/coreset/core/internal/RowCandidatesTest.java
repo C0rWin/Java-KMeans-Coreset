@@ -1,8 +1,11 @@
-package io.github.c0rwin.coreset.core;
+package io.github.c0rwin.coreset.core.internal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.SparseVector;
+import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;

@@ -1,5 +1,7 @@
-package io.github.c0rwin.coreset.core;
+package io.github.c0rwin.coreset.core.internal;
 
+import io.github.c0rwin.coreset.core.PointBlock;
+import io.github.c0rwin.coreset.core.SparseVector;
 import java.util.Arrays;
 
 /**
@@ -9,6 +11,9 @@ import java.util.Arrays;
  * one map read whatever the number of candidates; without it every distance merges supports. Each distance is
  * bit-identical to {@link PointBlock#squaredDistanceScatteredToRow} (with the map) or
  * {@link PointBlock#squaredDistance(int, PointBlock, int)} (without). Not thread-safe.
+ *
+ * <p>Internal kernel of the k-means seeding: the {@code internal} package is not exported by the module and may change
+ * in any release.
  */
 public final class RowCandidates {
 
