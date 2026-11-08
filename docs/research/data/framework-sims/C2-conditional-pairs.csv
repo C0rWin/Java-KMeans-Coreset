@@ -1,0 +1,4 @@
+pair,KS p (Q0),AD p (Q0),KS p (max_Q),AD p (max_Q)
+Bernoulli / random vs Gilbert / random,0.9118,0.5950,0.2847,0.3700
+Bernoulli / random vs block / random,0.7916,0.9350,0.8860,0.6890
+Gilbert / random vs block / random,0.5877,0.8130,0.3104,0.3030

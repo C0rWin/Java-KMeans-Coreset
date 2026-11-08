@@ -1,0 +1,5 @@
+scheme,P[header unreadable] [95% CI],P[failure] [95% CI],predicted P[header unreadable]
+reliable header (oracle m),0,"0.0014 [0.0013, 0.0016]",0
+m in every data packet,"0.00e+00 [0.00e+00, 1.92e-05]","0.0014 [0.0013, 0.0016]",7.1e-10 (all 200 packets lost)
+3 adjacent header packets,"0.0821 [0.0809, 0.0833]","0.0834 [0.0822, 0.0846]",0.0828
+3 header packets 101 apart,"1.05e-03 [9.13e-04, 1.20e-03]","0.0025 [0.0022, 0.0027]",1.00e-03

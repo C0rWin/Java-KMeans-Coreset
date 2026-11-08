@@ -1,0 +1,5 @@
+event,predicted,measured [99% Wilson CI]
+one packet lost (loss rate),0.10000,"0.10001 [0.09984, 0.10018]"
+3 adjacent copies all lost,0.08281 = pi_B (1-beta)^2,"0.08281 [0.08265, 0.08297]"
+3 copies 100 apart all lost,1.0005e-03 = pi_B (pi_B + (1-pi_B) lambda^100)^2,"1.0040e-03 [9.8587e-04, 1.0224e-03]"
+memoryless reference rho^3,1.0000e-03,-
