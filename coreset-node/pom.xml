@@ -28,7 +28,7 @@
   <build>
     <plugins>
       <plugin>
-        <!-- Test doubles (algorithms, resolver) are reused by coreset-grpc tests. -->
+        <!-- Test doubles (algorithms, provider) are reused by coreset-grpc tests. -->
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
         <executions>

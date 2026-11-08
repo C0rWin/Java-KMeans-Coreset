@@ -2,7 +2,9 @@ package io.github.c0rwin.coreset.spark;
 
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
-import io.github.c0rwin.coreset.core.algo.Algorithms;
+import io.github.c0rwin.coreset.core.CoresetAlgorithmFactory;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
+import io.github.c0rwin.coreset.core.RegisteredAlgorithm;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.core.stream.MergeRandomness;
 import io.github.c0rwin.coreset.core.stream.MergeReduceTree;
@@ -31,6 +33,11 @@ import org.apache.spark.sql.SparkSession;
  *
  * <p>Batches are applied under the sink's monitor (Spark calls {@code foreachBatch} sequentially anyway). Readers
  * never block: every batch publishes an immutable view that {@link #snapshot()} and friends read.
+ *
+ * <p><b>Algorithm.</b> Either a registered id, resolved with {@link CoresetAlgorithms} on the driver and on every
+ * executor (a provider jar must be on both class paths), or a {@link CoresetAlgorithmFactory}. The checkpoint records
+ * the id and parameters, or {@link CoresetAlgorithmFactory#identity()} for a factory, and refuses to resume under a
+ * different algorithm.
  */
 public final class CoresetStreamSink implements VoidFunction2<Dataset<Row>, Long> {
 
@@ -43,8 +50,10 @@ public final class CoresetStreamSink implements VoidFunction2<Dataset<Row>, Long
     private final transient MergeRandomness randomness;
     private final transient MergeReduceTree tree;
     private final PointColumns columns;
-    private final String algorithmId;
-    private final TreeMap<String, String> params;
+    private final CoresetAlgorithmFactory factory;
+    /** Algorithm as recorded in checkpoints: id and parameters, or a factory's identity and no parameters. */
+    private final String checkpointAlgorithm;
+    private final TreeMap<String, String> checkpointParams;
     private final long seed;
     private final int treeDepth;
     private final int chunkSize;
@@ -57,21 +66,27 @@ public final class CoresetStreamSink implements VoidFunction2<Dataset<Row>, Long
     private record View(long lastBatchId, long batches, List<Coreset> levels, long skipped, BuildMetrics lastBuild) {
     }
 
-    private CoresetStreamSink(StreamCheckpoint checkpoint, PointColumns columns, String algorithmId,
-                              Map<String, String> params, long seed, int treeDepth, int chunkSize) throws IOException {
+    private CoresetStreamSink(StreamCheckpoint checkpoint, PointColumns columns, CoresetAlgorithmFactory factory,
+                              long seed, int treeDepth, int chunkSize) throws IOException {
         this.checkpoint = checkpoint;
         this.columns = Objects.requireNonNull(columns, "columns");
-        this.algorithmId = algorithmId;
-        this.params = new TreeMap<>(params);
+        this.factory = Objects.requireNonNull(factory, "factory");
+        if (factory instanceof RegisteredAlgorithm r) {
+            this.checkpointAlgorithm = r.id();
+            this.checkpointParams = new TreeMap<>(r.params());
+        } else {
+            this.checkpointAlgorithm = factory.identity();
+            this.checkpointParams = new TreeMap<>();
+        }
         this.seed = seed;
         this.treeDepth = treeDepth;
         this.chunkSize = chunkSize;
-        this.algorithm = Algorithms.create(algorithmId, params);
+        this.algorithm = factory.create();
         this.randomness = MergeRandomness.derived(seed, TREE_STREAM);
         Optional<StreamCheckpoint.State> state = checkpoint.latest();
         if (state.isPresent()) {
             StreamCheckpoint.State s = state.get();
-            if (!s.sameConfig(seed, algorithmId, params, treeDepth, chunkSize)) {
+            if (!s.sameConfig(seed, checkpointAlgorithm, checkpointParams, treeDepth, chunkSize)) {
                 throw new IllegalStateException("checkpoint was written by a sink with algorithm " + s.algorithmId()
                         + " " + s.params() + ", seed " + s.seed() + ", treeDepth " + s.treeDepth() + ", chunkSize "
                         + s.chunkSize() + "; resuming with a different configuration would mix incompatible state");
@@ -94,19 +109,31 @@ public final class CoresetStreamSink implements VoidFunction2<Dataset<Row>, Long
     }
 
     /**
-     * Opens a sink on {@code checkpointDir} (any Hadoop file system URI), resuming from its newest state if any.
-     *
-     * @throws IllegalStateException if the directory holds state written with a different configuration
-     * @throws IOException           if the newest state cannot be read or is corrupt
+     * {@link #open(SparkSession, String, PointColumns, CoresetAlgorithmFactory, long, int, int)} for the registered
+     * algorithm {@code algorithmId}.
      */
     public static CoresetStreamSink open(SparkSession spark, String checkpointDir, PointColumns columns,
                                          String algorithmId, Map<String, String> params, long seed, int treeDepth,
                                          int chunkSize) throws IOException {
+        return open(spark, checkpointDir, columns, new RegisteredAlgorithm(algorithmId, params), seed, treeDepth,
+                chunkSize);
+    }
+
+    /**
+     * Opens a sink on {@code checkpointDir} (any Hadoop file system URI), resuming from its newest state if any.
+     *
+     * @param algorithm recipe called on the driver now and per batch on the executors
+     * @throws IllegalStateException if the directory holds state written with a different configuration
+     * @throws IOException           if the newest state cannot be read or is corrupt
+     */
+    public static CoresetStreamSink open(SparkSession spark, String checkpointDir, PointColumns columns,
+                                         CoresetAlgorithmFactory algorithm, long seed, int treeDepth, int chunkSize)
+            throws IOException {
         if (treeDepth < 1 || chunkSize < 1) {
             throw new IllegalArgumentException("treeDepth and chunkSize must be >= 1: " + treeDepth + ", " + chunkSize);
         }
         StreamCheckpoint checkpoint = new StreamCheckpoint(checkpointDir, spark.sparkContext().hadoopConfiguration());
-        return new CoresetStreamSink(checkpoint, columns, algorithmId, params, seed, treeDepth, chunkSize);
+        return new CoresetStreamSink(checkpoint, columns, algorithm, seed, treeDepth, chunkSize);
     }
 
     @Override
@@ -130,15 +157,15 @@ public final class CoresetStreamSink implements VoidFunction2<Dataset<Row>, Long
             view = new View(v.lastBatchId(), v.batches(), v.levels(), v.skipped() + 1, v.lastBuild());
             return false;
         }
-        BuildResult built = SparkCoresets.build(batch, columns, algorithmId, params,
+        BuildResult built = SparkCoresets.build(batch, columns, factory,
                 MergeRandomness.derive(seed, BATCH_STREAM, 0, batchId), treeDepth, chunkSize);
         Coreset c = built.coreset();
         try {
             if (!c.isEmpty() || c.offset() != 0.0) {
                 tree.add(c);
             }
-            checkpoint.write(new StreamCheckpoint.State(seed, algorithmId, params, treeDepth, chunkSize, batchId,
-                    tree.batchesAdded(), tree.levelsView()));
+            checkpoint.write(new StreamCheckpoint.State(seed, checkpointAlgorithm, checkpointParams, treeDepth,
+                    chunkSize, batchId, tree.batchesAdded(), tree.levelsView()));
         } catch (Throwable t) {
             broken = true; // a carry chain may be half done and the batch is not durable
             throw t;

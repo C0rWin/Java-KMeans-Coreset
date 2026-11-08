@@ -106,6 +106,23 @@ Choices made:
   That serializer writes codec bytes plus a length prefix (6 extra bytes on a
   60 kB coreset).
 
+### Choosing the algorithm on workers
+
+Both adapters take the algorithm in one of two forms:
+
+- a registered id and string parameters, resolved with `CoresetAlgorithms` on
+  the driver or client (so bad parameters fail before the job starts) and again
+  on every executor or task manager. Ids from provider jars work like the
+  built-ins as long as the jar is on every JVM's class path: `spark-submit
+  --jars` or an assembly jar for Spark, the job jar or `lib/` for Flink;
+- a `CoresetAlgorithmFactory`, a serializable recipe supplied in code and
+  shipped with the tasks. It carries no `m`, so the chunk size is passed
+  explicitly. Prefer a named class to a lambda: checkpoints record the
+  factory's `identity()` (by default its class name and a hash of its
+  serialized form) and refuse to resume under a different one.
+
+See [api.md](api.md) for examples of both.
+
 ## Apache Spark (implemented)
 
 Module `coreset-spark`. It targets Spark 4.0.5 with Scala 2.13 artifacts in

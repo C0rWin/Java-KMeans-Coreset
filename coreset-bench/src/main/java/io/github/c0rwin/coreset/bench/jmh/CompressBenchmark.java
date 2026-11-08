@@ -3,7 +3,7 @@ package io.github.c0rwin.coreset.bench.jmh;
 import io.github.c0rwin.coreset.bench.Workloads;
 import io.github.c0rwin.coreset.core.Coreset;
 import io.github.c0rwin.coreset.core.CoresetAlgorithm;
-import io.github.c0rwin.coreset.core.algo.Algorithms;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import java.util.Map;
 import java.util.SplittableRandom;
@@ -57,12 +57,13 @@ public class CompressBenchmark {
     }
 
     static CoresetAlgorithm create(String id, int m) {
-        return switch (id) {
-            case "uniform" -> Algorithms.create(id, Map.of("m", Integer.toString(m)));
-            case "sensitivity" -> Algorithms.create(id, Map.of("k", Integer.toString(K), "m", Integer.toString(m)));
-            case "mean" -> Algorithms.create(id, Map.of("m", Integer.toString(m), "lloydIterations", "3"));
+        Map<String, String> params = switch (id) {
+            case "uniform" -> Map.of("m", Integer.toString(m));
+            case "sensitivity" -> Map.of("k", Integer.toString(K), "m", Integer.toString(m));
+            case "mean" -> Map.of("m", Integer.toString(m), "lloydIterations", "3");
             default -> throw new IllegalArgumentException(id);
         };
+        return CoresetAlgorithms.load().create(id, params);
     }
 
     @Benchmark

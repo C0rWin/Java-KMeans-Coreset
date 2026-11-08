@@ -12,7 +12,7 @@ import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.node.testing.TestData;
-import io.github.c0rwin.coreset.node.testing.TestResolver;
+import io.github.c0rwin.coreset.node.testing.TestProvider;
 import java.time.Duration;
 import java.util.AbstractList;
 import java.util.List;
@@ -48,7 +48,7 @@ class SessionRacesTest {
     }
 
     private CoresetNode node(Map<String, CoresetAlgorithm> extra) {
-        node = new CoresetNode(new TestResolver(extra), MetricsSink.NOOP, Duration.ofMillis(200));
+        node = new CoresetNode(TestProvider.registry(extra), MetricsSink.NOOP, Duration.ofMillis(200));
         return node;
     }
 
@@ -109,7 +109,7 @@ class SessionRacesTest {
         // descheduled poller can still miss that window, so try a few times. A miss returns true, which is legal.
         int overlapped = 0;
         for (int attempt = 0; attempt < 20 && overlapped == 0; attempt++) {
-            CoresetNode n = new CoresetNode(new TestResolver(Map.of()), MetricsSink.NOOP, Duration.ofMillis(200));
+            CoresetNode n = new CoresetNode(TestProvider.registry(Map.of()), MetricsSink.NOOP, Duration.ofMillis(200));
             try {
                 Future<Boolean> created = pool.submit(() -> n.createSession("late",
                         new SessionSpec("identity", Map.of(), 1L, SessionSpec.MAX_WORKERS, 2)));
@@ -189,7 +189,7 @@ class SessionRacesTest {
     @Test
     void casAwaitAndSnapshotSucceedUnderSustainedIngest() throws Exception {
         // Generous read wait: the test is about liveness, not about how fast a loaded host drains the carries.
-        node = new CoresetNode(new TestResolver(Map.of("slow-merge", SLOW_MERGE)), MetricsSink.NOOP,
+        node = new CoresetNode(TestProvider.registry(Map.of("slow-merge", SLOW_MERGE)), MetricsSink.NOOP,
                 Duration.ofMillis(200), NodeLimits.builder().casSnapshotWait(Duration.ofSeconds(30)).build());
         CoresetNode n = node;
         n.createSession("busy", new SessionSpec("slow-merge", Map.of(), 1L, 4, 8, TreeMode.CAS));

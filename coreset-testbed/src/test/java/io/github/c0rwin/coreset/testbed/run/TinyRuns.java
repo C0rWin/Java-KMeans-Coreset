@@ -1,6 +1,6 @@
 package io.github.c0rwin.coreset.testbed.run;
 
-import io.github.c0rwin.coreset.node.ServiceLoaderAlgorithmResolver;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.testbed.data.DatasetSpec;
 import io.github.c0rwin.coreset.testbed.data.Datasets;
 import io.github.c0rwin.coreset.testbed.report.ValidityReport;
@@ -52,7 +52,7 @@ final class TinyRuns {
     static Collector run(TestbedConfig config) throws Exception {
         Collector c = new Collector();
         try (Testbed t = new Testbed(config, new Datasets(Path.of("unused-cache"), false),
-                ServiceLoaderAlgorithmResolver.load(), Provenance.collect(Path.of("").toAbsolutePath()), s -> { })) {
+                CoresetAlgorithms.load(), Provenance.collect(Path.of("").toAbsolutePath()), s -> { })) {
             t.run(c);
         }
         return c;

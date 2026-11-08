@@ -243,6 +243,19 @@ class FlinkCoresetsTest {
         }
     }
 
+    @Test
+    void aCodeSuppliedFactoryStreamsWhatTheRegisteredIdStreams() throws Exception {
+        CoresetConfig byId = CoresetConfig.builder("uniform", Map.of("m", "400"), SEED).snapshotEveryPartials(4)
+                .compressSnapshots(true).build();
+        CoresetConfig byFactory = CoresetConfig.builder(new UniformRecipe(400), SEED).chunkSize(800)
+                .snapshotEveryPartials(4).compressSnapshots(true).build();
+        CoresetSnapshot expected = stream("uniform-by-id", byId, -1, -1, -1).last();
+        CoresetSnapshot actual = stream("uniform-by-factory", byFactory, -1, -1, -1).last();
+        assertEquals(expected.coreset(), actual.coreset());
+        assertEquals(expected.compressed(), actual.compressed());
+        assertEquals(full.totalWeight(), actual.coreset().totalWeight(), 1e-9 * full.totalWeight());
+    }
+
     private static List<WindowCoreset> windows(String run, CoresetConfig c) throws Exception {
         StreamExecutionEnvironment env = TestJobs.env(P);
         // Event time i % PER: every subtask covers [0, PER) ms, so each 5 s window gets a partial from all four.

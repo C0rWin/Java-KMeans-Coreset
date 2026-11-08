@@ -13,7 +13,7 @@ import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.metrics.MetricsSink;
 import io.github.c0rwin.coreset.node.testing.TestAlgorithms;
 import io.github.c0rwin.coreset.node.testing.TestData;
-import io.github.c0rwin.coreset.node.testing.TestResolver;
+import io.github.c0rwin.coreset.node.testing.TestProvider;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -57,7 +57,7 @@ class PartitionSeedsTest {
 
     @Test
     void equalSeqsInDistinctPartitionsUseIndependentStreams() throws Exception {
-        node = new CoresetNode(new TestResolver(Map.of("sample8", SAMPLE)), MetricsSink.NOOP, Duration.ofMillis(200));
+        node = new CoresetNode(TestProvider.registry(Map.of("sample8", SAMPLE)), MetricsSink.NOOP, Duration.ofMillis(200));
         SessionSpec spec = new SessionSpec("sample8", Map.of(), 5L, 1, 4);
         List<List<WeightedPoint>> input = batches(1);
         node.createSession("a", spec, 1);
@@ -73,7 +73,7 @@ class PartitionSeedsTest {
     @Test
     void aBusyRetryReproducesTheSameSnapshotWithinAPartition() throws Exception {
         TestAlgorithms.Gated gated = new TestAlgorithms.Gated(SAMPLE);
-        node = new CoresetNode(new TestResolver(Map.of("sample8", SAMPLE, "gated8", gated)), MetricsSink.NOOP,
+        node = new CoresetNode(TestProvider.registry(Map.of("sample8", SAMPLE, "gated8", gated)), MetricsSink.NOOP,
                 Duration.ofMillis(200));
         List<List<WeightedPoint>> input = batches(4);
         node.createSession("reference", new SessionSpec("sample8", Map.of(), 5L, 1, 2), 3);

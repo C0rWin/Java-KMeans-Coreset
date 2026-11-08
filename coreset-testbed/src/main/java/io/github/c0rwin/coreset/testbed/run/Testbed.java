@@ -1,6 +1,7 @@
 package io.github.c0rwin.coreset.testbed.run;
 
 import io.github.c0rwin.coreset.core.Coreset;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import io.github.c0rwin.coreset.core.algo.SampledCoreset;
 import io.github.c0rwin.coreset.core.kmeans.KMeansResult;
@@ -11,7 +12,6 @@ import io.github.c0rwin.coreset.core.validate.CandidateSolutions;
 import io.github.c0rwin.coreset.core.validate.CostConfidenceInterval;
 import io.github.c0rwin.coreset.core.validate.IntegrityCheck;
 import io.github.c0rwin.coreset.grpc.ProtoCodec;
-import io.github.c0rwin.coreset.node.AlgorithmResolver;
 import io.github.c0rwin.coreset.testbed.data.Dataset;
 import io.github.c0rwin.coreset.testbed.data.DatasetSpec;
 import io.github.c0rwin.coreset.testbed.data.Datasets;
@@ -70,11 +70,12 @@ public final class Testbed implements AutoCloseable {
     private final ForkJoinPool evaluationPool;
     private final CostEvaluator evaluator;
 
-    public Testbed(TestbedConfig config, Datasets datasets, AlgorithmResolver resolver, Provenance provenance,
+    /** @param algorithms resolves the grid's algorithm ids, usually {@link CoresetAlgorithms#load()} */
+    public Testbed(TestbedConfig config, Datasets datasets, CoresetAlgorithms algorithms, Provenance provenance,
                    Consumer<String> log) {
         this.config = config;
         this.datasets = datasets;
-        this.builder = new Builder(resolver, true);
+        this.builder = new Builder(algorithms, true);
         this.provenance = provenance;
         this.log = log;
         this.problem = Problem.of(config.problem());

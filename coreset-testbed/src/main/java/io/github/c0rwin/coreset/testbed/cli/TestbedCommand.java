@@ -1,6 +1,6 @@
 package io.github.c0rwin.coreset.testbed.cli;
 
-import io.github.c0rwin.coreset.node.ServiceLoaderAlgorithmResolver;
+import io.github.c0rwin.coreset.core.CoresetAlgorithms;
 import io.github.c0rwin.coreset.testbed.data.Datasets;
 import io.github.c0rwin.coreset.testbed.data.PublicDataset;
 import io.github.c0rwin.coreset.testbed.report.Json;
@@ -61,7 +61,7 @@ public final class TestbedCommand implements Runnable {
             Provenance provenance = Provenance.collect(Path.of("").toAbsolutePath());
             long t0 = System.nanoTime();
             try (Testbed testbed = new Testbed(config, new Datasets(cacheDir, allowDownload),
-                    ServiceLoaderAlgorithmResolver.load(), provenance, line -> {
+                    CoresetAlgorithms.load(), provenance, line -> {
                         err.println(line);
                         err.flush();
                     });
