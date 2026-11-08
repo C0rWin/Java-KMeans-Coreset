@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the whole performance suite (JMH kernels, node/gRPC ingestion harness, Thrift parity, JFR profiles) and writes
+# Runs the whole performance suite (JMH kernels, node/gRPC ingestion and end-to-end harnesses, JFR profiles) and writes
 # raw results plus a markdown summary, with host, JVM and load average recorded before and after every phase.
 #
 # usage: coreset-bench/run-benchmarks.sh [--quick] [--skip-build] [--no-jfr] [--jmh REGEX] [--out DIR]
@@ -89,11 +89,11 @@ fi
 if [[ $QUICK == 1 ]]; then
     JMH_OPTS=(-f 1 -wi 2 -w 1s -i 3 -r 1s)
     NODE_ARGS=(--points 400000 --repeats 2)
-    PARITY_ARGS=(--points 50000 --repeats 2)
+    E2E_ARGS=(--points 50000 --repeats 2)
 else
     JMH_OPTS=()
     NODE_ARGS=(--points 1000000 --repeats 3)
-    PARITY_ARGS=(--points 100000 --repeats 3)
+    E2E_ARGS=(--points 100000 --repeats 3)
 fi
 
 phase jmh "$JAVA" -jar "$JAR" ${JMH_OPTS[@]+"${JMH_OPTS[@]}"} -prof gc -rf json -rff "$OUT/jmh.json" \
@@ -102,8 +102,8 @@ phase jmh "$JAVA" -jar "$JAR" ${JMH_OPTS[@]+"${JMH_OPTS[@]}"} -prof gc -rf json 
 phase node-ingest "$JAVA" "${HARNESS_JVM[@]}" -cp "$JAR" io.github.c0rwin.coreset.bench.perf.NodeIngestHarness \
     "${NODE_ARGS[@]}" >"$OUT/node-ingest.md"
 
-phase parity "$JAVA" "${HARNESS_JVM[@]}" -cp "$JAR" io.github.c0rwin.coreset.bench.perf.ParityHarness \
-    "${PARITY_ARGS[@]}" >"$OUT/parity.md"
+phase grpc-e2e "$JAVA" "${HARNESS_JVM[@]}" -cp "$JAR" io.github.c0rwin.coreset.bench.perf.GrpcEndToEndHarness \
+    "${E2E_ARGS[@]}" >"$OUT/grpc-e2e.md"
 
 if [[ $JFR == 1 ]]; then
     JFR_DIR="$OUT/jfr"
@@ -149,7 +149,7 @@ fi
     echo
     cat "$OUT/node-ingest.md"
     echo
-    cat "$OUT/parity.md"
+    cat "$OUT/grpc-e2e.md"
 } >"$OUT/summary.md"
 
-echo "results in $OUT (summary.md, jmh.json, node-ingest.md, parity.md$([[ $JFR == 1 ]] && echo ', jfr/'))" >&2
+echo "results in $OUT (summary.md, jmh.json, node-ingest.md, grpc-e2e.md$([[ $JFR == 1 ]] && echo ', jfr/'))" >&2

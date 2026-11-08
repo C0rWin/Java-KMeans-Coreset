@@ -4,8 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.c0rwin.coreset.bench.jmh.DistanceBenchmark;
+import io.github.c0rwin.coreset.bench.perf.GrpcEndToEndHarness;
 import io.github.c0rwin.coreset.bench.perf.NodeIngestHarness;
-import io.github.c0rwin.coreset.bench.perf.ParityHarness;
 import io.github.c0rwin.coreset.core.SparseVector;
 import java.util.Collection;
 import java.util.SplittableRandom;
@@ -55,8 +55,8 @@ class BenchSmokeTest {
     }
 
     @Test
-    void parityHarnessRunsOnToySizes() throws Exception {
-        ParityHarness.main(new String[] {"--points", "4000", "--batch", "500", "--repeats", "1", "--candidates", "1",
-                "--grpc-workers", "1"});
+    void grpcEndToEndHarnessRunsOnToySizes() throws Exception {
+        GrpcEndToEndHarness.main(new String[] {"--points", "4000", "--batch", "500", "--repeats", "1",
+                "--candidates", "1", "--workers", "1"});
     }
 }

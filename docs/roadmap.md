@@ -38,7 +38,7 @@ Where the project stands, what was learned along the way, and what is worth doin
 2. **Apache Beam `CombineFn`** adapter: one implementation for the Flink, Spark and Dataflow runners.
 3. **Flink rescaling** via key groups, since parallelism is currently fixed per checkpoint. A distributed merge stage beyond one subtask.
 4. **Kafka Streams** processor. A Storm/Trident adapter only if there is demand: the project is alive (3.x) but niche, and Flink covers the use case.
-5. **Remove the legacy Thrift modules.** On 100k points the gRPC node was 9.7× faster end to end than the Thrift server (sensitivity), sent 26% fewer bytes, and matched its distortion (1.11 against 1.13).
+5. **Legacy Thrift modules: removed.** Before removal, on 100k points the gRPC node was 9.7× faster end to end than the Thrift server (sensitivity), sent 26% fewer bytes, and matched its distortion (1.11 against 1.13); see [Thrift parity](performance.md#thrift-parity-before-removal).
 6. **CI.** There is none yet. Add GitHub Actions running build + tests, a nightly testbed smoke, and JMH regression gates on the kernels in `docs/performance.md`.
 7. Publish to Maven Central. Keep Spark (4.0 today) and Flink (2.3) on current releases.
 

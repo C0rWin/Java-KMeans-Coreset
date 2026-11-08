@@ -4,12 +4,12 @@ All numbers on this page come from one run of `coreset-bench/run-benchmarks.sh` 
 on a quiet host. The raw outputs (JMH JSON and text, harness markdown, JFR recordings and `jfr view`
 summaries, environment) were kept with the run; the tables below are copied from them. The
 [Optimizations](#optimizations) section summarizes the efficiency work that led here, with before/after numbers
-from the individual changes. The legacy Thrift vs gRPC comparison is documented in its own section, added together
-with the Thrift removal.
+from the individual changes. The comparison with the removed Thrift stack is kept in
+[Thrift parity (before removal)](#thrift-parity-before-removal).
 
 ## How to run
 
-Everything (build, JMH, ingestion harness, Thrift parity, JFR profiles) is one command. It writes raw JMH JSON, the
+Everything (build, JMH, ingestion and end-to-end harnesses, JFR profiles) is one command. It writes raw JMH JSON, the
 harness markdown, JFR recordings with `jfr view` summaries and a `summary.md`, and records host, JVM, git revision and
 the load average before and after every phase:
 
@@ -28,7 +28,7 @@ java -jar coreset-bench/target/benchmarks.jar -prof gc -rf json -rff jmh.json [r
 java -Xms8g -Xmx8g -XX:+AlwaysPreTouch -cp coreset-bench/target/benchmarks.jar \
      io.github.c0rwin.coreset.bench.perf.NodeIngestHarness [--points N --workers 1,2,4,8 --grpc-nodes 1,2,3,4 ...]
 java -Xms8g -Xmx8g -XX:+AlwaysPreTouch -cp coreset-bench/target/benchmarks.jar \
-     io.github.c0rwin.coreset.bench.perf.ParityHarness [--points N --repeats R ...]
+     io.github.c0rwin.coreset.bench.perf.GrpcEndToEndHarness [--points N --workers 1,4 --repeats R ...]
 ```
 
 `mvn -B -pl coreset-bench -am verify` runs `BenchSmokeTest`: one JMH benchmark in process and both harnesses on toy
@@ -49,7 +49,6 @@ broken pipeline, not only on a crash.
 | build | 3.13 5.46 6.38 | 5.87 5.99 6.55 | 13 |
 | jmh | 5.87 5.99 6.55 | 11.54 9.54 8.39 | 1786 |
 | node-ingest | 11.54 9.54 8.39 | 11.91 9.69 8.45 | 11 |
-| parity | 11.91 9.69 8.45 | 11.28 9.59 8.43 | 7 |
 | jfr-node | 11.28 9.59 8.43 | 11.82 9.73 8.48 | 2 |
 | jfr-grpc | 11.82 9.73 8.48 | 11.82 9.73 8.48 | 3 |
 | jfr-kmeans-seed | 11.82 9.73 8.48 | 11.74 9.79 8.52 | 9 |
@@ -90,6 +89,14 @@ retried after 50 us, and the BUSY rate is `busy / (busy + batches)`. Allocation 
 per-pool peaks after `resetPeakUsage`, an upper bound; the baseline in brackets is heap in use after a full GC at the
 start. gRPC runs put the client and every node in one JVM over Netty loopback, so they compete for the same cores.
 
+**End-to-end harness** (`GrpcEndToEndHarness`): one `CoresetNode` behind `CoresetNodeServer` on an ephemeral
+loopback port, driven by `CoresetCoordinator` with distinct points (100k in the full run) in 1000-point batches,
+k = 10 and m = 200, for `sensitivity` and `uniform` at 1 and 4 workers. End-to-end time covers session creation,
+client-side conversion, transport, server-side merge-and-reduce and the final snapshot gather. Wire bytes are
+measured in a separate pass through a counting TCP relay, so they include gRPC's HTTP/2 frames, headers and acks.
+Quality: each coreset is scored by `validate.Distortion` against one shared candidate set (3 x k-means++ on P,
+3 x Lloyd on P, 3 x convex combinations of bicriteria centers) plus 3 Lloyd solutions computed on the coreset.
+
 **Profiling.** JFR with `settings=profile` on four runs: in-process ingestion (2M points, W = 4), gRPC ingestion
 (1M points, 2 nodes with 1 worker each), and `KMeansBenchmark.seed` and `lloydIteration` at n = 100k, k = 50,
 d = 16. Summaries come from `jfr view hot-methods|allocation-by-site|allocation-by-class|gc-pauses`. The recordings
@@ -126,10 +133,6 @@ Highlights:
 | protoDecode | 128 | 1,405 | 36.9 | us/op | 4,621,693 |
 | protoEncode | 16 | 313 | 3.87 | us/op | 742,237 |
 | protoEncode | 128 | 2,061 | 19.3 | us/op | 6,233,145 |
-| thriftDecode | 16 | 590 | 5.19 | us/op | 2,195,208 |
-| thriftDecode | 128 | 6,184 | 25.4 | us/op | 17,121,083 |
-| thriftEncode | 16 | 697 | 6.30 | us/op | 1,691,880 |
-| thriftEncode | 128 | 4,928 | 200 | us/op | 11,985,755 |
 
 #### CompressBenchmark
 
@@ -324,6 +327,60 @@ Single-writer snapshots are W times larger than CAS snapshots (W private trees a
 documented in `CoresetNode`. The weight error column is |sum of coreset weights - input weight| / input weight.
 Sensitivity sampling is unbiased, not weight-preserving, so errors of 5e-4 to 9e-3 after hundreds of merges are
 sampling noise, not loss.
+
+## Thrift parity (before removal)
+
+The original Thrift stack (`kmeans-coreset`, `coreset-communication`, `coreset-server`) was removed after this
+comparison; the tables are kept as its record. They come from the quiet-host run at commit `847492f` (load average
+11.9 during the harness, `ParityHarness` and `CodecBenchmark` as they were then). The legacy `CoresetServiceHandler`
+ran in an in-process `TNonblockingServer` driven through `TFramedTransport` + `TBinaryProtocol`, one connection,
+with an in-order `isDone()` before `getTotalCoreset()`; the gRPC side was one `CoresetNode` behind
+`CoresetNodeServer`, driven by `CoresetCoordinator` (what `GrpcEndToEndHarness` measures now).
+`NON_UNIFORM` was paired with `sensitivity` and `UNIFORM` with `uniform`, and the legacy coreset was converted to a
+coreset-core `Coreset` before scoring on the same candidate set. Wire bytes include Thrift framing as well.
+
+Serialized size of one 1000-point batch (dim 131072):
+
+| nnz | protobuf bytes | Thrift binary bytes | Thrift / protobuf |
+|---|---|---|---|
+| 16 | 198025 | 224020 | 1.13 |
+| 128 | 1416858 | 1568020 | 1.11 |
+
+100000 points (d=16, 10 clusters) in 100 batches, k=10, m=200:
+
+| stack | algorithm | workers | end-to-end s (median) | min-max | points/s | wire bytes client->server | server->client | coreset pts | weight err | max distortion | mean distortion |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| thrift | NON_UNIFORM | 1 | 0.543 | 0.532-0.554 | 184057 | 22405503 | 89041 | 381 | 7.3e-16 | 1.1323 | 1.0601 |
+| grpc | sensitivity | 1 | 0.056 | 0.044-0.090 | 1778481 | 16617641 | 70390 | 411 | 6.3e-04 | 1.1075 | 1.0403 |
+| grpc | sensitivity | 4 | 0.046 | 0.045-0.046 | 2173195 | 16617638 | 306597 | 1795 | 4.8e-03 | 1.1192 | 1.0241 |
+| thrift | UNIFORM | 1 | 0.085 | 0.073-0.090 | 1173358 | 22405503 | 86129 | 398 | 0.0e+00 | 1.1372 | 1.0597 |
+| grpc | uniform | 1 | 0.042 | 0.041-0.044 | 2383991 | 16617628 | 67752 | 412 | 0.0e+00 | 1.1914 | 1.0867 |
+| grpc | uniform | 4 | 0.042 | 0.041-0.045 | 2391160 | 16617390 | 305225 | 1785 | 0.0e+00 | 1.0324 | 1.0133 |
+
+Codec cost per 1000-point batch (JMH, same run):
+
+| benchmark | nnz | score (us/op) | B/op |
+|---|---|---|---|
+| protoEncode | 16 | 312.756 | 742,237 |
+| thriftEncode | 16 | 696.684 | 1,691,880 |
+| protoDecode | 16 | 277.366 | 925,520 |
+| thriftDecode | 16 | 590.161 | 2,195,208 |
+| protoEncode | 128 | 2061.456 | 6,233,145 |
+| thriftEncode | 128 | 4928.166 | 11,985,755 |
+| protoDecode | 128 | 1404.888 | 4,621,693 |
+| thriftDecode | 128 | 6184.490 | 17,121,083 |
+
+What the comparison showed:
+
+- End to end, sensitivity on one worker took 0.056 s against NON_UNIFORM's 0.543 s (9.7x); uniform took 0.042 s
+  against 0.085 s. The single-threaded `TNonblockingServer` handler could not use more workers.
+- Client-to-server wire bytes dropped by 26% (16.6 MB vs 22.4 MB), and the batch payload by 10-12%.
+- Protobuf encode was 2.2-2.4x and decode 2.1-4.4x faster than Thrift, with 1.9-3.7x less allocation.
+- Distortion was comparable: max 1.11 vs 1.13 for sensitivity vs NON_UNIFORM at one worker; for uniform 1.19 vs
+  1.14 at one worker and 1.03 with 4 workers (single runs on a shared candidate set).
+- The legacy stack's exact weight conservation came from `NormalizeWeightsDecorator` rescaling the sample to the
+  input weight, a deliberate bias rather than a better estimator. Its protocol had no acknowledgements or
+  deduplication (`compressPoints` was oneway), so it could not retry safely.
 
 ## Hotspots (JFR)
 

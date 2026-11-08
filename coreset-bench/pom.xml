@@ -12,7 +12,7 @@
   <artifactId>coreset-bench</artifactId>
   <packaging>jar</packaging>
   <name>coreset-bench</name>
-  <description>JMH microbenchmarks, node/gRPC ingestion harnesses and the legacy Thrift parity benchmark</description>
+  <description>JMH microbenchmarks and node/gRPC ingestion and end-to-end harnesses</description>
 
   <properties>
     <!-- Benchmarks are tools, not a published library. -->
@@ -38,12 +38,6 @@
       <!-- Only CoresetCodec is benchmarked; Spark itself stays a provided dependency of coreset-spark. -->
       <groupId>io.github.c0rwin.coreset</groupId>
       <artifactId>coreset-spark</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
-      <!-- Legacy Thrift server, only for the parity benchmark. -->
-      <groupId>univ.ml.distributed.coreset</groupId>
-      <artifactId>coreset-server</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
