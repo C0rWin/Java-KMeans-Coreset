@@ -4,6 +4,7 @@ import io.github.c0rwin.coreset.core.SparseVector;
 import io.github.c0rwin.coreset.core.WeightedPoint;
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -18,6 +19,8 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * Readers for the supported file formats. Every point gets weight 1. Blank lines and lines starting with {@code #}
@@ -29,7 +32,13 @@ import java.util.zip.GZIPInputStream;
  *   <li>{@link Format#LIBSVM}: {@code [label] index:value ...} with 1-based indices; the label is ignored.</li>
  *   <li>{@link Format#WIKI}: the legacy document-term format {@code id dim index value index value ...} with 0-based
  *       indices (as read by the old {@code WikiPointsProvider}).</li>
+ *   <li>{@link Format#BOW}: the UCI bag-of-words {@code docword} format: the number of documents, words and
+ *       entries on the first three lines, then {@code docID wordID count} lines with 1-based ids, grouped by document.
+ *       Documents without an entry become empty rows, so row {@code i} is always document {@code i + 1}.</li>
  * </ul>
+ *
+ * <p>The {@code stream*} methods hand each row to a sink instead of building points, for converters that must not
+ * hold a multi-GB input in memory.
  */
 public final class Loaders {
 
@@ -39,7 +48,7 @@ public final class Loaders {
     }
 
     public enum Format {
-        DENSE, LIBSVM, WIKI;
+        DENSE, LIBSVM, WIKI, BOW;
 
         public static Format of(String id) {
             return valueOf(id.trim().toUpperCase(Locale.ROOT));
@@ -68,9 +77,54 @@ public final class Loaders {
         }
     }
 
+    /** Receives dense rows; {@code values} is reused for the next row. */
+    @FunctionalInterface
+    public interface DenseRowSink {
+        void row(double[] values) throws IOException;
+    }
+
+    /** Receives sparse rows as entries {@code [from, to)} of reused arrays, indices strictly increasing. */
+    @FunctionalInterface
+    public interface SparseRowSink {
+        void row(int[] indices, double[] values, int from, int to) throws IOException;
+    }
+
+    /** Header of a bag-of-words file. */
+    public record BagOfWordsShape(int docs, int words, long nnz) {
+    }
+
     /** Opens {@code file}, transparently gunzipping when it starts with the gzip magic bytes. */
     public static BufferedReader open(Path file) throws IOException {
-        InputStream in = new BufferedInputStream(Files.newInputStream(file));
+        return open(file, "");
+    }
+
+    /**
+     * Opens {@code file}, or its zip entry {@code member} when that is not empty, transparently gunzipping when the
+     * content starts with the gzip magic bytes.
+     */
+    public static BufferedReader open(Path file, String member) throws IOException {
+        InputStream raw;
+        if (member.isEmpty()) {
+            raw = Files.newInputStream(file);
+        } else {
+            ZipFile zip = new ZipFile(file.toFile());
+            ZipEntry entry = zip.getEntry(member);
+            if (entry == null) {
+                zip.close();
+                throw new IOException(file + ": no zip entry '" + member + "'");
+            }
+            raw = new FilterInputStream(zip.getInputStream(entry)) {
+                @Override
+                public void close() throws IOException {
+                    try {
+                        super.close();
+                    } finally {
+                        zip.close();
+                    }
+                }
+            };
+        }
+        InputStream in = new BufferedInputStream(raw, 1 << 16);
         in.mark(2);
         int b0 = in.read();
         int b1 = in.read();
@@ -95,6 +149,8 @@ public final class Loaders {
                 return libsvm(r, options.dim());
             case WIKI:
                 return wiki(r);
+            case BOW:
+                return bagOfWords(r);
             default:
                 throw new IllegalArgumentException("unsupported format " + format);
         }
@@ -102,6 +158,12 @@ public final class Loaders {
 
     static List<WeightedPoint> dense(BufferedReader r, Options options) throws IOException {
         List<WeightedPoint> out = new ArrayList<>();
+        streamDense(r, options, row -> out.add(new WeightedPoint(SparseVector.dense(row), 1.0)));
+        return out;
+    }
+
+    /** Streams the rows of a dense file (see {@link Format#DENSE}) after dropping columns. */
+    public static void streamDense(BufferedReader r, Options options, DenseRowSink sink) throws IOException {
         boolean[] keep = null;
         int width = -1;
         int keptWidth = 0;
@@ -140,9 +202,142 @@ public final class Loaders {
                     row[w++] = parse(fields[c], lineNo);
                 }
             }
-            out.add(new WeightedPoint(SparseVector.dense(row), 1.0));
+            sink.row(row);
         }
+    }
+
+    static List<WeightedPoint> bagOfWords(BufferedReader r) throws IOException {
+        BagOfWordsShape shape = bagOfWordsShape(r);
+        List<WeightedPoint> out = new ArrayList<>(shape.docs());
+        streamBagOfWords(r, shape, (idx, val, from, to) -> out.add(new WeightedPoint(
+                SparseVector.of(shape.words(), Arrays.copyOfRange(idx, from, to), Arrays.copyOfRange(val, from, to)),
+                1.0)));
         return out;
+    }
+
+    /** Reads the three header lines of a bag-of-words file; call before {@link #streamBagOfWords}. */
+    public static BagOfWordsShape bagOfWordsShape(BufferedReader r) throws IOException {
+        long[] h = new long[3];
+        for (int i = 0; i < 3; i++) {
+            String line = r.readLine();
+            if (line == null) {
+                throw new IllegalArgumentException("line " + (i + 1) + ": bag-of-words header ends early");
+            }
+            try {
+                h[i] = Long.parseLong(line.trim());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("line " + (i + 1) + ": not an integer: '" + line + "'", e);
+            }
+        }
+        if (h[0] < 0 || h[0] > Integer.MAX_VALUE || h[1] < 1 || h[1] > Integer.MAX_VALUE || h[2] < 0) {
+            throw new IllegalArgumentException("bag-of-words header out of range: " + Arrays.toString(h));
+        }
+        return new BagOfWordsShape((int) h[0], (int) h[1], h[2]);
+    }
+
+    /**
+     * Streams one row per document {@code 1..docs} (word ids made 0-based, counts as values) from the lines after
+     * the header. Counts must be positive integers; the entry total must match the header.
+     */
+    public static void streamBagOfWords(BufferedReader r, BagOfWordsShape shape, SparseRowSink sink)
+            throws IOException {
+        int[] idx = new int[1024];
+        double[] val = new double[1024];
+        int[] tok = new int[6];
+        int doc = 1; // the document being collected
+        int len = 0;
+        boolean sorted = true;
+        long entries = 0;
+        String line;
+        int lineNo = 3;
+        while ((line = r.readLine()) != null) {
+            lineNo++;
+            if (tokens(line, tok) == 0) {
+                continue;
+            }
+            int d = parseIndex(line, tok[0], tok[1], lineNo);
+            int w = parseIndex(line, tok[2], tok[3], lineNo);
+            int c = parseIndex(line, tok[4], tok[5], lineNo);
+            if (d < doc || d > shape.docs()) {
+                throw new IllegalArgumentException("line " + lineNo + ": document " + d + " out of order or range");
+            }
+            if (w < 1 || w > shape.words() || c < 1) {
+                throw new IllegalArgumentException("line " + lineNo + ": word " + w + " count " + c
+                        + " out of range");
+            }
+            for (; doc < d; doc++, len = 0, sorted = true) {
+                emitRow(idx, val, len, sorted, lineNo, sink);
+            }
+            if (len == idx.length) {
+                idx = Arrays.copyOf(idx, 2 * len);
+                val = Arrays.copyOf(val, 2 * len);
+            }
+            sorted &= len == 0 || idx[len - 1] < w - 1;
+            idx[len] = w - 1;
+            val[len++] = c;
+            entries++;
+        }
+        for (; doc <= shape.docs(); doc++, len = 0, sorted = true) {
+            emitRow(idx, val, len, sorted, lineNo, sink);
+        }
+        if (entries != shape.nnz()) {
+            throw new IllegalArgumentException("header says " + shape.nnz() + " entries, read " + entries);
+        }
+    }
+
+    private static void emitRow(int[] idx, double[] val, int len, boolean sorted, int lineNo, SparseRowSink sink)
+            throws IOException {
+        if (!sorted) {
+            sortByIndex(idx, val, len);
+            for (int t = 1; t < len; t++) {
+                if (idx[t] == idx[t - 1]) {
+                    throw new IllegalArgumentException("line " + lineNo + ": duplicate word " + (idx[t] + 1));
+                }
+            }
+        }
+        sink.row(idx, val, 0, len);
+    }
+
+    private static void sortByIndex(int[] idx, double[] val, int len) {
+        for (int i = 1; i < len; i++) { // insertion sort: unsorted documents are rare and short
+            int k = idx[i];
+            double v = val[i];
+            int j = i - 1;
+            for (; j >= 0 && idx[j] > k; j--) {
+                idx[j + 1] = idx[j];
+                val[j + 1] = val[j];
+            }
+            idx[j + 1] = k;
+            val[j + 1] = v;
+        }
+    }
+
+    /** Splits {@code s} at whitespace into exactly three tokens (begin, end pairs); 0 for a blank line. */
+    private static int tokens(String s, int[] tok) {
+        int n = 0;
+        int i = 0;
+        int len = s.length();
+        while (true) {
+            while (i < len && s.charAt(i) <= ' ') {
+                i++;
+            }
+            if (i == len) {
+                break;
+            }
+            if (n == 3) {
+                throw new IllegalArgumentException("expected 'docID wordID count', got '" + s + "'");
+            }
+            tok[2 * n] = i;
+            while (i < len && s.charAt(i) > ' ') {
+                i++;
+            }
+            tok[2 * n + 1] = i;
+            n++;
+        }
+        if (n != 0 && n != 3) {
+            throw new IllegalArgumentException("expected 'docID wordID count', got '" + s + "'");
+        }
+        return n;
     }
 
     private static boolean[] keepMask(String[] firstLine, boolean header, List<String> drop, int lineNo) {
@@ -286,10 +481,15 @@ public final class Loaders {
     }
 
     private static int parseIndex(String s, int lineNo) {
+        return parseIndex(s, 0, s.length(), lineNo);
+    }
+
+    private static int parseIndex(String s, int begin, int end, int lineNo) {
         try {
-            return Integer.parseInt(s);
+            return Integer.parseInt(s, begin, end, 10);
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("line " + lineNo + ": not an integer: '" + s + "'", e);
+            throw new IllegalArgumentException("line " + lineNo + ": not an integer: '" + s.substring(begin, end)
+                    + "'", e);
         }
     }
 }

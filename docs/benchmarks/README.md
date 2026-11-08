@@ -215,7 +215,10 @@ The built-in suites in `coreset-testbed/src/main/resources/suites/` document
 the config format. Public datasets (`datasets list`) are never downloaded
 implicitly. `datasets fetch <name>` or `--allow-download` stores them under
 `~/.cache/coreset-testbed`, and the file's SHA-256 is checked against the
-descriptor.
+descriptor. On first use each one is converted to a binary point file next to
+the download (`datasets convert <name>` does it ahead of time); see
+[../datasets.md](../datasets.md) for the datasets, preprocessing variants and
+the format.
 
 ## Caveats that apply to every run
 

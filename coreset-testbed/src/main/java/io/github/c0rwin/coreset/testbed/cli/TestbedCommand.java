@@ -1,7 +1,11 @@
 package io.github.c0rwin.coreset.testbed.cli;
 
 import io.github.c0rwin.coreset.core.CoresetAlgorithms;
+import io.github.c0rwin.coreset.testbed.data.Conversion;
+import io.github.c0rwin.coreset.testbed.data.DatasetStats;
 import io.github.c0rwin.coreset.testbed.data.Datasets;
+import io.github.c0rwin.coreset.testbed.data.Loaders;
+import io.github.c0rwin.coreset.testbed.data.PointFile;
 import io.github.c0rwin.coreset.testbed.data.PublicDataset;
 import io.github.c0rwin.coreset.testbed.faults.FaultsCommand;
 import io.github.c0rwin.coreset.testbed.report.Json;
@@ -170,8 +174,10 @@ public final class TestbedCommand implements Runnable {
         }
     }
 
-    @Command(name = "datasets", mixinStandardHelpOptions = true, description = "Lists or fetches public datasets.",
-            subcommands = {DatasetsCommand.ListDatasets.class, DatasetsCommand.Fetch.class})
+    @Command(name = "datasets", mixinStandardHelpOptions = true,
+            description = "Lists, fetches, converts or summarises public datasets.",
+            subcommands = {DatasetsCommand.ListDatasets.class, DatasetsCommand.Fetch.class,
+                    DatasetsCommand.Convert.class, DatasetsCommand.Stats.class})
     static final class DatasetsCommand implements Runnable {
         @Spec
         CommandLine.Model.CommandSpec spec;
@@ -190,8 +196,8 @@ public final class TestbedCommand implements Runnable {
             public Integer call() {
                 PrintWriter out = spec.commandLine().getOut();
                 for (PublicDataset d : new TreeMap<>(PublicDataset.REGISTRY).values()) {
-                    out.printf(Locale.ROOT, "%-12s %9d x %-4d %s%n    sha256 %s%n    license: %s%n    %s%n", d.id(),
-                            d.n(), d.d(), d.url(), d.sha256(), d.license(), d.citation());
+                    out.printf(Locale.ROOT, "%-12s %9d x %-6d %s%n    sha256 %s%n    license: %s%n    %s%n    %s%n",
+                            d.id(), d.n(), d.d(), d.url(), d.sha256(), d.license(), d.citation(), d.notes());
                 }
                 out.flush();
                 return 0;
@@ -211,13 +217,80 @@ public final class TestbedCommand implements Runnable {
 
             @Override
             public Integer call() throws Exception {
-                PublicDataset d = PublicDataset.REGISTRY.get(name);
-                if (d == null) {
-                    throw new IllegalArgumentException("unknown dataset '" + name + "', known: "
-                            + new TreeMap<>(PublicDataset.REGISTRY).keySet());
-                }
-                Path f = d.fetch(cacheDir);
+                Path f = PublicDataset.named(name).fetch(cacheDir);
                 spec.commandLine().getOut().println(f);
+                spec.commandLine().getOut().flush();
+                return 0;
+            }
+        }
+
+        @Command(name = "convert", description = "Converts a cached download into the binary point format "
+                + "(docs/datasets.md), verifies it and prints one line per variant.")
+        static final class Convert implements Callable<Integer> {
+            @Spec
+            CommandLine.Model.CommandSpec spec;
+
+            @Parameters(index = "0", description = "Dataset name (see 'datasets list').")
+            String name;
+
+            @Option(names = "--variant", split = ",", description = "raw, zscore (dense), tfidf (sparse). "
+                    + "Default: raw plus the variant that applies.")
+            List<String> variants;
+
+            @Option(names = "--cache-dir", description = "Cache directory. Default: ~/.cache/coreset-testbed")
+            Path cacheDir = PublicDataset.defaultCacheDir();
+
+            @Option(names = "--allow-download", description = "Download the dataset if it is not cached.")
+            boolean allowDownload;
+
+            @Override
+            public Integer call() throws Exception {
+                PublicDataset pd = PublicDataset.named(name);
+                List<String> ids = variants != null ? variants
+                        : List.of("raw", pd.format() == Loaders.Format.BOW ? "tfidf" : "zscore");
+                PrintWriter out = spec.commandLine().getOut();
+                for (String id : ids) {
+                    Conversion.Variant v = Conversion.Variant.of(id);
+                    long t0 = System.nanoTime();
+                    Path f = Conversion.ensure(pd, cacheDir, v, allowDownload);
+                    long convertMs = (System.nanoTime() - t0) / 1_000_000;
+                    PointFile.Header h = PointFile.verify(f);
+                    out.printf(Locale.ROOT, "%s %s n=%d d=%d nnz=%d bytes=%d crc32c=%08x sha256=%s ms=%d %s%n",
+                            pd.id(), v.id(), h.n(), h.d(), h.nnz(), h.fileBytes(), h.checksum(),
+                            PublicDataset.sha256(f), convertMs, f);
+                    out.flush();
+                }
+                return 0;
+            }
+        }
+
+        @Command(name = "stats", description = "Prints reference statistics of a converted dataset as JSON: "
+                + "per-feature scale and k-means++ cost and cluster balance per k.")
+        static final class Stats implements Callable<Integer> {
+            @Spec
+            CommandLine.Model.CommandSpec spec;
+
+            @Parameters(index = "0", description = "Dataset name (see 'datasets list').")
+            String name;
+
+            @Option(names = "--variant", description = "raw, zscore or tfidf. Default: raw")
+            String variant = "raw";
+
+            @Option(names = "--k", split = ",", description = "Numbers of centers. Default: 10,25,50")
+            int[] ks = {10, 25, 50};
+
+            @Option(names = "--seed", description = "k-means++ seed. Default: 1")
+            long seed = 1L;
+
+            @Option(names = "--cache-dir", description = "Cache directory. Default: ~/.cache/coreset-testbed")
+            Path cacheDir = PublicDataset.defaultCacheDir();
+
+            @Override
+            public Integer call() throws Exception {
+                Path f = Conversion.ensure(PublicDataset.named(name), cacheDir, Conversion.Variant.of(variant),
+                        false);
+                DatasetStats stats = DatasetStats.of(PointFile.readAll(f), ks, seed);
+                spec.commandLine().getOut().println(Json.toJson(stats));
                 spec.commandLine().getOut().flush();
                 return 0;
             }
