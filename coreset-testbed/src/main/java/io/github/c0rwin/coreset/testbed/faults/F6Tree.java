@@ -30,7 +30,7 @@ final class F6Tree {
             int leaves = lab.quick() ? 16 : 64;
             int[] arities = lab.quick() ? new int[] {2, 4, 16} : new int[] {2, 4, 8, 64};
             double[] fails = {0.01, 0.05, 0.1};
-            int seeds = lab.seeds(200, 10);
+            int seeds = lab.seeds(1000, 10);
             for (Kind kind : List.of(Kind.RANDOM, Kind.PROJECTION_SORTED)) {
                 List<List<Recorder.Row>> out = lab.parallel(seeds, s -> {
                     Placement pl = new Placement(inst, Partitions.split(kind, inst.cluster, inst.points, leaves,
@@ -54,7 +54,9 @@ final class F6Tree {
                                             "f", fail, "checkpoint", r, "internalHT", ht), s,
                                             metrics("distortion", Measure.distortion(rr), "meanAbsR",
                                                     Measure.meanAbs(rr), "lostFraction", 1.0 - alive / pl.totalSize,
-                                                    "predictedLost", 1.0 - Math.pow(1.0 - fe, depth)),
+                                                    "predictedLost", 1.0 - Math.pow(1.0 - fe, depth),
+                                                    "totalLoss", alive > 0 ? 0 : 1,
+                                                    "msR", alive > 0 ? meanSquare(rr) : null),
                                             ht && r == 0 && kind == Kind.RANDOM ? rr : null));
                                 }
                             }
@@ -67,6 +69,14 @@ final class F6Tree {
             }
             verdicts(lab, rec, inst, arities, leaves);
         }
+    }
+
+    static double meanSquare(double[] r) {
+        double s = 0.0;
+        for (double x : r) {
+            s += x * x;
+        }
+        return s / r.length;
     }
 
     /** Levels below the root: leaves sit at depth L = log_a(leaves) (a flat tree has L = 1). */
@@ -183,30 +193,43 @@ final class F6Tree {
         double[] xs = new double[arities.length];
         double[] ys = new double[arities.length];
         double fMain = 0.05;
+        StringBuilder shape = new StringBuilder();
         for (int i = 0; i < arities.length; i++) {
             int a = arities[i];
             int depth = depth(leaves, a);
             for (double fail : new double[] {0.01, 0.05, 0.1}) {
-                double obs = Stats.mean(rec.values(c("random", a, depth, fail, 0, true), "lostFraction"));
+                // Subtree losses are correlated, so judge against the run-level standard error (3 se).
+                double[] lf = rec.values(c("random", a, depth, fail, 0, true), "lostFraction");
+                double obs = Stats.mean(lf);
                 double exp = 1.0 - Math.pow(1.0 - fail, depth);
-                lostOk &= Math.abs(obs / exp - 1.0) <= 0.15;
+                double z = (obs - exp) / (Stats.sd(lf) / Math.sqrt(lf.length));
+                lostOk &= Math.abs(z) <= 3;
+                if (Math.abs(z) > 3) {
+                    lost.append(f("[a=%d f=%s: %.4f vs %.4f, z = %.1f] ", a, fail, obs, exp, z));
+                }
                 if (fail == 0.1) {
                     lost.append(f("a=%d L=%d: %.4f vs %.4f; ", a, depth, obs, exp));
-                    double o1 = Stats.mean(rec.values(c("random", a, depth, fail, 1, true), "lostFraction"));
-                    double lf2 = depth * fail * fail;
-                    ck.append(f("a=%d: %.4f vs L f^2 = %.4f; ", a, o1, lf2));
-                    ckOk &= Math.abs(o1 / lf2 - 1.0) <= 0.25;
+                    double[] lf1 = rec.values(c("random", a, depth, fail, 1, true), "lostFraction");
+                    double o1 = Stats.mean(lf1);
+                    double exact = 1.0 - Math.pow(1.0 - fail * fail, depth);
+                    ck.append(f("a=%d: %.4f vs L f^2 = %.4f; ", a, o1, depth * fail * fail));
+                    ckOk &= Math.abs(o1 - exact) <= 3 * Stats.sd(lf1) / Math.sqrt(lf1.length);
                 }
             }
             xs[i] = Math.log(depth);
-            ys[i] = Math.log(Stats.mean(rec.values(c("random", a, depth, fMain, 0, true), "meanAbsR")));
+            double rms = Math.sqrt(Stats.mean(rec.values(c("random", a, depth, fMain, 0, true), "msR")));
+            ys[i] = Math.log(rms);
+            double kbar = Stats.mean(inst.kappa);
+            shape.append(f("a=%d L=%d: RMS %.4g (F1 formula sqrt(L f/(1-f) kappa) %.4g), total loss %.4f; ", a, depth,
+                    rms, Math.sqrt(depth * fMain / (1 - fMain) * kbar),
+                    Stats.mean(rec.values(c("random", a, depth, fMain, 0, true), "totalLoss"))));
         }
-        lab.verdict("F6/F1 lost fraction", "lost fraction = 1-(1-f)^L", lost.toString() + "(all f within 15%: "
+        lab.verdict("F6/F1 lost fraction", "lost fraction = 1-(1-f)^L", lost.toString() + "(all f within 3 run-level se: "
                 + lostOk + ")", lostOk ? "PASS" : "FAIL");
         Stats.Fit fit = Stats.ols(xs, ys);
         lab.verdict("F6/F1 sqrt(L)", "error proportional to sqrt(L) at fixed f",
-                f("f=%.2f, random, internal HT: slope of log mean|r| vs log L = %.2f +/- %.2f", fMain, fit.b(),
-                        fit.ci95()),
+                f("f=%.2f, random, internal HT, runs with surviving data: slope of log RMS r vs log L = %.2f +/- %.2f;"
+                        + " %s", fMain, fit.b(), fit.ci95(), shape),
                 Math.abs(fit.b() - 0.5) <= 0.15 ? "PASS" : "FAIL");
         lab.verdict("F6/F2 checkpoint", "checkpoint r=1: loss = L f^2", ck.toString(), ckOk ? "PASS" : "FAIL");
         int a = arities[0];

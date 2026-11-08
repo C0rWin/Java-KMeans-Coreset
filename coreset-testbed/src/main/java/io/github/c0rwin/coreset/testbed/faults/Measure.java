@@ -16,7 +16,7 @@ final class Measure {
 
     /** Lloyd budget of the deployed solution on a decoded coreset. */
     static final int LLOYD_ITERATIONS = 20;
-    static final int RESTARTS = 3;
+    static final int RESTARTS = 10;
     /** Per-packet header bytes (IPv4 + UDP) in the packet model of F3. */
     static final int PACKET_HEADER = 28;
 

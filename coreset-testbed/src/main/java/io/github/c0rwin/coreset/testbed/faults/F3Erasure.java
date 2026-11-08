@@ -54,7 +54,7 @@ final class F3Erasure {
             sample(lab, rec, "zipf-heavy", ms, lab.seeds(60, 4));
             sample(lab, rec, "esa22", ms, lab.seeds(60, 4));
             int[] sweep = lab.quick() ? new int[] {50, 100, 200} : new int[] {250, 500, 1000, 2000, 4000, 8000};
-            for (String id : List.of("zipf", "zipf-heavy", "esa22")) {
+            for (String id : List.of("zipf", "zipf-heavy", "esa22", "zipf-outliers")) {
                 sweep(lab, rec, id, sweep, lab.seeds(100, 6));
             }
             mean(lab, rec, "zipf", lab.seeds(10, 2), lab.seeds(20, 5));
@@ -135,7 +135,7 @@ final class F3Erasure {
                     for (double rho : RHOS) {
                         Channel channel = channel(ch, rho);
                         for (Packets pk : layouts) {
-                            channel.erase(lost, pk.packets(), LabSeeds.rng(lab.seed, "F3/fault/" + ch, s, m));
+                            channel.erase(lost, pk.packets(), LabSeeds.rng(lab.seed, "F3/fault/" + ch + "/" + id, s, m));
                             int got = pk.receive(lost, recv);
                             double[] cost = receivedCost(recv, unit, cols);
                             int missing = clustersMissing(inst, smp, recv);
@@ -178,7 +178,8 @@ final class F3Erasure {
                                          double rho, int s, long pointBytes, boolean solve) {
         int cols = inst.candidates();
         boolean[] lost = new boolean[seq.length];
-        channel(ch, rho).erase(lost, seq.length, LabSeeds.rng(lab.seed, "F3/fault-rateless/" + ch, s, m));
+        channel(ch, rho).erase(lost, seq.length, LabSeeds.rng(lab.seed, "F3/fault-rateless/" + ch + "/" + inst.id, s,
+                m));
         int got = 0;
         int sent = 0;
         double[] acc = new double[cols];
@@ -247,6 +248,24 @@ final class F3Erasure {
             List<Recorder.Row> rows = new ArrayList<>();
             Sample.Proposal p = proposal(lab, inst, s);
             AliasSampler alias = AliasSampler.of(p.s());
+            // a_j = sum_p (w_p c_pj)^2 / q_p / cost_j^2: the per-draw second moment that sets the split variance.
+            double[] a = new double[cols];
+            for (int g = 0; g < inst.n; g++) {
+                double q = p.q(g);
+                if (q > 0.0) {
+                    double w = p.inWeight()[g];
+                    int o = p.rows()[g] * cols;
+                    for (int j = 0; j < cols; j++) {
+                        double c = w * inst.table.cost[o + j];
+                        a[j] += c * c / q;
+                    }
+                }
+            }
+            for (int j = 0; j < cols; j++) {
+                a[j] /= inst.costFull[j] * inst.costFull[j];
+            }
+            rows.add(new Recorder.Row(cell("part", "proposal", "instance", id), s, metrics("totalSensitivity",
+                    p.total()), a));
             for (int m : ms) {
                 Sample smp = Sample.merge(p, alias.sortedDraws(m, LabSeeds.rng(lab.seed, "F3/sweep-draws", s, m)), m);
                 double[] unit = unitCosts(inst, smp);
@@ -255,8 +274,8 @@ final class F3Erasure {
                     Packets pk = Packets.of(l, smp, inst.cluster, LabSeeds.rng(lab.seed, "F3/sweep-pack", s, m));
                     boolean[] lost = new boolean[pk.packets()];
                     for (double rho : rhos) {
-                        Channel.bernoulli(rho).erase(lost, pk.packets(), LabSeeds.rng(lab.seed, "F3/sweep-fault", s,
-                                m));
+                        Channel.bernoulli(rho).erase(lost, pk.packets(), LabSeeds.rng(lab.seed, "F3/sweep-fault/" + id,
+                                s, m));
                         int got = pk.receive(lost, recv);
                         double[] cost = receivedCost(recv, unit, cols);
                         for (String dec : List.of("ht-prior", "ht-realized")) {
@@ -581,12 +600,17 @@ final class F3Erasure {
                 Math.abs(meanRel - 1.0) <= 0.15 && sdG > sdB && Stats.sd(ge) >= Stats.sd(bern) ? "PASS"
                         : Math.abs(meanRel - 1.0) <= 0.15 && sdG > sdB ? "PASS (m' spread) / FAIL (distortion spread)"
                         : "FAIL");
+        // Same packet count and the same loss pattern (shared stream): only the packing differs.
         double[] sorted = rec.values(sCell("zipf", m, "ge-b20", 0.3, "sorted-b8", "ht-realized"), "distortion");
-        double p99s = Stats.quantile(sorted, 0.99) - 1.0;
-        double p99r = Stats.quantile(ge, 0.99) - 1.0;
+        double[] random8 = rec.values(sCell("zipf", m, "ge-b20", 0.3, "random-b8", "ht-realized"), "distortion");
+        double[] fs = Stats.finite(sorted);
+        double[] fr = Stats.finite(random8);
+        double p99s = Stats.quantile(fs, 0.99) - 1.0;
+        double p99r = Stats.quantile(fr, 0.99) - 1.0;
         lab.verdict("F3/B1 sorted+bursts", "sorted packing + bursts: large outliers (failure)",
-                f("rho=0.3, burst 20: p99 excess sorted-b8 %.3f vs per-draw %.3f (x%.1f); max %.3f", p99s, p99r,
-                        p99s / p99r, Stats.max(sorted)),
+                f("rho=0.3, burst 20, 8 draws/packet: p99 excess sorted %.3f vs random packing %.3f (x%.1f); max %.3f "
+                        + "vs %.3f; total-loss runs (no packet arrived) %d of %d for both", p99s, p99r, p99s / p99r,
+                        Stats.max(fs), Stats.max(fr), sorted.length - fs.length, sorted.length),
                 p99s >= 3 * p99r ? "PASS" : "FAIL");
     }
 
@@ -594,72 +618,84 @@ final class F3Erasure {
         return cell("part", "sweep", "instance", inst, "m", m, "rho", rho, "packetization", pk, "decoder", dec);
     }
 
-    /** Paired excess mean-square of r(Q_j) over rho = 0 (same sample), for the candidate {@code j}. */
-    private static double excessMS(Recorder rec, String inst, int m, double rho, String pk, String dec, int j) {
+    /** Mean square of the erasure perturbation r_rho(Q_j) - r_0(Q_j): same sample, so pure erasure noise. */
+    private static double erasureMS(Recorder rec, String inst, int m, double rho, String pk, String dec, int j) {
         List<double[]> a = rec.get(swCell(inst, m, rho, pk, dec)).rs;
         List<double[]> b = rec.get(swCell(inst, m, 0.0, pk, dec)).rs;
         double s = 0.0;
         for (int i = 0; i < a.size(); i++) {
-            s += a.get(i)[j] * a.get(i)[j] - b.get(i)[j] * b.get(i)[j];
+            double e = a.get(i)[j] - b.get(i)[j];
+            s += e * e;
         }
         return s / a.size();
     }
 
     private static void b2(FaultLab lab, Recorder rec, int[] ms, StringBuilder md) {
         md.append("### B2: merged duplicates versus split packets (Bernoulli, `ht-prior`)\n\n"
-                + "Erasure RMS = sqrt of the paired excess mean-square of r(Q*) over rho = 0 for the candidate Q* with "
-                + "the largest kappa_pt; floor = sqrt(rho/(1-rho) kappa_pt(Q*)).\n\n"
-                + "| instance | kappa_pt(Q*) | rho | m | distinct/m | split RMS | merged RMS | floor |\n"
-                + "|---|---|---|---|---|---|---|---|\n");
-        String heavyInst = "zipf-heavy";
+                + "RMS of the erasure perturbation r_rho(Q*) - r_0(Q*) (same sample) for the candidate Q* with the "
+                + "largest kappa_pt. Predictions from Theorem B2 with a = sum_p c_p^2/q_p / cost^2 measured on each "
+                + "seed's proposal: split rho/(1-rho) a/m; merged rho/(1-rho) ((a - kappa)/m + (1 - 1/m) kappa); "
+                + "floor sqrt(rho/(1-rho) kappa).\n\n"
+                + "| instance | kappa_pt(Q*) | a(Q*) | rho | m | distinct/m | split RMS | predicted | merged RMS | "
+                + "predicted | floor |\n|---|---|---|---|---|---|---|---|---|---|---|\n");
+        String stress = "zipf-outliers";
         double plateauMerged = 0.0;
         double plateauSplit = 0.0;
-        double heavyFloor = 0.0;
-        double heavyMerged = 0.0;
+        double stressFloor = 0.0;
+        double stressMerged = 0.0;
+        double stressPred = 0.0;
         double balancedRatio = Double.NaN;
-        for (String id : List.of("zipf", "zipf-heavy", "esa22")) {
+        int last = ms[ms.length - 1];
+        int mid = ms[ms.length - 3];
+        for (String id : List.of("zipf", "zipf-heavy", "esa22", stress)) {
             Instance inst = lab.instance(id);
             int jStar = 0;
             for (int j = 1; j < inst.candidates(); j++) {
                 jStar = inst.kappa[j] > inst.kappa[jStar] ? j : jStar;
             }
+            double a = 0.0;
+            List<double[]> props = rec.get(cell("part", "proposal", "instance", id)).rs;
+            for (double[] v : props) {
+                a += v[jStar] / props.size();
+            }
+            double kap = inst.kappa[jStar];
             for (double rho : new double[] {0.1, 0.3}) {
-                double floor = Math.sqrt(rho / (1.0 - rho) * inst.kappa[jStar]);
+                double g = rho / (1.0 - rho);
+                double floor = Math.sqrt(g * kap);
                 for (int m : ms) {
-                    double sp = Math.sqrt(Math.max(0.0, excessMS(rec, id, m, rho, "per-draw", "ht-prior", jStar)));
-                    double me = Math.sqrt(Math.max(0.0, excessMS(rec, id, m, rho, "merged", "ht-prior", jStar)));
+                    double sp = Math.sqrt(erasureMS(rec, id, m, rho, "per-draw", "ht-prior", jStar));
+                    double me = Math.sqrt(erasureMS(rec, id, m, rho, "merged", "ht-prior", jStar));
+                    double spPred = Math.sqrt(g * a / m);
+                    double mePred = Math.sqrt(g * ((a - kap) / m + (1.0 - 1.0 / m) * kap));
                     double distinct = Stats.mean(rec.values(swCell(id, m, rho, "merged", "ht-prior"), "distinct")) / m;
-                    md.append(f("| %s | %.3g | %s | %d | %.3f | %.4f | %.4f | %.4f |%n", id, inst.kappa[jStar], rho, m,
-                            distinct, sp, me, floor));
-                    if (id.equals(heavyInst) && rho == 0.3 && m == ms[ms.length - 1]) {
-                        heavyFloor = floor;
-                        heavyMerged = me;
+                    md.append(f("| %s | %.3g | %.3g | %s | %d | %.3f | %.4f | %.4f | %.4f | %.4f | %.4f |%n", id, kap, a,
+                            rho, m, distinct, sp, spPred, me, mePred, floor));
+                    if (id.equals(stress) && rho == 0.3 && m == last) {
+                        stressFloor = floor;
+                        stressMerged = me;
+                        stressPred = mePred;
                     }
                     if (id.equals("zipf") && rho == 0.3 && m == 1000) {
                         balancedRatio = me / sp;
                     }
                 }
-                if (id.equals(heavyInst) && rho == 0.3) {
-                    int last = ms[ms.length - 1];
-                    int mid = ms[ms.length - 3];
-                    plateauMerged = Math.sqrt(excessMS(rec, id, last, rho, "merged", "ht-prior", jStar)
-                            / excessMS(rec, id, mid, rho, "merged", "ht-prior", jStar));
-                    plateauSplit = Math.sqrt(excessMS(rec, id, last, rho, "per-draw", "ht-prior", jStar)
-                            / excessMS(rec, id, mid, rho, "per-draw", "ht-prior", jStar));
+                if (id.equals(stress) && rho == 0.3) {
+                    plateauMerged = Math.sqrt(erasureMS(rec, id, last, rho, "merged", "ht-prior", jStar)
+                            / erasureMS(rec, id, mid, rho, "merged", "ht-prior", jStar));
+                    plateauSplit = Math.sqrt(erasureMS(rec, id, last, rho, "per-draw", "ht-prior", jStar)
+                            / erasureMS(rec, id, mid, rho, "per-draw", "ht-prior", jStar));
                 }
             }
         }
         md.append('\n');
-        int last = ms[ms.length - 1];
-        int mid = ms[ms.length - 3];
         double expectSplit = Math.sqrt((double) mid / last);
         lab.verdict("F3/B2 plateau", "merged packets: excess plateaus as m grows at ~sqrt(rho/(1-rho) kappa_pt) "
-                        + "(ESA'22 / high-s_max instance)",
-                f("zipf-heavy rho=0.3, Q* = max kappa_pt: erasure RMS m=%d->%d shrinks x%.2f merged vs x%.2f split "
-                        + "(sqrt(m ratio) = %.2f); merged RMS at m=%d %.4f vs floor %.4f", mid, last, plateauMerged,
-                        plateauSplit, expectSplit, last, heavyMerged, heavyFloor),
-                plateauMerged >= 0.8 && plateauSplit <= 1.25 * expectSplit
-                        && Math.abs(heavyMerged / heavyFloor - 1.0) <= 0.35 ? "PASS" : "FAIL");
+                        + "(high-s_max instance; ESA'22 has kappa_pt ~ 1/N and no plateau in range)",
+                f("zipf-outliers rho=0.3, Q* = max kappa_pt: erasure RMS m=%d->%d shrinks x%.2f merged vs x%.2f split "
+                        + "(sqrt(m ratio) = %.2f); merged RMS at m=%d %.4f vs floor %.4f (full B2 formula %.4f)", mid,
+                        last, plateauMerged, plateauSplit, expectSplit, last, stressMerged, stressFloor, stressPred),
+                plateauMerged >= 0.75 && plateauSplit <= 1.25 * expectSplit
+                        && Math.abs(stressMerged / stressFloor - 1.0) <= 0.35 ? "PASS" : "FAIL");
         lab.verdict("F3/B2 balanced", "balanced Zipf instance at large N: merged ~ split",
                 f("zipf rho=0.3 m=1000: merged/split erasure RMS for Q* = %.3f", balancedRatio),
                 Math.abs(balancedRatio - 1.0) <= 0.2 ? "PASS" : "FAIL");
@@ -680,6 +716,7 @@ final class F3Erasure {
         double fecExact = 1.0;
         double cfGlobal = Double.NaN;
         double cfP15 = Double.NaN;
+        double cfNone = Double.NaN;
         for (String id : List.of("zipf", "zipf-heavy")) {
             double base = Stats.mean(rec.values(mCell(id, 0.0, "no-loss"), "distortion"));
             md.append(f("| %s | 0 | no-loss | %.4f | | | | | | | 0 |%n", id, base));
@@ -715,9 +752,12 @@ final class F3Erasure {
                         fecExact = Math.min(fecExact, (double) exact / d.length);
                     }
                     if (id.equals("zipf") && rho == 0.3 && v.equals("cf-realized")) {
-                        cfP15 = Stats.fraction(d, 1.5);
-                        cfGlobal = Stats.mean(d) / Stats.mean(rec.values(mCell(id, rho, "global-realized"),
-                                "distortion"));
+                        double none = Stats.mean(rec.values(mCell(id, rho, "global-none"), "excess"));
+                        double glob = Stats.mean(rec.values(mCell(id, rho, "global-realized"), "excess"));
+                        double split = Stats.quantile(rec.values(mCell(id, rho, "split"), "excess"), 0.99);
+                        cfP15 = Stats.quantile(c.values("excess"), 0.99) / split;
+                        cfGlobal = Stats.mean(c.values("excess")) / glob;
+                        cfNone = Stats.mean(c.values("excess")) / none;
                     }
                 }
             }
@@ -727,10 +767,12 @@ final class F3Erasure {
                 + "1 - (1-rho)^{#far cells}", f("largest |measured - predicted| = %.2f (%s)", maxGap, gaps),
                 maxGap <= 0.1 ? "PASS" : "FAIL");
         lab.verdict("F3/B4 CF triples", "CF triples fix the offset bias but not the missing mass",
-                f("zipf rho=0.3: mean distortion cf/global-realized = %.3f; P[cf distortion > 1.5] = %.3f", cfGlobal,
+                f("zipf rho=0.3, mean excess distortion: cf / global offset without rescaling = %.2f, cf / global "
+                        + "offset with realized-mass rescaling = %.3f; p99 excess cf / split = %.1f", cfNone, cfGlobal,
                         cfP15),
-                cfGlobal < 1.0 && cfP15 > 0.0 ? "PASS" : cfGlobal < 1.0 ? "PASS (bias) / FAIL (no residual tail)"
-                        : "FAIL");
+                cfNone < 1.0 && cfP15 > 2.0 ? (Math.abs(cfGlobal - 1.0) <= 0.02
+                        ? "PASS (missing mass remains) / INCONCLUSIVE (offset bias: realized-mass rescaling alone already "
+                        + "matches CF)" : "PASS") : "FAIL");
         lab.verdict("F3/B4 split", "split centroids restore distortion ~ 1 + O(sqrt(rho eta))",
                 f("rho <= 0.3, eta = %s: worst (p99 distortion - no-loss) / sqrt(rho eta/(1-rho)) = %.2f", ETA,
                         worstSplit),

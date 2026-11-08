@@ -51,6 +51,10 @@ final class Stats {
         return s[lo] + (h - lo) * (s[hi] - s[lo]);
     }
 
+    static double[] finite(double[] x) {
+        return Arrays.stream(x).filter(Double::isFinite).toArray();
+    }
+
     static double min(double[] x) {
         double m = Double.POSITIVE_INFINITY;
         for (double v : x) {

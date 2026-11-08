@@ -9,7 +9,6 @@ import io.github.c0rwin.coreset.testbed.faults.NodeFaults.Loss;
 import io.github.c0rwin.coreset.testbed.faults.Partitions.Kind;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -107,7 +106,7 @@ final class F2PostLoss {
                     double excess = 0.0;
                     double predicted = 0.0;
                     for (int j = 0; j < rr.length; j++) {
-                        excess += rr[j] * rr[j] - r0[j] * r0[j];
+                        excess += (rr[j] - r0[j]) * (rr[j] - r0[j]);
                         predicted += l == n ? Double.NaN : phi / (1.0 - phi) * (inst.kappa[j] + r0[j] * r0[j]);
                     }
                     Double ds = null;
@@ -146,7 +145,7 @@ final class F2PostLoss {
             double[] d = c.values("distortion");
             double[] ds = c.values("downstream");
             double ex = Stats.mean(c.values("excessMS"));
-            double pr = Stats.mean(finite(c.values("predictedExcessMS")));
+            double pr = Stats.mean(Stats.finite(c.values("predictedExcessMS")));
             md.append(f("| %d | %s | %s | %s | %.4f | %.4f | %.3g | %.3g | %.4f | %.4f | %s | %s | %.0f |%n", n,
                     c.params.get("partition"), c.params.get("loss"), c.params.get("replicas"), obs, exp, ex, pr,
                     Stats.quantile(d, 0.5), Stats.quantile(d, 0.99),
@@ -175,12 +174,8 @@ final class F2PostLoss {
                 checked > 0 && ok == checked ? "PASS" : checked == 0 ? "INCONCLUSIVE" : "FAIL");
         double ratio = exSum / prSum;
         lab.verdict("F2/A3 error", "error = A1 at phi_eff (r = 0, random partition)",
-                f("excess mean-square r(Q) over the no-loss union / phi/(1-phi) (kappa_pt + r0^2) = %.2f (pooled over "
+                f("mean-square loss perturbation r(Q) - r_no-loss(Q) / phi/(1-phi) (kappa_pt + r0^2) = %.2f (pooled over "
                         + "f and n)", ratio),
                 ratio >= 0.67 && ratio <= 1.5 ? "PASS" : "FAIL");
-    }
-
-    static double[] finite(double[] x) {
-        return Arrays.stream(x).filter(Double::isFinite).toArray();
     }
 }

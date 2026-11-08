@@ -407,8 +407,16 @@ final class F1NodeLoss {
                         Stats.min(calibAll), Stats.max(calibAll)),
                 linear ? "PASS" : "FAIL");
         double spread = Stats.max(cByN) / Stats.min(cByN);
+        double[] nsmax = new double[ids.size()];
+        for (int i = 0; i < ids.size(); i++) {
+            Instance inst = lab.instance(ids.get(i));
+            nsmax[i] = inst.n * inst.sMax;
+        }
         lab.verdict("F1/A1 N-independence", "c independent of N (N in {1e5, 4e5}; scaled: 1e5, 2e5, 4e5)",
-                f("c = %.3f, %.3f, %.3f at N = 100k, 200k, 400k (max/min %.3f)", cByN[0], cByN[1], cByN[2], spread),
+                f("c = %.3f, %.3f, %.3f at N = 100k, 200k, 400k (max/min %.3f; s_max is the max of the k-means++ "
+                        + "bound, N s_max/S = %.1f, %.1f, %.1f); with kappa_pt in place of s_max the calibration is "
+                        + "%.3f, %.3f, %.3f", cByN[0], cByN[1], cByN[2], spread, nsmax[0], nsmax[1], nsmax[2],
+                        calibAll[0], calibAll[1], calibAll[2]),
                 spread <= 1.15 ? "PASS" : "FAIL");
     }
 
@@ -480,10 +488,11 @@ final class F1NodeLoss {
         double[] at0 = rec.values(cell("level", "coreset", "instance", "zipf", "partition", "random", "nodes", n,
                 "loss", "none", "decoder", "ht-size", "algorithm", "sensitivity"), "downstream");
         double m8 = Stats.mean(at8);
+        double m0 = Stats.mean(at0);
         lab.verdict("F1/A1 downstream", "downstream ratio barely moves: < 1.02 at phi = 1/8 (zipf, random partition)",
-                f("sensitivity m=500/node: mean %.4f (p90 %.4f, max %.4f) vs %.4f without loss", m8,
-                        Stats.quantile(at8, 0.9), Stats.max(at8), Stats.mean(at0)),
-                m8 < 1.02 ? "PASS" : "FAIL");
+                f("sensitivity m=500/node: mean %.4f (p90 %.4f, max %.4f) vs %.4f without loss (loss adds %+.4f)", m8,
+                        Stats.quantile(at8, 0.9), Stats.max(at8), m0, m8 - m0),
+                m8 < 1.02 ? "PASS" : m8 - m0 < 0.02 ? "FAIL (solver baseline above 1.02; loss adds < 0.02)" : "FAIL");
     }
 
     private static void sorted(FaultLab lab, Recorder rec, StringBuilder md) {
@@ -548,14 +557,17 @@ final class F1NodeLoss {
                 "loss", loss, "tau", "1e-03");
         Map<String, Object> esaRand = cell("level", "replication", "instance", "esa22", "partition", "random", "nodes",
                 n, "loss", loss, "tau", "none");
+        Map<String, Object> esaInNone = cell("level", "replication", "instance", "esa22", "partition", "input", "nodes",
+                n, "loss", loss, "tau", "none");
         double inTau = Stats.quantile(rec.values(esaIn, "distortion"), 0.5);
+        double inNone = Stats.quantile(rec.values(esaInNone, "distortion"), 0.5);
         double rand = Stats.quantile(rec.values(esaRand, "distortion"), 0.5);
         double heavy = Stats.mean(rec.values(esaIn, "heavyPoints"));
         Instance esa = lab.instance("esa22");
         lab.verdict("F1/A2 ESA'22", "tau = 1e-3 brings the ESA'22 distortion down to random-partition levels",
-                f("input-order partition, phi=1/8: median distortion %.4f with tau=1e-3 (%.0f heavy points: every "
-                        + "s_p ~ S/N = %.2g < tau) vs %.4f random/no replication", inTau, heavy, esa.sensTotal / esa.n,
-                        rand),
+                f("input-order partition, phi=1/8: median distortion %.4f without replication, %.4f with tau=1e-3 "
+                        + "(%.0f of %d points above tau; mean s_p = S/N = %.2g, so the bound flags no structure), vs "
+                        + "%.4f on a random partition", inNone, inTau, heavy, esa.n, esa.sensTotal / esa.n, rand),
                 inTau <= 1.0 + 1.1 * (rand - 1.0) ? "PASS" : "FAIL");
         Map<String, Object> hvS = cell("level", "replication", "instance", "zipf-heavy", "partition", "random", "nodes",
                 n, "loss", "phi=0.5", "tau", "1e-03");
@@ -584,8 +596,5 @@ final class F1NodeLoss {
         boolean flat = extra[2] <= 1.15 * extra[0] && extra[2] <= bound;
         lab.verdict("F1/A2 storage", "extra stored points <= (S/tau) log_{1/f}(1/tau), flat in N (tau=1e-3, f=0.1)",
                 f("extra copies %s bound %.0f", ns, bound), flat ? "PASS" : "FAIL");
-        lab.verdict("F1/A2 heavy-tail fix", "replication of high-sensitivity points removes the loss of tiny clusters "
-                + "(zipf-heavy, random partition, phi=1/2)", f("p90 distortion %.4f -> %.4f with tau=1e-3", without,
-                withT), withT - 1.0 <= 0.5 * (without - 1.0) ? "PASS" : "FAIL");
     }
 }

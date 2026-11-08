@@ -143,10 +143,11 @@ final class F4Stragglers {
                     double[] r = inst.ratios(o.cost(), 1.0);
                     double excess = 0.0;
                     for (int j = 0; j < r.length; j++) {
-                        excess += r[j] * r[j] - r0[j] * r0[j];
+                        excess += (r[j] - r0[j]) * (r[j] - r0[j]);
                     }
+                    // Solver seed independent of the straggler pattern: identical decoded sets give identical answers.
                     double ds = Measure.downstream(inst, o.points(), LabSeeds.of(lab.seed, "solve/F4/" + kind.id()
-                            + "/" + pattern + "/" + names.get(i), s, sMax));
+                            + "/" + names.get(i), s, sMax));
                     rows.add(new Recorder.Row(cell("partition", kind.id(), "s", sMax, "stragglers", pattern, "scheme",
                             names.get(i)), s,
                             metrics("distortion", Measure.distortion(r), "meanAbsR", Measure.meanAbs(r),
@@ -528,16 +529,22 @@ final class F4Stragglers {
             }
         }
         lab.verdict("F4/A1 uncoded random", "uncoded + HT under random stragglers follows A1",
-                f("excess mean-square r(Q) / A1 prediction phi/(1-phi)(kappa_pt + r0^2) = %.2f (pooled s, patterns)",
+                f("mean-square straggler perturbation of r(Q) / A1 prediction phi/(1-phi)(kappa_pt + r0^2) = %.2f "
+                        + "(pooled s, patterns)",
                         ex / pr),
                 ex / pr >= 0.67 && ex / pr <= 1.5 ? "PASS" : "FAIL");
         double[] adv = rec.values(c("cluster-sorted", 1, "adversarial-s", "uncoded"), "downstream");
         double[] frAdv = rec.values(c("cluster-sorted", 1, "adversarial-s", "fr"), "downstream");
+        double[] frNone = rec.values(c("cluster-sorted", 1, "none", "fr"), "downstream");
+        double moved = 0.0;
+        for (int i = 0; i < frAdv.length; i++) {
+            moved = Math.max(moved, Math.abs(frAdv[i] - frNone[i]));
+        }
         lab.verdict("F4/A1' adversarial straggler", "uncoded + HT fails under the adversarial straggler (holder of the "
                         + "smallest cluster); coded schemes do not",
-                f("cluster-sorted, s=1: uncoded downstream mean %.3f (max %.3f) vs FR %.4f (max %.4f)",
-                        Stats.mean(adv), Stats.max(adv), Stats.mean(frAdv), Stats.max(frAdv)),
-                Stats.mean(adv) >= 1.5 && Stats.max(frAdv) <= 1.05 ? "PASS"
-                        : Stats.mean(adv) > 1.05 && Stats.max(frAdv) <= 1.05 ? "INCONCLUSIVE" : "FAIL");
+                f("cluster-sorted, s=1: uncoded downstream mean %.3f (max %.3f); FR %.4f, max |FR(adversarial) - "
+                        + "FR(no straggler)| = %.2g over paired seeds", Stats.mean(adv), Stats.max(adv),
+                        Stats.mean(frAdv), moved),
+                Stats.mean(adv) >= 1.5 && moved <= 1e-9 ? "PASS" : "FAIL");
     }
 }

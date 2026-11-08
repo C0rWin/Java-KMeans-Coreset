@@ -1,5 +1,8 @@
 package io.github.c0rwin.coreset.testbed.faults;
 
+import io.github.c0rwin.coreset.core.SparseVector;
+import io.github.c0rwin.coreset.core.WeightedPoint;
+import io.github.c0rwin.coreset.testbed.data.Dataset;
 import io.github.c0rwin.coreset.testbed.data.DatasetSpec;
 import io.github.c0rwin.coreset.testbed.data.Datasets;
 import java.io.IOException;
@@ -13,6 +16,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.SplittableRandom;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.function.IntFunction;
@@ -84,10 +89,12 @@ final class FaultLab implements AutoCloseable {
             Instance inst = instances.get(id);
             if (inst == null) {
                 long s = System.nanoTime();
-                Object[] spec = spec(id);
+                Object[] spec = spec(id.equals("zipf-outliers") ? "zipf" : id);
                 DatasetSpec ds = (DatasetSpec) spec[0];
                 int k = (Integer) spec[1];
-                inst = Instance.prepare(id, datasets.load(ds), k, quick() ? 3 : 10, quick() ? 10 : 30,
+                Dataset data = id.equals("zipf-outliers") ? withOutliers(datasets.load(ds), quick() ? 5 : 50)
+                        : datasets.load(ds);
+                inst = Instance.prepare(id, data, k, quick() ? 3 : 10, quick() ? 10 : 30,
                         quick() ? 2 : 5, LabSeeds.of(seed, "instance", LabSeeds.hash(id), 0), pool);
                 instances.put(id, inst);
                 log("instance %s: n=%d d=%d k=%d smax/S=%.3g S=%.1f smallest cluster=%d (%.1f s)", id, inst.n,
@@ -96,6 +103,24 @@ final class FaultLab implements AutoCloseable {
             }
             return inst;
         }
+    }
+
+    /**
+     * The B2 stress case: the zipf mixture plus a few far points (uniform in [-900, 1000]^d, the mixture lives in
+     * [0, 100]^d), so some candidates' cost sits on a handful of points that sensitivity sampling draws many times.
+     */
+    static Dataset withOutliers(Dataset base, int outliers) {
+        List<WeightedPoint> pts = new ArrayList<>(base.points());
+        SplittableRandom rng = new SplittableRandom(99);
+        double[] x = new double[base.dim()];
+        for (int i = 0; i < outliers; i++) {
+            for (int t = 0; t < x.length; t++) {
+                x[t] = -900.0 + 1900.0 * rng.nextDouble();
+            }
+            pts.add(new WeightedPoint(SparseVector.dense(x), 1.0));
+        }
+        return Dataset.of("zipf-outliers", pts, "", "generated", "synthetic:zipf+" + outliers + " outliers",
+                List.of(), Optional.empty());
     }
 
     /** {DatasetSpec, k} per instance id; QUICK shrinks every instance for tests. */
@@ -172,9 +197,10 @@ final class FaultLab implements AutoCloseable {
                 .append("| id | prediction | measured | verdict |\n|---|---|---|---|\n");
         StringBuilder csv = new StringBuilder("id,status,prediction,measured\n");
         for (Verdict v : verdicts) {
-            md.append("| ").append(v.id()).append(" | ").append(v.prediction()).append(" | ").append(v.measured())
-                    .append(" | **").append(v.status()).append("** |\n");
-            csv.append(v.id()).append(',').append(v.status()).append(",\"").append(v.prediction().replace("\"", "'"))
+            md.append("| ").append(v.id()).append(" | ").append(v.prediction().replace("|", "\\|")).append(" | ")
+                    .append(v.measured().replace("|", "\\|")).append(" | **").append(v.status()).append("** |\n");
+            csv.append(v.id()).append(",\"").append(v.status()).append("\",\"")
+                    .append(v.prediction().replace("\"", "'"))
                     .append("\",\"").append(v.measured().replace("\"", "'")).append("\"\n");
         }
         md.append("\n").append(report);
